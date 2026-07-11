@@ -9,6 +9,7 @@ const loadMapButton = document.querySelector('#load-map');
 const mapMessage = document.querySelector('#map-message');
 const mapElement = document.querySelector('#gig-map');
 const favoriteChoice = document.querySelector('#favorite-choice');
+const mediaInput = document.querySelector('#media-input');
 const profileSelect = document.querySelector('#profile-select');
 const sharedMessage = document.querySelector('#shared-message');
 const sharedList = document.querySelector('#shared-list');
@@ -31,18 +32,37 @@ let musicKitConfigured = false;
 let venueMap;
 let venueLayer;
 
-const page = ({ '/': 'home', '/shows': 'shows', '/add': 'add', '/map': 'map', '/account': 'account' })[window.location.pathname] || 'home';
+const page = ({ '/': 'home', '/shows': 'shows', '/shared': 'shared', '/artist': 'artist', '/edit': 'edit', '/add': 'add', '/map': 'map', '/account': 'account' })[window.location.pathname] || 'home';
 document.body.dataset.page = page;
 const routeSections = {
   home: ['home-page'],
   add: ['add-page'],
-  shows: ['shows-archive', 'shows-shared'],
+  shows: ['shows-archive'],
+  shared: ['shows-shared'],
+  artist: ['artist-page'],
+  edit: ['edit-page'],
   map: ['map-page'],
   account: ['shows-shared']
 };
-for (const id of ['home-page', 'add-page', 'shows-archive', 'shows-shared', 'map-page']) {
+for (const id of ['home-page', 'add-page', 'shows-archive', 'artist-page', 'edit-page', 'shows-shared', 'map-page']) {
   document.querySelector(`#${id}`).hidden = !routeSections[page].includes(id);
 }
+const chestButton = document.querySelector('#open-chest');
+if (chestButton) chestButton.addEventListener('click', () => window.location.assign('/shows'));
+
+const artistNameFromUrl = new URLSearchParams(window.location.search).get('name')?.trim() || '';
+const artistHeading = document.querySelector('#artist-heading');
+const artistDescription = document.querySelector('#artist-description');
+const artistBio = document.querySelector('#artist-bio');
+const artistImage = document.querySelector('#artist-image');
+const artistSource = document.querySelector('#artist-source');
+const artistShows = document.querySelector('#artist-shows');
+const artistEmpty = document.querySelector('#artist-empty');
+const editForm = document.querySelector('#edit-form');
+const editMessage = document.querySelector('#edit-message');
+const editMediaInput = document.querySelector('#edit-media-input');
+const editGallery = document.querySelector('#edit-gallery');
+const editGigId = new URLSearchParams(window.location.search).get('id') || '';
 
 const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
 
@@ -91,6 +111,27 @@ async function fetchJson(url, options) {
   return payload;
 }
 
+async function fileAsBase64(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  return btoa(binary);
+}
+
+async function uploadGigMedia(gigId, files) {
+  for (const file of files) {
+    await fetchJson(`/api/gigs/${gigId}/media`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: file.name, mimeType: file.type, data: await fileAsBase64(file) }) });
+  }
+}
+
+function renderMediaGallery(container, media = []) {
+  container.replaceChildren();
+  if (!media.length) return;
+  container.innerHTML = media.map((item) => item.mimeType.startsWith('video/')
+    ? `<video src="${item.url}" controls preload="metadata"></video>`
+    : `<a href="${item.url}" target="_blank" rel="noreferrer"><img src="${item.url}" alt="Photo from the show" loading="lazy" /></a>`).join('');
+}
+
 function setSharedMessage(text, isError = false) {
   sharedMessage.textContent = text;
   sharedMessage.classList.toggle('error', isError);
@@ -98,6 +139,77 @@ function setSharedMessage(text, isError = false) {
 
 function activeProfile() {
   return profiles.find((profile) => profile.id === activeProfileId);
+}
+
+function renderArtistShows(records) {
+  artistShows.replaceChildren();
+  artistEmpty.hidden = records.length > 0;
+  for (const gig of records) {
+    const card = document.querySelector('#gig-template').content.cloneNode(true);
+    card.querySelector('.gig-date').textContent = new Date(`${gig.date}T12:00:00`).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+    card.querySelector('.gig-summary h3').textContent = gig.artist;
+    card.querySelector('.gig-place').textContent = `${gig.venue} · ${gig.city}`;
+    card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
+    card.querySelector('.venue-notes').textContent = gig.venueNotes || '';
+    card.querySelector('.song-total').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist';
+    const ratings = card.querySelector('.gig-ratings');
+    ratings.innerHTML = `${gig.performanceRating ? `<span>Performance ${gig.performanceRating} / 5</span>` : ''}${gig.venueRating ? `<span>Venue ${gig.venueRating} / 5</span>` : ''}`;
+    const setlist = card.querySelector('.setlist');
+    if (gig.songs?.length) setlist.innerHTML = `<ol>${gig.songs.map((song) => `<li>${escapeHtml(song.title)}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>`;
+    renderMediaGallery(card.querySelector('.media-gallery'), gig.media);
+    artistShows.append(card);
+  }
+}
+
+async function renderArtistPage() {
+  if (page !== 'artist') return;
+  if (!artistNameFromUrl) {
+    artistHeading.textContent = 'Artist not found';
+    artistDescription.textContent = 'Choose an artist from your shows archive.';
+    return;
+  }
+  artistHeading.textContent = artistNameFromUrl;
+  renderArtistShows(gigs.filter((gig) => gig.artist.toLowerCase() === artistNameFromUrl.toLowerCase()));
+  try {
+    const info = await fetchJson(`/api/artists?name=${encodeURIComponent(artistNameFromUrl)}`);
+    artistHeading.textContent = info.title || artistNameFromUrl;
+    artistDescription.textContent = info.description || '';
+    artistBio.textContent = info.bio || 'No biography was found for this artist yet.';
+    artistImage.hidden = !info.image;
+    if (info.image) { artistImage.src = info.image; artistImage.alt = `${info.title || artistNameFromUrl} portrait`; }
+    artistSource.hidden = !info.source;
+    if (info.source) artistSource.href = info.source;
+  } catch (error) {
+    artistDescription.textContent = 'Artist information could not be loaded right now.';
+    artistBio.textContent = error.message;
+  }
+}
+
+function renderEditPage() {
+  if (page !== 'edit') return;
+  const gig = gigs.find((entry) => entry.id === editGigId);
+  if (!gig) { editMessage.textContent = 'Show not found.'; editMessage.classList.add('error'); return; }
+  editForm.elements.artist.value = gig.artist;
+  editForm.elements.date.value = gig.date;
+  editForm.elements.venue.value = gig.venue;
+  editForm.elements.city.value = gig.city;
+  renderMediaGallery(editGallery, gig.media);
+  editForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      const update = Object.fromEntries(new FormData(editForm).entries());
+      const saved = await fetchJson(`/api/gigs/${gig.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
+      const files = [...(editMediaInput?.files || [])];
+      if (files.length) await uploadGigMedia(gig.id, files);
+      gigs = gigs.map((entry) => entry.id === gig.id ? { ...entry, ...saved } : entry);
+      editMessage.textContent = files.length ? 'Show and media saved.' : 'Show saved.';
+      editMessage.classList.remove('error');
+      editMediaInput.value = '';
+      const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`);
+      renderMediaGallery(editGallery, refreshed);
+      renderGigs();
+    } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); }
+  });
 }
 
 function renderProfiles() {
@@ -258,9 +370,12 @@ function renderMatches(setlists) {
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const gig = formValues();
+  const mediaFiles = [...(mediaInput?.files || [])];
+  delete gig.media;
   const payload = { ...gig, songs: selectedSetlist?.songs || [], setlistFmId: selectedSetlist?.id || null, setlistFmUrl: selectedSetlist?.url || null };
   try {
     const saved = await fetchJson('/api/gigs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (mediaFiles.length) await uploadGigMedia(saved.id, mediaFiles);
     gigs.unshift(saved);
     form.reset();
     resetReviewForm();
@@ -282,9 +397,10 @@ function renderGigs() {
   for (const gig of orderedGigs) {
     const card = document.querySelector('#gig-template').content.cloneNode(true);
     card.querySelector('.gig-card').id = `gig-${gig.id}`;
+    card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
     const date = new Date(`${gig.date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     card.querySelector('.gig-date').textContent = date;
-    card.querySelector('h3').textContent = gig.artist;
+    card.querySelector('h3').innerHTML = `<a class="artist-link" href="/artist?name=${encodeURIComponent(gig.artist)}">${escapeHtml(gig.artist)}</a>`;
     card.querySelector('.gig-place').textContent = `${gig.venue} · ${gig.city}`;
     card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
     card.querySelector('.venue-notes').textContent = gig.venueNotes ? `Venue: ${gig.venueNotes}` : '';
@@ -318,14 +434,12 @@ function renderGigs() {
     card.querySelector('.share-gig').addEventListener('click', async () => {
       const profile = activeProfile();
       if (!profile) {
-        setSharedMessage('Choose your profile in Shared shows before sharing a gig.', true);
-        document.querySelector('.shared-section').scrollIntoView({ behavior: 'smooth' });
+        window.location.assign('/shared');
         return;
       }
       try {
         await fetchJson('/api/shared/shows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceGigId: gig.id, profileId: profile.id }) });
-        await refreshCollaboration();
-        document.querySelector('.shared-section').scrollIntoView({ behavior: 'smooth' });
+        window.location.assign('/shared');
       } catch (error) { setSharedMessage(error.message, true); }
     });
     const setlist = card.querySelector('.setlist');
@@ -335,6 +449,7 @@ function renderGigs() {
       exports.hidden = false;
       setupExportButtons(exports, gig);
     }
+    renderMediaGallery(card.querySelector('.media-gallery'), gig.media);
     card.querySelector('.delete-gig').addEventListener('click', async () => {
       if (!confirm(`Remove ${gig.artist} at ${gig.venue}?`)) return;
       await fetchJson(`/api/gigs/${gig.id}`, { method: 'DELETE' });
@@ -380,9 +495,10 @@ function drawMap(locations) {
   mapElement.hidden = false;
   if (!venueMap) {
     venueMap = L.map(mapElement, { scrollWheelZoom: false });
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
       maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      subdomains: 'abcd',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
     }).addTo(venueMap);
     venueLayer = L.layerGroup().addTo(venueMap);
   }
@@ -486,11 +602,14 @@ copyPlaylist.addEventListener('click', async () => {
 async function initializeApp() {
   const auth = await fetchJson('/api/auth/status');
   account = auth.account;
-  if (!account) return showAuth(auth);
-  authPanel.hidden = true;
-  profileBar.hidden = false;
-  inviteButton.hidden = !account.isAdmin;
-  activeProfileId = account.id;
+  if (!account) {
+    showAuth(auth);
+  } else {
+    authPanel.hidden = true;
+    profileBar.hidden = false;
+    inviteButton.hidden = !account.isAdmin;
+    activeProfileId = account.id;
+  }
   const [gigData, integrationData, profileData, showData] = await Promise.all([fetchJson('/api/gigs'), fetchJson('/api/integrations'), fetchJson('/api/profiles'), fetchJson('/api/shared/shows')]);
     gigs = gigData;
     integrations = integrationData;
@@ -502,6 +621,9 @@ async function initializeApp() {
     renderGigs();
     renderProfiles();
     renderSharedShows();
+    await renderArtistPage();
+    renderEditPage();
+    if (page === 'map' && loadMapButton) loadMapButton.click();
 }
 
 initializeApp().catch((error) => setMessage(error.message, true));

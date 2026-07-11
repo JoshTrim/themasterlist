@@ -13,6 +13,7 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = path.join(ROOT, 'data');
 const GIGS_FILE = path.join(DATA_DIR, 'gigs.json');
 const DB_FILE = path.join(DATA_DIR, 'master-list.sqlite');
+const MEDIA_DIR = path.join(DATA_DIR, 'media');
 const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
 const GEOCODES_FILE = path.join(DATA_DIR, 'geocodes.json');
 const SETLIST_API = 'https://api.setlist.fm/rest/1.0/search/setlists';
@@ -37,6 +38,17 @@ database.exec(`
     setlist_fm_url TEXT,
     songs TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL
+  )
+`);
+database.exec(`
+  CREATE TABLE IF NOT EXISTS gig_media (
+    id TEXT PRIMARY KEY,
+    gig_id TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (gig_id) REFERENCES gigs(id) ON DELETE CASCADE
   )
 `);
 database.exec(`
@@ -126,6 +138,7 @@ async function readGigs() {
     setlistFmId: row.setlist_fm_id,
     setlistFmUrl: row.setlist_fm_url,
     songs: JSON.parse(row.songs || '[]'),
+    media: database.prepare('SELECT id, filename, mime_type AS mimeType, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY created_at').all(row.id).map((media) => ({ ...media, url: `/api/media/${media.id}` })),
     createdAt: row.created_at
   }));
 }
@@ -228,6 +241,10 @@ function currentAccount(request) {
   return row || null;
 }
 
+function accountsConfigured() {
+  return database.prepare('SELECT COUNT(*) AS count FROM profiles WHERE password_hash IS NOT NULL').get().count > 0;
+}
+
 function requireAccount(request) {
   const account = currentAccount(request);
   if (!account) {
@@ -275,6 +292,24 @@ async function providerResponse(url, options, provider) {
   const body = await result.json().catch(() => ({}));
   const detail = body.error?.message || body.error_description || body.message || body.error || `HTTP ${result.status}`;
   throw new Error(`${provider}: ${detail}`);
+}
+
+async function fetchArtistInfo(name) {
+  const requestedName = String(name || '').trim();
+  if (!requestedName) throw new Error('An artist name is required.');
+  const headers = { 'User-Agent': 'TheMasterList/0.1 personal-live-music-archive', 'Accept-Language': 'en' };
+  let title = requestedName;
+  const searchUrl = new URL('https://en.wikipedia.org/w/api.php');
+  searchUrl.searchParams.set('action', 'query'); searchUrl.searchParams.set('list', 'search');
+  searchUrl.searchParams.set('srsearch', `${requestedName} musician`); searchUrl.searchParams.set('srlimit', '1'); searchUrl.searchParams.set('format', 'json');
+  const searchResponse = await fetch(searchUrl, { headers });
+  const result = searchResponse.ok ? await searchResponse.json() : null;
+  title = result?.query?.search?.[0]?.title || requestedName;
+  let response = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, '_'))}`, { headers });
+  if (!response.ok && title !== requestedName) response = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(requestedName.replace(/ /g, '_'))}`, { headers });
+  if (!response.ok) return { name: requestedName, title: requestedName, bio: '', description: '', image: null, source: null };
+  const summary = await response.json();
+  return { name: requestedName, title: summary.title || requestedName, description: summary.description || '', bio: summary.extract || '', image: summary.thumbnail?.source || summary.originalimage?.source || null, source: summary.content_urls?.desktop?.page || null };
 }
 
 function playlistDetails(gig) {
@@ -360,6 +395,15 @@ function readGigsSync() {
   return { find: (id) => findGigSync(id) };
 }
 
+function mediaExtension(mimeType, filename) {
+  const known = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov' };
+  return known[mimeType] || path.extname(filename || '').slice(1).replace(/[^a-z0-9]/gi, '').slice(0, 6) || 'bin';
+}
+
+function mediaRows(gigId) {
+  return database.prepare('SELECT id, filename, mime_type AS mimeType, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY created_at').all(gigId).map((media) => ({ ...media, url: `/api/media/${media.id}` }));
+}
+
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 async function mapLocations() {
@@ -396,7 +440,7 @@ async function readBody(request) {
   let body = '';
   for await (const chunk of request) {
     body += chunk;
-    if (body.length > 1_000_000) throw new Error('Request body is too large.');
+    if (body.length > 30_000_000) throw new Error('Request body is too large.');
   }
   return body ? JSON.parse(body) : {};
 }
@@ -590,8 +634,7 @@ async function handleAuth(request, response, url) {
 
 async function handleApi(request, response, url) {
   if (request.method === 'GET' && url.pathname === '/api/auth/status') {
-    const configured = database.prepare('SELECT COUNT(*) AS count FROM profiles WHERE password_hash IS NOT NULL').get().count > 0;
-    return sendJson(response, 200, { configured, account: currentAccount(request) });
+    return sendJson(response, 200, { configured: accountsConfigured(), account: currentAccount(request) });
   }
 
   if (request.method === 'POST' && url.pathname === '/api/auth/setup') {
@@ -641,9 +684,21 @@ async function handleApi(request, response, url) {
     return sendJson(response, 201, { inviteUrl: `${appOrigin(request)}/?invite=${encodeURIComponent(token)}`, expiresAt: expires });
   }
 
-  request.account = requireAccount(request);
+  request.account = accountsConfigured() ? requireAccount(request) : null;
+
+  const mediaFileMatch = url.pathname.match(/^\/api\/media\/([\w-]+)$/);
+  if (request.method === 'GET' && mediaFileMatch) {
+    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(mediaFileMatch[1]);
+    if (!media) return sendError(response, 404, 'Media not found.');
+    try {
+      const file = await fs.readFile(path.join(MEDIA_DIR, media.filename));
+      response.writeHead(200, { 'Content-Type': media.mime_type, 'Content-Length': file.length, 'Cache-Control': 'private, max-age=3600' });
+      return response.end(file);
+    } catch (error) { return sendError(response, 404, 'Media file not found.'); }
+  }
 
   if (request.method === 'GET' && url.pathname === '/api/profiles') {
+    if (!accountsConfigured()) return sendJson(response, 200, []);
     requireAccount(request);
     return sendJson(response, 200, profileRows());
   }
@@ -653,6 +708,7 @@ async function handleApi(request, response, url) {
   }
 
   if (request.method === 'GET' && url.pathname === '/api/shared/shows') {
+    if (!accountsConfigured()) return sendJson(response, 200, []);
     requireAccount(request);
     return sendJson(response, 200, sharedShowRows());
   }
@@ -710,6 +766,10 @@ async function handleApi(request, response, url) {
     });
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/artists') {
+    return sendJson(response, 200, await fetchArtistInfo(url.searchParams.get('name')));
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/gigs') {
     const gigs = await readGigs();
     return sendJson(response, 200, gigs.sort((a, b) => b.date.localeCompare(a.date)));
@@ -742,11 +802,37 @@ async function handleApi(request, response, url) {
   }
 
   const gigMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)$/);
+  const mediaCollectionMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/media$/);
+  if (mediaCollectionMatch && request.method === 'GET') {
+    if (!database.prepare('SELECT id FROM gigs WHERE id = ?').get(mediaCollectionMatch[1])) return sendError(response, 404, 'Gig not found.');
+    return sendJson(response, 200, mediaRows(mediaCollectionMatch[1]));
+  }
+  if (mediaCollectionMatch && request.method === 'POST') {
+    const gigId = mediaCollectionMatch[1];
+    if (!database.prepare('SELECT id FROM gigs WHERE id = ?').get(gigId)) return sendError(response, 404, 'Gig not found.');
+    const body = await readBody(request);
+    const mimeType = String(body.mimeType || '');
+    const filename = String(body.filename || 'upload').slice(0, 180);
+    if (!/^image\/(jpeg|png|gif|webp)$|^video\/(mp4|webm|quicktime)$/.test(mimeType)) return sendError(response, 415, 'Upload an image or video file.');
+    const encoded = String(body.data || '').replace(/^data:[^;]+;base64,/, '');
+    const file = Buffer.from(encoded, 'base64');
+    if (!file.length || file.length > 20 * 1024 * 1024) return sendError(response, 413, 'Each upload must be between 1 byte and 20 MB.');
+    await fs.mkdir(MEDIA_DIR, { recursive: true });
+    const id = randomUUID();
+    const storedFilename = `${id}.${mediaExtension(mimeType, filename)}`;
+    await fs.writeFile(path.join(MEDIA_DIR, storedFilename), file);
+    database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, size, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, mimeType, file.length, new Date().toISOString());
+    return sendJson(response, 201, mediaRows(gigId).find((media) => media.id === id));
+  }
   if (request.method === 'PATCH' && gigMatch) {
     const update = await readBody(request);
     const gigs = await readGigs();
     const gig = gigs.find((entry) => entry.id === gigMatch[1]);
     if (!gig) return sendError(response, 404, 'Gig not found');
+    if ('artist' in update) gig.artist = String(update.artist || '').trim();
+    if ('venue' in update) gig.venue = String(update.venue || '').trim();
+    if ('city' in update) gig.city = String(update.city || '').trim();
+    if ('date' in update) gig.date = String(update.date || '').trim();
     if ('favorite' in update) gig.favorite = update.favorite === true;
     if ('performanceRating' in update) gig.performanceRating = normaliseRating(update.performanceRating);
     if ('venueRating' in update) gig.venueRating = normaliseRating(update.venueRating);

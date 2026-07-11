@@ -8,18 +8,39 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   </head>
   <body>
+    <svg class="crt-overlay" aria-hidden="true" focusable="false">
+      <defs>
+        <pattern id="crt-wave-pattern" patternUnits="userSpaceOnUse" width="180" height="8">
+          <path d="M0 2 C20 .2 43 3.8 63 2 S106 .2 126 2 S160 3.8 180 2" fill="none" stroke="rgba(255, 220, 248, .7)" stroke-width=".8" />
+          <animateTransform attributeName="patternTransform" type="translate" values="0 0; 7 1; -5 2; 4 1; 0 0" dur="18s" repeatCount="indefinite" />
+        </pattern>
+        <linearGradient id="crt-roll-gradient" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ff9de2" stop-opacity="0" />
+          <stop offset=".48" stop-color="#ffd9f5" stop-opacity="0" />
+          <stop offset=".5" stop-color="#ffd9f5" stop-opacity=".18" />
+          <stop offset=".52" stop-color="#ff9de2" stop-opacity="0" />
+          <stop offset="1" stop-color="#ff9de2" stop-opacity="0" />
+        </linearGradient>
+      </defs>
+      <rect class="crt-wave-lines" width="100%" height="100%" fill="url(#crt-wave-pattern)" />
+      <rect class="crt-roll" x="0" y="-100%" width="100%" height="300%" fill="url(#crt-roll-gradient)" />
+    </svg>
     <header class="site-header">
       <a class="brand" href="/">The<br /><em>Master</em> List</a>
-      <nav class="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a></nav>
+      <nav class="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/shows">Shows</a><a href="/shared">Shared</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a></nav>
       <span class="record-count" id="record-count">0 shows</span>
     </header>
 
     <main>
       <section class="intro" id="home-page">
-        <p class="eyebrow">Live music journal</p>
-        <h1>Every show.<br />Every song.</h1>
-        <p class="lede">Add the gigs you were at, capture their setlists, and soon carry those nights into the music services you already use.</p>
-        <div class="home-actions"><a class="button" href="/add">Log a show</a><a class="button button-secondary" href="/shows">Explore archive</a></div>
+        <div class="dungeon-hero">
+          <p class="eyebrow">The vault of live music</p>
+          <h1>The<br /><em>Master</em> List</h1>
+          <p class="lede">A record of every night worth remembering.</p>
+          <button class="chest-button" id="open-chest" type="button" aria-label="Open the show log">
+            <span class="chest-halo"></span><img src="/assets/chest.png" alt="A glowing gothic treasure chest" /><span class="chest-label">Open the archive</span>
+          </button>
+        </div>
       </section>
 
       <section class="add-gig" id="add-page" aria-labelledby="add-gig-heading">
@@ -49,6 +70,7 @@
             </fieldset>
             <label class="notes">Performance note <textarea name="performanceNotes" placeholder="The set, sound, stage presence…"></textarea></label>
             <label class="notes">Venue note <textarea name="venueNotes" placeholder="The room, crowd, location…"></textarea></label>
+            <label class="notes media-upload">Photos and videos <input id="media-input" name="media" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>Up to 20 MB per file</small></label>
           </div>
           <div class="form-actions">
             <input name="favorite" type="hidden" value="false" />
@@ -68,6 +90,24 @@
         </div>
         <div id="empty-state" class="empty-state">Your first gig is waiting to be logged.</div>
         <div class="gig-list" id="gig-list"></div>
+      </section>
+
+      <section class="artist-page" id="artist-page" aria-labelledby="artist-heading">
+        <a class="text-button artist-back" href="/shows">← Back to shows</a>
+        <div class="artist-profile" id="artist-profile">
+          <div class="artist-copy"><p class="eyebrow">Artist dossier</p><h1 id="artist-heading">Loading artist…</h1><p class="artist-description" id="artist-description"></p><p class="artist-bio" id="artist-bio"></p><a class="artist-source" id="artist-source" target="_blank" rel="noreferrer" hidden>Read more on Wikipedia ↗</a></div>
+          <img class="artist-image" id="artist-image" alt="" hidden />
+        </div>
+        <div class="artist-shows-heading"><p class="eyebrow">From your archive</p><h2>Shows attended</h2></div>
+        <div class="gig-list" id="artist-shows"></div>
+        <p class="empty-state" id="artist-empty" hidden>No shows by this artist yet.</p>
+      </section>
+
+      <section class="edit-page" id="edit-page" aria-labelledby="edit-heading">
+        <a class="text-button" href="/shows">← Back to shows</a>
+        <div class="section-heading"><p class="eyebrow">Show edit</p><h1 id="edit-heading">Edit show</h1></div>
+        <form id="edit-form"><div class="form-grid"><label>Artist <input name="artist" required /></label><label>Date <input name="date" required type="date" /></label><label>Venue <input name="venue" required /></label><label>City <input name="city" required /></label><label class="notes">Photos and videos <input id="edit-media-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>Up to 20 MB per file</small></label></div><div class="form-actions"><button class="button" type="submit">Save changes</button></div><p class="form-message" id="edit-message" role="status"></p></form>
+        <div class="edit-gallery-heading"><p class="eyebrow">Attached media</p></div><div class="media-gallery edit-gallery" id="edit-gallery"></div>
       </section>
 
       <section class="shared-section" id="shows-shared" aria-labelledby="shared-heading">
@@ -103,9 +143,10 @@
       <article class="gig-card">
         <div class="gig-date"></div>
         <div class="gig-summary"><h3></h3><p class="gig-place"></p><p class="gig-notes"></p><p class="venue-notes"></p></div>
-        <div class="gig-meta"><button class="heart-toggle" aria-label="Mark as favourite" title="Mark as favourite">♡</button><span class="song-total"></span><button class="share-gig" type="button">Share</button><button class="icon-button delete-gig" aria-label="Remove show" title="Remove show">×</button></div>
+        <div class="gig-meta"><button class="heart-toggle" aria-label="Mark as favourite" title="Mark as favourite">♡</button><span class="song-total"></span><button class="share-gig" type="button">Share</button><a class="edit-gig" href="#">Edit</a><button class="icon-button delete-gig" aria-label="Remove show" title="Remove show">×</button></div>
         <div class="gig-ratings"></div>
         <div class="setlist"></div>
+        <div class="media-gallery" aria-label="Photos and videos from this show"></div>
         <div class="exports" hidden>
           <span>Make it a playlist</span>
           <div class="export-buttons">
