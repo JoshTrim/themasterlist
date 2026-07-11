@@ -1,0 +1,7 @@
+.env
+data/gigs.json
+data/connections.json
+data/geocodes.json
+data/master-list.sqlite*
+node_modules/
+.DS_Store

@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The Master List — Live music archive</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/">The<br /><em>Master</em> List</a>
+      <nav class="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a></nav>
+      <span class="record-count" id="record-count">0 shows</span>
+    </header>
+
+    <main>
+      <section class="intro" id="home-page">
+        <p class="eyebrow">Live music journal</p>
+        <h1>Every show.<br />Every song.</h1>
+        <p class="lede">Add the gigs you were at, capture their setlists, and soon carry those nights into the music services you already use.</p>
+        <div class="home-actions"><a class="button" href="/add">Log a show</a><a class="button button-secondary" href="/shows">Explore archive</a></div>
+      </section>
+
+      <section class="add-gig" id="add-page" aria-labelledby="add-gig-heading">
+        <div class="section-heading">
+          <p class="eyebrow">01 / Add a memory</p>
+          <h2 id="add-gig-heading">Log a show</h2>
+        </div>
+        <form id="gig-form">
+          <div class="form-grid">
+            <label>Artist <input name="artist" required placeholder="e.g. The National" /></label>
+            <label>Date <input name="date" required type="date" /></label>
+            <label>Venue <input name="venue" required placeholder="e.g. The Tivoli" /></label>
+            <label>City <input name="city" required placeholder="e.g. Brisbane" /></label>
+            <fieldset class="rating-choice" data-rating-input="performanceRating">
+              <legend>Artist performance</legend>
+              <div class="star-picker" aria-label="Rate the artist performance out of five stars">
+                <button type="button" value="1" aria-label="1 star">★</button><button type="button" value="2" aria-label="2 stars">★</button><button type="button" value="3" aria-label="3 stars">★</button><button type="button" value="4" aria-label="4 stars">★</button><button type="button" value="5" aria-label="5 stars">★</button>
+              </div>
+              <input name="performanceRating" type="hidden" />
+            </fieldset>
+            <fieldset class="rating-choice" data-rating-input="venueRating">
+              <legend>Venue</legend>
+              <div class="star-picker" aria-label="Rate the venue out of five stars">
+                <button type="button" value="1" aria-label="1 star">★</button><button type="button" value="2" aria-label="2 stars">★</button><button type="button" value="3" aria-label="3 stars">★</button><button type="button" value="4" aria-label="4 stars">★</button><button type="button" value="5" aria-label="5 stars">★</button>
+              </div>
+              <input name="venueRating" type="hidden" />
+            </fieldset>
+            <label class="notes">Performance note <textarea name="performanceNotes" placeholder="The set, sound, stage presence…"></textarea></label>
+            <label class="notes">Venue note <textarea name="venueNotes" placeholder="The room, crowd, location…"></textarea></label>
+          </div>
+          <div class="form-actions">
+            <input name="favorite" type="hidden" value="false" />
+            <button class="favorite-choice" id="favorite-choice" type="button" aria-pressed="false" title="Mark as a favourite"><span>♡</span> Favourite show</button>
+            <button class="button button-secondary" id="find-setlist" type="button">Find setlist.fm matches</button>
+            <button class="button" type="submit">Save show</button>
+          </div>
+          <p class="form-message" id="form-message" role="status"></p>
+        </form>
+        <div class="search-results" id="search-results" hidden></div>
+      </section>
+
+      <section class="archive" id="shows-archive" aria-labelledby="archive-heading">
+        <div class="section-heading archive-heading">
+          <div><p class="eyebrow">02 / The archive</p><h2 id="archive-heading">Shows attended</h2></div>
+          <button class="text-button" id="copy-playlist" type="button" hidden>Copy selected setlist</button>
+        </div>
+        <div id="empty-state" class="empty-state">Your first gig is waiting to be logged.</div>
+        <div class="gig-list" id="gig-list"></div>
+      </section>
+
+      <section class="shared-section" id="shows-shared" aria-labelledby="shared-heading">
+        <div class="section-heading">
+          <p class="eyebrow">03 / Together</p>
+          <h2 id="shared-heading">Shared shows</h2>
+        </div>
+        <div class="auth-panel" id="auth-panel">
+          <p class="shared-message" id="auth-message"></p>
+          <form id="setup-form" hidden><label>Your name <input name="name" required maxlength="80" /></label><label>Choose a password <input name="password" type="password" required minlength="10" /></label><button class="button" type="submit">Create owner account</button></form>
+          <form id="login-form" hidden><label>Name <input name="name" required /></label><label>Password <input name="password" type="password" required /></label><button class="button" type="submit">Sign in</button></form>
+          <form id="register-form" hidden><label>Your name <input name="name" required maxlength="80" /></label><label>Choose a password <input name="password" type="password" required minlength="10" /></label><button class="button" type="submit">Join shared instance</button></form>
+        </div>
+        <div class="profile-bar" id="profile-bar" hidden>
+          <label>Signed in as <select id="profile-select" disabled><option value="">Loading…</option></select></label>
+          <button class="button button-secondary" id="create-invite" type="button" hidden>Create invite</button><button class="text-button" id="logout" type="button">Sign out</button>
+        </div>
+        <p class="shared-message" id="shared-message">Create profiles for the people sharing this server, then share shows into the collaborative archive.</p>
+        <div class="shared-list" id="shared-list"></div>
+      </section>
+
+      <section class="map-section" id="map-page" aria-labelledby="map-heading">
+        <div class="section-heading map-heading">
+          <div><p class="eyebrow">04 / Places played</p><h2 id="map-heading">Your gig map</h2></div>
+          <button class="button button-secondary" id="load-map" type="button">Place shows on map</button>
+        </div>
+        <p class="map-message" id="map-message">Plot each venue to see the geography of your live-music life.</p>
+        <div class="gig-map" id="gig-map" aria-label="Map of venues you have attended" hidden></div>
+      </section>
+    </main>
+
+    <template id="gig-template">
+      <article class="gig-card">
+        <div class="gig-date"></div>
+        <div class="gig-summary"><h3></h3><p class="gig-place"></p><p class="gig-notes"></p><p class="venue-notes"></p></div>
+        <div class="gig-meta"><button class="heart-toggle" aria-label="Mark as favourite" title="Mark as favourite">♡</button><span class="song-total"></span><button class="share-gig" type="button">Share</button><button class="icon-button delete-gig" aria-label="Remove show" title="Remove show">×</button></div>
+        <div class="gig-ratings"></div>
+        <div class="setlist"></div>
+        <div class="exports" hidden>
+          <span>Make it a playlist</span>
+          <div class="export-buttons">
+            <button class="export-button" data-provider="spotify" type="button">Spotify</button>
+            <button class="export-button" data-provider="youtube" type="button">YouTube</button>
+            <button class="export-button" data-provider="apple-music" type="button">Apple Music</button>
+          </div>
+          <p class="export-result" aria-live="polite"></p>
+        </div>
+      </article>
+    </template>
+
+    <template id="shared-template">
+      <article class="shared-card">
+        <div class="shared-card-header"><div><p class="shared-date"></p><h3></h3><p class="shared-place"></p></div><span class="shared-song-count"></span></div>
+        <div class="shared-people"></div>
+        <div class="shared-add-person"><select class="attendee-select"></select><button class="text-button add-attendee" type="button">Add person</button></div>
+        <div class="shared-review"><p class="eyebrow">Your review</p><div class="shared-rating-row"><span>Performance</span><div class="shared-stars" data-field="performanceRating"></div><span class="shared-rating-number"></span></div><div class="shared-rating-row"><span>Venue</span><div class="shared-stars" data-field="venueRating"></div><span class="shared-rating-number"></span></div><textarea class="shared-notes" placeholder="Your memory of the night…"></textarea><button class="button button-secondary save-shared-review" type="button">Save review</button></div>
+      </article>
+    </template>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
