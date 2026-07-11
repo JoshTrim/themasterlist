@@ -18,6 +18,7 @@ const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
 const GEOCODES_FILE = path.join(DATA_DIR, 'geocodes.json');
 const SETLIST_API = 'https://api.setlist.fm/rest/1.0/search/setlists';
 const pendingOAuth = new Map();
+const MAX_MEDIA_SIZE = 5 * 1024 * 1024 * 1024;
 
 const database = new Database(DB_FILE);
 database.pragma('journal_mode = WAL');
@@ -41,16 +42,44 @@ database.exec(`
   )
 `);
 database.exec(`
+  CREATE TABLE IF NOT EXISTS artist_info (
+    lookup_name TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    bio TEXT NOT NULL DEFAULT '',
+    image TEXT,
+    source TEXT,
+    updated_at TEXT NOT NULL
+  )
+`);
+database.exec(`
+  CREATE TABLE IF NOT EXISTS venue_info (
+    lookup_name TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    bio TEXT NOT NULL DEFAULT '',
+    image TEXT,
+    source TEXT,
+    updated_at TEXT NOT NULL
+  )
+`);
+database.exec(`
   CREATE TABLE IF NOT EXISTS gig_media (
     id TEXT PRIMARY KEY,
     gig_id TEXT NOT NULL,
     filename TEXT NOT NULL,
     mime_type TEXT NOT NULL,
+    caption TEXT NOT NULL DEFAULT '',
+    is_cover INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0,
     size INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     FOREIGN KEY (gig_id) REFERENCES gigs(id) ON DELETE CASCADE
   )
 `);
+addColumnIfMissing('gig_media', 'caption', "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing('gig_media', 'is_cover', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('gig_media', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
 database.exec(`
   CREATE TABLE IF NOT EXISTS profiles (
     id TEXT PRIMARY KEY,
@@ -138,7 +167,7 @@ async function readGigs() {
     setlistFmId: row.setlist_fm_id,
     setlistFmUrl: row.setlist_fm_url,
     songs: JSON.parse(row.songs || '[]'),
-    media: database.prepare('SELECT id, filename, mime_type AS mimeType, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY created_at').all(row.id).map((media) => ({ ...media, url: `/api/media/${media.id}` })),
+    media: database.prepare('SELECT id, filename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id).map((media) => ({ ...media, isCover: Boolean(media.isCover), url: `/api/media/${media.id}` })),
     createdAt: row.created_at
   }));
 }
@@ -297,6 +326,9 @@ async function providerResponse(url, options, provider) {
 async function fetchArtistInfo(name) {
   const requestedName = String(name || '').trim();
   if (!requestedName) throw new Error('An artist name is required.');
+  const lookupName = requestedName.toLowerCase();
+  const cached = database.prepare('SELECT title, description, bio, image, source FROM artist_info WHERE lookup_name = ?').get(lookupName);
+  if (cached) return { name: requestedName, ...cached };
   const headers = { 'User-Agent': 'TheMasterList/0.1 personal-live-music-archive', 'Accept-Language': 'en' };
   let title = requestedName;
   const searchUrl = new URL('https://en.wikipedia.org/w/api.php');
@@ -307,9 +339,75 @@ async function fetchArtistInfo(name) {
   title = result?.query?.search?.[0]?.title || requestedName;
   let response = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, '_'))}`, { headers });
   if (!response.ok && title !== requestedName) response = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(requestedName.replace(/ /g, '_'))}`, { headers });
-  if (!response.ok) return { name: requestedName, title: requestedName, bio: '', description: '', image: null, source: null };
+  if (!response.ok) {
+    const fallback = { name: requestedName, title: requestedName, bio: '', description: '', image: null, source: null };
+    database.prepare('INSERT OR REPLACE INTO artist_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, fallback.title, fallback.description, fallback.bio, fallback.image, fallback.source, new Date().toISOString());
+    return fallback;
+  }
   const summary = await response.json();
-  return { name: requestedName, title: summary.title || requestedName, description: summary.description || '', bio: summary.extract || '', image: summary.thumbnail?.source || summary.originalimage?.source || null, source: summary.content_urls?.desktop?.page || null };
+  const info = { name: requestedName, title: summary.title || requestedName, description: summary.description || '', bio: summary.extract || '', image: summary.thumbnail?.source || summary.originalimage?.source || null, source: summary.content_urls?.desktop?.page || null };
+  database.prepare('INSERT OR REPLACE INTO artist_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
+  return info;
+}
+
+async function fetchVenueInfo(name, city = '') {
+  const requestedName = String(name || '').trim();
+  const requestedCity = String(city || '').trim();
+  if (!requestedName) throw new Error('A venue name is required.');
+  const lookupName = `${requestedName}|${requestedCity}`.toLowerCase();
+  const venueWords = requestedName.toLowerCase().split(/\s+/).filter((word) => word.length > 3);
+  const cached = database.prepare('SELECT title, description, bio, image, source FROM venue_info WHERE lookup_name = ?').get(lookupName);
+  if (cached && venueWords.every((word) => cached.title.toLowerCase().includes(word)) && (cached.bio || cached.description || cached.image)) return { name: requestedName, city: requestedCity, ...cached };
+  if (cached) database.prepare('DELETE FROM venue_info WHERE lookup_name = ?').run(lookupName);
+  const headers = { 'User-Agent': 'TheMasterList/0.1 personal-live-music-archive', 'Accept-Language': 'en' };
+  const officialSources = { 'fortitude music hall|brisbane': 'https://www.thefortitude.com.au/venue-history' };
+  const officialUrl = officialSources[lookupName];
+  if (officialUrl) {
+    const officialResponse = await fetch(officialUrl, { headers });
+    if (officialResponse.ok) {
+      const html = await officialResponse.text();
+      const title = html.match(/<title[^>]*>([^<]+)/i)?.[1]?.replace(/\s*[-|].*$/, '').trim() || requestedName;
+      const description = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)/i)?.[1] || '';
+      const image = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)/i)?.[1] || null;
+      const bio = description || `${title} is a live music venue in ${requestedCity}.`;
+      const info = { name: requestedName, city: requestedCity, title, description, bio, image, source: officialUrl };
+      database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
+      return info;
+    }
+  }
+  if (process.env.GOOGLE_CUSTOM_SEARCH_API_KEY && process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID) {
+    const googleUrl = new URL('https://www.googleapis.com/customsearch/v1');
+    googleUrl.searchParams.set('key', process.env.GOOGLE_CUSTOM_SEARCH_API_KEY);
+    googleUrl.searchParams.set('cx', process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID);
+    googleUrl.searchParams.set('q', `${requestedName} ${requestedCity} official venue`);
+    const googleResponse = await fetch(googleUrl, { headers });
+    const result = googleResponse.ok ? await googleResponse.json() : null;
+    const officialResult = result?.items?.find((item) => /official|venue|music|theatre|theater/i.test(`${item.title} ${item.snippet}`));
+    if (officialResult?.link) {
+      const pageResponse = await fetch(officialResult.link, { headers });
+      if (pageResponse.ok) {
+        const html = await pageResponse.text();
+        const title = html.match(/<title[^>]*>([^<]+)/i)?.[1]?.replace(/\s*[-|].*$/, '').trim() || requestedName;
+        const description = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)/i)?.[1] || officialResult.snippet || '';
+        const image = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)/i)?.[1] || null;
+        const info = { name: requestedName, city: requestedCity, title, description, bio: description, image, source: officialResult.link };
+        database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
+        return info;
+      }
+    }
+  }
+  const searchUrl = new URL('https://en.wikipedia.org/w/api.php');
+  searchUrl.searchParams.set('action', 'query'); searchUrl.searchParams.set('list', 'search'); searchUrl.searchParams.set('srlimit', '1'); searchUrl.searchParams.set('format', 'json');
+  searchUrl.searchParams.set('srsearch', `${requestedName} ${requestedCity} concert venue`);
+  const searchResponse = await fetch(searchUrl, { headers });
+  const result = searchResponse.ok ? await searchResponse.json() : null;
+  const candidates = result?.query?.search || [];
+  const title = candidates.find((candidate) => venueWords.every((word) => candidate.title.toLowerCase().includes(word)))?.title || requestedName;
+  const response = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, '_'))}`, { headers });
+  const summary = response.ok ? await response.json() : {};
+  const info = { name: requestedName, city: requestedCity, title: summary.title || requestedName, description: summary.description || '', bio: summary.extract || '', image: summary.thumbnail?.source || summary.originalimage?.source || null, source: summary.content_urls?.desktop?.page || null };
+  database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
+  return info;
 }
 
 function playlistDetails(gig) {
@@ -401,7 +499,7 @@ function mediaExtension(mimeType, filename) {
 }
 
 function mediaRows(gigId) {
-  return database.prepare('SELECT id, filename, mime_type AS mimeType, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY created_at').all(gigId).map((media) => ({ ...media, url: `/api/media/${media.id}` }));
+  return database.prepare('SELECT id, filename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(gigId).map((media) => ({ ...media, isCover: Boolean(media.isCover), url: `/api/media/${media.id}` }));
 }
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -458,7 +556,7 @@ function normaliseSongs(setlist) {
 }
 
 function validateGig(gig) {
-  const required = ['artist', 'venue', 'city', 'date'];
+  const required = ['artist', 'venue', 'city'];
   const missing = required.filter((field) => !String(gig[field] || '').trim());
   if (missing.length) throw new Error(`Please provide: ${missing.join(', ')}.`);
 }
@@ -766,8 +864,38 @@ async function handleApi(request, response, url) {
     });
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/backup') {
+    requireAccount(request);
+    const media = database.prepare('SELECT * FROM gig_media ORDER BY created_at').all();
+    const files = [];
+    for (const item of media) {
+      try { files.push({ ...item, data: (await fs.readFile(path.join(MEDIA_DIR, item.filename))).toString('base64') }); } catch { /* keep manifest entry if a file is missing */ }
+    }
+    return sendJson(response, 200, { format: 'the-master-list-backup-v1', createdAt: new Date().toISOString(), database: (await fs.readFile(DB_FILE)).toString('base64'), media: files });
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/artists') {
     return sendJson(response, 200, await fetchArtistInfo(url.searchParams.get('name')));
+  }
+  if (request.method === 'GET' && url.pathname === '/api/venues') {
+    return sendJson(response, 200, await fetchVenueInfo(url.searchParams.get('name'), url.searchParams.get('city')));
+  }
+  if (request.method === 'PATCH' && url.pathname === '/api/venues') {
+    const name = String(url.searchParams.get('name') || '').trim();
+    const city = String(url.searchParams.get('city') || '').trim();
+    if (!name) return sendError(response, 400, 'A venue name is required.');
+    const body = await readBody(request);
+    const lookupName = `${name}|${city}`.toLowerCase();
+    const existing = database.prepare('SELECT title, description, bio, image, source FROM venue_info WHERE lookup_name = ?').get(lookupName);
+    const info = {
+      title: String(body.title ?? existing?.title ?? name).trim(),
+      description: String(body.description ?? existing?.description ?? '').trim(),
+      bio: String(body.bio ?? existing?.bio ?? '').trim(),
+      image: String(body.image ?? existing?.image ?? '').trim() || null,
+      source: String(body.source ?? existing?.source ?? '').trim() || null
+    };
+    database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
+    return sendJson(response, 200, { name, city, ...info });
   }
 
   if (request.method === 'GET' && url.pathname === '/api/gigs') {
@@ -784,7 +912,7 @@ async function handleApi(request, response, url) {
       artist: gig.artist.trim(),
       venue: gig.venue.trim(),
       city: gig.city.trim(),
-      date: gig.date,
+      date: String(gig.date || '').trim(),
       notes: String(gig.notes || '').trim(),
       performanceNotes: String(gig.performanceNotes || gig.notes || '').trim(),
       venueNotes: String(gig.venueNotes || '').trim(),
@@ -810,19 +938,65 @@ async function handleApi(request, response, url) {
   if (mediaCollectionMatch && request.method === 'POST') {
     const gigId = mediaCollectionMatch[1];
     if (!database.prepare('SELECT id FROM gigs WHERE id = ?').get(gigId)) return sendError(response, 404, 'Gig not found.');
+    const contentType = String(request.headers['content-type'] || '');
+    if (!contentType.includes('application/json')) {
+      const mimeType = contentType.split(';')[0].trim();
+      const filename = decodeURIComponent(String(request.headers['x-media-filename'] || 'upload')).slice(0, 180);
+      const expectedSize = Number(request.headers['content-length'] || 0);
+      if (!/^image\/(jpeg|png|gif|webp)$|^video\/(mp4|webm|quicktime)$/.test(mimeType)) return sendError(response, 415, 'Upload an image or video file.');
+      if (expectedSize > MAX_MEDIA_SIZE) return sendError(response, 413, 'Each upload must be 5 GB or smaller.');
+      await fs.mkdir(MEDIA_DIR, { recursive: true });
+      const id = randomUUID();
+      const storedFilename = `${id}.${mediaExtension(mimeType, filename)}`;
+      const temporaryPath = path.join(MEDIA_DIR, `${storedFilename}.uploading`);
+      const output = legacyFs.createWriteStream(temporaryPath, { flags: 'wx' });
+      let size = 0;
+      try {
+        for await (const chunk of request) {
+          size += chunk.length;
+          if (size > MAX_MEDIA_SIZE) throw new Error('Each upload must be 5 GB or smaller.');
+          if (!output.write(chunk)) await new Promise((resolve) => output.once('drain', resolve));
+        }
+        await new Promise((resolve, reject) => { output.end((error) => error ? reject(error) : resolve()); });
+        await fs.rename(temporaryPath, path.join(MEDIA_DIR, storedFilename));
+      } catch (error) {
+        output.destroy(); await fs.rm(temporaryPath, { force: true });
+        return sendError(response, 413, error.message);
+      }
+      const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next;
+      database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, mimeType, decodeURIComponent(String(request.headers['x-media-caption'] || filename)).trim(), 0, sortOrder, size, new Date().toISOString());
+      return sendJson(response, 201, mediaRows(gigId).find((media) => media.id === id));
+    }
     const body = await readBody(request);
     const mimeType = String(body.mimeType || '');
     const filename = String(body.filename || 'upload').slice(0, 180);
     if (!/^image\/(jpeg|png|gif|webp)$|^video\/(mp4|webm|quicktime)$/.test(mimeType)) return sendError(response, 415, 'Upload an image or video file.');
     const encoded = String(body.data || '').replace(/^data:[^;]+;base64,/, '');
     const file = Buffer.from(encoded, 'base64');
-    if (!file.length || file.length > 20 * 1024 * 1024) return sendError(response, 413, 'Each upload must be between 1 byte and 20 MB.');
+    if (!file.length || file.length > MAX_MEDIA_SIZE) return sendError(response, 413, 'Each upload must be between 1 byte and 5 GB.');
     await fs.mkdir(MEDIA_DIR, { recursive: true });
     const id = randomUUID();
     const storedFilename = `${id}.${mediaExtension(mimeType, filename)}`;
     await fs.writeFile(path.join(MEDIA_DIR, storedFilename), file);
-    database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, size, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, mimeType, file.length, new Date().toISOString());
+    const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next;
+    database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, mimeType, String(body.caption || filename).trim(), body.isCover ? 1 : 0, sortOrder, file.length, new Date().toISOString());
     return sendJson(response, 201, mediaRows(gigId).find((media) => media.id === id));
+  }
+  const mediaMatch = url.pathname.match(/^\/api\/media\/([\w-]+)$/);
+  if (request.method === 'PATCH' && mediaMatch) {
+    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(mediaMatch[1]);
+    if (!media) return sendError(response, 404, 'Media not found.');
+    const body = await readBody(request);
+    if ('isCover' in body && body.isCover) database.prepare('UPDATE gig_media SET is_cover = 0 WHERE gig_id = ?').run(media.gig_id);
+    database.prepare('UPDATE gig_media SET caption = COALESCE(?, caption), is_cover = COALESCE(?, is_cover), sort_order = COALESCE(?, sort_order) WHERE id = ?').run('caption' in body ? String(body.caption || '').trim() : null, 'isCover' in body ? (body.isCover ? 1 : 0) : null, 'sortOrder' in body ? Number(body.sortOrder) : null, mediaMatch[1]);
+    return sendJson(response, 200, mediaRows(media.gig_id).find((entry) => entry.id === mediaMatch[1]));
+  }
+  if (request.method === 'DELETE' && mediaMatch) {
+    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(mediaMatch[1]);
+    if (!media) return sendError(response, 404, 'Media not found.');
+    await fs.rm(path.join(MEDIA_DIR, media.filename), { force: true });
+    database.prepare('DELETE FROM gig_media WHERE id = ?').run(mediaMatch[1]);
+    return sendJson(response, 200, { ok: true });
   }
   if (request.method === 'PATCH' && gigMatch) {
     const update = await readBody(request);
@@ -833,6 +1007,7 @@ async function handleApi(request, response, url) {
     if ('venue' in update) gig.venue = String(update.venue || '').trim();
     if ('city' in update) gig.city = String(update.city || '').trim();
     if ('date' in update) gig.date = String(update.date || '').trim();
+    if ('songs' in update && Array.isArray(update.songs)) gig.songs = update.songs.map((song, index) => ({ title: String(song.title || '').trim(), artist: String(song.artist || '').trim(), encore: Boolean(song.encore), position: index + 1, info: String(song.info || '').trim() })).filter((song) => song.title);
     if ('favorite' in update) gig.favorite = update.favorite === true;
     if ('performanceRating' in update) gig.performanceRating = normaliseRating(update.performanceRating);
     if ('venueRating' in update) gig.venueRating = normaliseRating(update.venueRating);
@@ -869,12 +1044,12 @@ async function handleApi(request, response, url) {
     const artistName = url.searchParams.get('artistName')?.trim();
     const cityName = url.searchParams.get('cityName')?.trim();
     const eventDate = url.searchParams.get('eventDate')?.trim();
-    if (!artistName || !cityName || !eventDate) return sendError(response, 400, 'Artist, city and date are required.');
+    if (!artistName || !cityName) return sendError(response, 400, 'Artist and city are required.');
 
     const upstream = new URL(SETLIST_API);
     upstream.searchParams.set('artistName', artistName);
     upstream.searchParams.set('cityName', cityName);
-    upstream.searchParams.set('date', eventDate.split('-').reverse().join('-'));
+    if (eventDate) upstream.searchParams.set('date', eventDate.split('-').reverse().join('-'));
     const headers = { Accept: 'application/json', 'x-api-key': process.env.SETLIST_FM_API_KEY };
     let setlistResponse = await fetch(upstream, { headers });
 
@@ -916,7 +1091,7 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-server.listen(PORT, () => console.log(`The Master List is running at http://localhost:${PORT}`));
+server.listen(PORT, '127.0.0.1', () => console.log(`The Master List is running at http://127.0.0.1:${PORT}`));
 
 function loadEnvFile() {
   try {

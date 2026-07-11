@@ -5,6 +5,11 @@ const gigList = document.querySelector('#gig-list');
 const emptyState = document.querySelector('#empty-state');
 const count = document.querySelector('#record-count');
 const copyPlaylist = document.querySelector('#copy-playlist');
+const showFilter = document.querySelector('#show-filter');
+const yearFilter = document.querySelector('#year-filter');
+const sortFilter = document.querySelector('#sort-filter');
+const favouriteFilter = document.querySelector('#favourite-filter');
+const archiveStats = document.querySelector('#archive-stats');
 const loadMapButton = document.querySelector('#load-map');
 const mapMessage = document.querySelector('#map-message');
 const mapElement = document.querySelector('#gig-map');
@@ -20,6 +25,7 @@ const loginForm = document.querySelector('#login-form');
 const registerForm = document.querySelector('#register-form');
 const profileBar = document.querySelector('#profile-bar');
 const inviteButton = document.querySelector('#create-invite');
+const downloadBackupButton = document.querySelector('#download-backup');
 const logoutButton = document.querySelector('#logout');
 let selectedSetlist = null;
 let gigs = [];
@@ -32,7 +38,7 @@ let musicKitConfigured = false;
 let venueMap;
 let venueLayer;
 
-const page = ({ '/': 'home', '/shows': 'shows', '/shared': 'shared', '/artist': 'artist', '/edit': 'edit', '/add': 'add', '/map': 'map', '/account': 'account' })[window.location.pathname] || 'home';
+const page = ({ '/': 'home', '/shows': 'shows', '/shared': 'shared', '/artist': 'artist', '/show': 'show', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[window.location.pathname] || 'home';
 document.body.dataset.page = page;
 const routeSections = {
   home: ['home-page'],
@@ -40,11 +46,14 @@ const routeSections = {
   shows: ['shows-archive'],
   shared: ['shows-shared'],
   artist: ['artist-page'],
+  show: ['show-page'],
+  venue: ['venue-page'],
+  'venue-edit': ['venue-edit-page'],
   edit: ['edit-page'],
   map: ['map-page'],
   account: ['shows-shared']
 };
-for (const id of ['home-page', 'add-page', 'shows-archive', 'artist-page', 'edit-page', 'shows-shared', 'map-page']) {
+for (const id of ['home-page', 'add-page', 'shows-archive', 'artist-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page']) {
   document.querySelector(`#${id}`).hidden = !routeSections[page].includes(id);
 }
 const chestButton = document.querySelector('#open-chest');
@@ -62,9 +71,51 @@ const editForm = document.querySelector('#edit-form');
 const editMessage = document.querySelector('#edit-message');
 const editMediaInput = document.querySelector('#edit-media-input');
 const editGallery = document.querySelector('#edit-gallery');
+const editSetlistTracks = document.querySelector('#edit-setlist-tracks');
+const addEditTrack = document.querySelector('#add-edit-track');
 const editGigId = new URLSearchParams(window.location.search).get('id') || '';
+const mediaLightbox = document.querySelector('#media-lightbox');
+const mediaLightboxImage = document.querySelector('#media-lightbox-image');
+const mediaLightboxVideo = document.querySelector('#media-lightbox-video');
+const mediaLightboxCaption = document.querySelector('#media-lightbox-caption');
+const mediaLightboxClose = document.querySelector('#media-lightbox-close');
+const showDetailId = new URLSearchParams(window.location.search).get('id') || '';
+const showDetailHeading = document.querySelector('#show-heading');
+const showDetailPlace = document.querySelector('#show-detail-place');
+const showDetailDate = document.querySelector('#show-detail-date');
+const showDetailNotes = document.querySelector('#show-detail-notes');
+const showDetailVenueNotes = document.querySelector('#show-detail-venue-notes');
+const showDetailRatings = document.querySelector('#show-detail-ratings');
+const showDetailGallery = document.querySelector('#show-detail-gallery');
+const showDetailNoMedia = document.querySelector('#show-detail-no-media');
+const showDetailSetlist = document.querySelector('#show-detail-setlist');
+const showEditLink = document.querySelector('#show-edit-link');
+const venueNameFromUrl = new URLSearchParams(window.location.search).get('name')?.trim() || '';
+const venueCityFromUrl = new URLSearchParams(window.location.search).get('city')?.trim() || '';
+const venueHeading = document.querySelector('#venue-heading');
+const venuePageCity = document.querySelector('#venue-page-city');
+const venueStats = document.querySelector('#venue-stats');
+const venueShows = document.querySelector('#venue-shows');
+const venueEmpty = document.querySelector('#venue-empty');
+const venueDescription = document.querySelector('#venue-description');
+const venueBio = document.querySelector('#venue-bio');
+const venueImage = document.querySelector('#venue-image');
+const venueSource = document.querySelector('#venue-source');
+const venueEditLink = document.querySelector('#venue-edit-link');
+const venueEditForm = document.querySelector('#venue-edit-form');
+const venueEditMessage = document.querySelector('#venue-edit-message');
 
 const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
+const formatGigDate = (date, options = { month: 'short', day: 'numeric', year: 'numeric' }) => date ? new Date(`${date}T12:00:00`).toLocaleDateString(undefined, options) : 'Date unknown';
+
+function populateShowAutofill() {
+  const values = {
+    'artist-options': [...new Set(gigs.map((gig) => gig.artist).filter(Boolean))].sort(),
+    'venue-options': [...new Set(gigs.map((gig) => gig.venue).filter(Boolean))].sort(),
+    'city-options': [...new Set(gigs.map((gig) => gig.city).filter(Boolean))].sort()
+  };
+  Object.entries(values).forEach(([id, options]) => { const list = document.querySelector(`#${id}`); if (list) list.innerHTML = options.map((value) => `<option value="${escapeHtml(value)}"></option>`).join(''); });
+}
 
 function setRatingPicker(picker, value = '') {
   const rating = Number(value) || 0;
@@ -120,16 +171,56 @@ async function fileAsBase64(file) {
 
 async function uploadGigMedia(gigId, files) {
   for (const file of files) {
-    await fetchJson(`/api/gigs/${gigId}/media`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: file.name, mimeType: file.type, data: await fileAsBase64(file) }) });
+    const response = await fetch(`/api/gigs/${gigId}/media`, { method: 'POST', headers: { 'Content-Type': file.type, 'X-Media-Filename': encodeURIComponent(file.name), 'X-Media-Caption': encodeURIComponent(file.name) }, body: file });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Media upload failed.');
   }
 }
 
-function renderMediaGallery(container, media = []) {
+function openMediaLightbox(item) {
+  mediaLightbox.hidden = false;
+  mediaLightboxImage.hidden = !item.mimeType.startsWith('image/');
+  mediaLightboxVideo.hidden = !item.mimeType.startsWith('video/');
+  if (mediaLightboxImage.hidden) mediaLightboxVideo.src = item.url; else mediaLightboxImage.src = item.url;
+  mediaLightboxCaption.textContent = item.caption || item.filename || '';
+}
+
+mediaLightboxClose.addEventListener('click', () => { mediaLightbox.hidden = true; mediaLightboxVideo.pause(); });
+mediaLightbox.addEventListener('click', (event) => { if (event.target === mediaLightbox) mediaLightboxClose.click(); });
+
+function renderMediaGallery(container, media = [], { editable = false } = {}) {
   container.replaceChildren();
   if (!media.length) return;
-  container.innerHTML = media.map((item) => item.mimeType.startsWith('video/')
-    ? `<video src="${item.url}" controls preload="metadata"></video>`
-    : `<a href="${item.url}" target="_blank" rel="noreferrer"><img src="${item.url}" alt="Photo from the show" loading="lazy" /></a>`).join('');
+  container.innerHTML = media.map((item, index) => `<figure class="media-item${item.isCover ? ' is-cover' : ''}" data-media-id="${item.id}">${item.mimeType.startsWith('video/') ? `<video src="${item.url}" controls preload="metadata"></video>` : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" /></button>`}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${editable ? `<div class="media-actions"><button type="button" class="media-caption">Caption</button><button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button><button type="button" class="media-delete">Delete</button><button type="button" class="media-up" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" class="media-down" ${index === media.length - 1 ? 'disabled' : ''}>↓</button></div>` : ''}</figure>`).join('');
+  container.querySelectorAll('.media-open').forEach((button, index) => button.addEventListener('click', () => openMediaLightbox(media[index])));
+  if (editable) {
+    container.querySelectorAll('.media-caption').forEach((button) => button.addEventListener('click', async () => {
+      const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
+      const caption = prompt('Caption this memory', item.caption || item.filename || '');
+      if (caption === null) return;
+      await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caption }) });
+      item.caption = caption; renderMediaGallery(container, media, { editable: true });
+    }));
+    container.querySelectorAll('.media-cover').forEach((button) => button.addEventListener('click', async () => {
+      const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
+      await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isCover: true }) });
+      media.forEach((entry) => { entry.isCover = entry.id === item.id; }); renderMediaGallery(container, media, { editable: true });
+    }));
+    container.querySelectorAll('.media-delete').forEach((button) => button.addEventListener('click', async () => {
+      const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
+      if (!confirm('Delete this memory?')) return;
+      await fetchJson(`/api/media/${item.id}`, { method: 'DELETE' });
+      media.splice(media.indexOf(item), 1); renderMediaGallery(container, media, { editable: true });
+    }));
+    container.querySelectorAll('.media-up, .media-down').forEach((button) => button.addEventListener('click', async () => {
+      const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
+      const index = media.indexOf(item); const nextIndex = button.classList.contains('media-up') ? index - 1 : index + 1;
+      if (nextIndex < 0 || nextIndex >= media.length) return;
+      [media[index], media[nextIndex]] = [media[nextIndex], media[index]];
+      await Promise.all(media.map((entry, order) => fetchJson(`/api/media/${entry.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sortOrder: order }) })));
+      renderMediaGallery(container, media, { editable: true });
+    }));
+  }
 }
 
 function setSharedMessage(text, isError = false) {
@@ -146,7 +237,9 @@ function renderArtistShows(records) {
   artistEmpty.hidden = records.length > 0;
   for (const gig of records) {
     const card = document.querySelector('#gig-template').content.cloneNode(true);
-    card.querySelector('.gig-date').textContent = new Date(`${gig.date}T12:00:00`).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+    card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
+    card.querySelector('.show-detail-link').href = `/show?id=${encodeURIComponent(gig.id)}`;
+    card.querySelector('.gig-date').textContent = formatGigDate(gig.date, { day: '2-digit', month: 'short', year: 'numeric' });
     card.querySelector('.gig-summary h3').textContent = gig.artist;
     card.querySelector('.gig-place').textContent = `${gig.venue} · ${gig.city}`;
     card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
@@ -185,6 +278,62 @@ async function renderArtistPage() {
   }
 }
 
+async function renderVenuePage() {
+  if (page !== 'venue') return;
+  const records = gigs.filter((gig) => gig.venue.toLowerCase() === venueNameFromUrl.toLowerCase() && (!venueCityFromUrl || gig.city.toLowerCase() === venueCityFromUrl.toLowerCase()));
+  venueHeading.textContent = venueNameFromUrl || 'Venue not found';
+  venuePageCity.textContent = venueCityFromUrl;
+  venueStats.innerHTML = records.length ? `<span>${records.length} show${records.length === 1 ? '' : 's'}</span><span>${new Set(records.map((gig) => gig.artist)).size} artists</span><span>${records.filter((gig) => gig.favorite).length} favourites</span>` : '';
+  venueEmpty.hidden = Boolean(records.length);
+  venueShows.replaceChildren();
+  records.forEach((gig) => {
+    const card = document.querySelector('#gig-template').content.cloneNode(true);
+    card.querySelector('.gig-date').textContent = formatGigDate(gig.date, { day: '2-digit', month: 'short', year: 'numeric' });
+    card.querySelector('.gig-summary h3').innerHTML = `<a class="artist-link" href="/artist?name=${encodeURIComponent(gig.artist)}">${escapeHtml(gig.artist)}</a>`;
+    card.querySelector('.gig-place').textContent = `${gig.venue} · ${gig.city}`;
+    card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
+    card.querySelector('.song-total').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist';
+    renderMediaGallery(card.querySelector('.media-gallery'), gig.media);
+    venueShows.append(card);
+  });
+  if (!venueNameFromUrl) return;
+  try {
+    const info = await fetchJson(`/api/venues?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`);
+    venueHeading.textContent = info.title || venueNameFromUrl;
+    venueDescription.textContent = info.description || '';
+    venueBio.textContent = info.bio || 'No venue biography was found yet.';
+    venueImage.hidden = !info.image;
+    if (info.image) { venueImage.src = info.image; venueImage.alt = `${info.title || venueNameFromUrl} photo`; }
+    venueSource.hidden = !info.source;
+    if (info.source) venueSource.href = info.source;
+    venueEditLink.href = `/venue/edit?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`;
+  } catch (error) { venueBio.textContent = 'Venue information could not be loaded right now.'; }
+}
+
+async function renderVenueEditPage() {
+  if (page !== 'venue-edit') return;
+  const info = await fetchJson(`/api/venues?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`);
+  document.querySelector('#venue-edit-heading').textContent = `Edit ${info.title || venueNameFromUrl}`;
+  document.querySelector('#venue-edit-back').href = `/venue?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`;
+  venueEditForm.elements.title.value = info.title || '';
+  venueEditForm.elements.description.value = info.description || '';
+  venueEditForm.elements.bio.value = info.bio || '';
+  venueEditForm.elements.image.value = info.image || '';
+  venueEditForm.elements.source.value = info.source || '';
+}
+
+venueEditForm.addEventListener('submit', async (event) => {
+  if (page !== 'venue-edit') return;
+  event.preventDefault();
+  try {
+    const info = await fetchJson(`/api/venues?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(venueEditForm).entries())) });
+    venueHeading.textContent = info.title; venueDescription.textContent = info.description; venueBio.textContent = info.bio;
+    venueImage.hidden = !info.image; if (info.image) { venueImage.src = info.image; venueImage.alt = `${info.title} photo`; }
+    venueSource.hidden = !info.source; if (info.source) venueSource.href = info.source;
+    venueEditMessage.textContent = 'Venue info saved.'; venueEditMessage.classList.remove('error');
+  } catch (error) { venueEditMessage.textContent = error.message; venueEditMessage.classList.add('error'); }
+});
+
 function renderEditPage() {
   if (page !== 'edit') return;
   const gig = gigs.find((entry) => entry.id === editGigId);
@@ -193,11 +342,19 @@ function renderEditPage() {
   editForm.elements.date.value = gig.date;
   editForm.elements.venue.value = gig.venue;
   editForm.elements.city.value = gig.city;
-  renderMediaGallery(editGallery, gig.media);
+  const tracks = [...(gig.songs || [])];
+  const renderTracks = () => {
+    editSetlistTracks.innerHTML = tracks.map((song, index) => `<div class="edit-track" data-track-index="${index}"><span class="edit-track-number">${index + 1}</span><input class="edit-track-title" value="${escapeHtml(song.title || '')}" placeholder="Track title" /><input class="edit-track-artist" value="${escapeHtml(song.artist || '')}" placeholder="Artist (optional)" /><button class="icon-button edit-track-remove" type="button" aria-label="Remove track">×</button></div>`).join('');
+    editSetlistTracks.querySelectorAll('.edit-track-remove').forEach((button) => button.addEventListener('click', () => { tracks.splice(Number(button.closest('.edit-track').dataset.trackIndex), 1); renderTracks(); }));
+  };
+  renderTracks();
+  addEditTrack.onclick = () => { tracks.push({ title: '', artist: gig.artist }); renderTracks(); editSetlistTracks.lastElementChild?.querySelector('.edit-track-title')?.focus(); };
+  renderMediaGallery(editGallery, gig.media, { editable: true });
   editForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
       const update = Object.fromEntries(new FormData(editForm).entries());
+      update.songs = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row) => ({ title: row.querySelector('.edit-track-title').value, artist: row.querySelector('.edit-track-artist').value, encore: false }));
       const saved = await fetchJson(`/api/gigs/${gig.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
       const files = [...(editMediaInput?.files || [])];
       if (files.length) await uploadGigMedia(gig.id, files);
@@ -206,10 +363,26 @@ function renderEditPage() {
       editMessage.classList.remove('error');
       editMediaInput.value = '';
       const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`);
-      renderMediaGallery(editGallery, refreshed);
+      renderMediaGallery(editGallery, refreshed, { editable: true });
       renderGigs();
     } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); }
   });
+}
+
+function renderShowPage() {
+  if (page !== 'show') return;
+  const gig = gigs.find((entry) => entry.id === showDetailId);
+  if (!gig) { showDetailHeading.textContent = 'Show not found'; return; }
+  showDetailHeading.textContent = gig.artist;
+  showDetailPlace.innerHTML = `<a class="venue-link" href="/venue?name=${encodeURIComponent(gig.venue)}&city=${encodeURIComponent(gig.city)}">${escapeHtml(gig.venue)}</a> · ${escapeHtml(gig.city)}`;
+  showDetailDate.textContent = formatGigDate(gig.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  showDetailNotes.textContent = gig.performanceNotes || gig.notes || 'No performance notes yet.';
+  showDetailVenueNotes.textContent = gig.venueNotes ? `Venue: ${gig.venueNotes}` : 'No venue notes yet.';
+  showDetailRatings.innerHTML = `${gig.performanceRating ? `<span>Performance ${gig.performanceRating} / 5</span>` : '<span>Performance unrated</span>'}${gig.venueRating ? `<span>Venue ${gig.venueRating} / 5</span>` : '<span>Venue unrated</span>'}`;
+  showDetailSetlist.innerHTML = gig.songs?.length ? `<ol>${gig.songs.map((song) => `<li>${escapeHtml(song.title)}${song.artist && song.artist !== gig.artist ? ` <span>— ${escapeHtml(song.artist)}</span>` : ''}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>` : '<p>No setlist attached.</p>';
+  showEditLink.href = `/edit?id=${encodeURIComponent(gig.id)}`;
+  showDetailNoMedia.hidden = Boolean(gig.media?.length);
+  renderMediaGallery(showDetailGallery, gig.media);
 }
 
 function renderProfiles() {
@@ -233,7 +406,7 @@ function renderSharedShows() {
   setSharedMessage(sharedShows.length ? `${sharedShows.length} shared show${sharedShows.length === 1 ? '' : 's'} in this instance.` : 'Share a gig from your archive to start a collaborative record.');
   for (const show of sharedShows) {
     const card = document.querySelector('#shared-template').content.cloneNode(true);
-    const date = new Date(`${show.date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const date = formatGigDate(show.date);
     card.querySelector('.shared-date').textContent = date;
     card.querySelector('h3').textContent = show.artist;
     card.querySelector('.shared-place').textContent = `${show.venue} · ${show.city}`;
@@ -325,11 +498,22 @@ inviteButton.addEventListener('click', async () => {
     setSharedMessage('Invite link copied. It expires in seven days.');
   } catch (error) { setSharedMessage(error.message, true); }
 });
+downloadBackupButton.addEventListener('click', async () => {
+  try {
+    downloadBackupButton.disabled = true;
+    const backup = await fetchJson('/api/backup');
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: 'application/json' }));
+    link.download = `the-master-list-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  } catch (error) { setSharedMessage(error.message, true); } finally { downloadBackupButton.disabled = false; }
+});
 
 document.querySelector('#find-setlist').addEventListener('click', async () => {
   const gig = formValues();
-  if (!gig.artist || !gig.city || !gig.date) {
-    setMessage('Add an artist, city and date before searching.', true);
+  if (!gig.artist || !gig.city) {
+    setMessage('Add an artist and city before searching.', true);
     return;
   }
   setMessage('Searching setlist.fm…');
@@ -342,7 +526,7 @@ document.querySelector('#find-setlist').addEventListener('click', async () => {
       return;
     }
     renderMatches(payload.setlists);
-    setMessage(`Found ${payload.setlists.length} possible match${payload.setlists.length === 1 ? '' : 'es'}. Choose one to attach it.`);
+    setMessage(`Found ${payload.setlists.length} possible match${payload.setlists.length === 1 ? '' : 'es'}. Choose a date to attach it.`);
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -352,7 +536,7 @@ function renderMatches(setlists) {
   results.innerHTML = `<p class="eyebrow">Possible setlists</p>${setlists.map((setlist, index) => `
     <button class="match" data-match="${index}" type="button">
       <strong>${escapeHtml(setlist.venue || 'Unknown venue')}</strong>
-      <span>${escapeHtml(setlist.city)} · ${setlist.songs.length} songs</span>
+      <span>${escapeHtml(setlist.city)} · ${escapeHtml(setlist.date || 'Date unknown')} · ${setlist.songs.length} songs</span>
     </button>`).join('')}`;
   results.hidden = false;
   results.querySelectorAll('[data-match]').forEach((button) => {
@@ -360,6 +544,7 @@ function renderMatches(setlists) {
       selectedSetlist = setlists[Number(button.dataset.match)];
       form.elements.venue.value = selectedSetlist.venue || form.elements.venue.value;
       form.elements.city.value = selectedSetlist.city || form.elements.city.value;
+      if (selectedSetlist.date) { const [day, month, year] = selectedSetlist.date.split('-'); form.elements.date.value = `${year}-${month}-${day}`; }
       results.querySelectorAll('.match').forEach((item) => item.classList.remove('selected'));
       button.classList.add('selected');
       setMessage(`Setlist selected: ${selectedSetlist.songs.length} songs will be saved with this show.`);
@@ -390,18 +575,24 @@ form.addEventListener('submit', async (event) => {
 
 function renderGigs() {
   count.textContent = `${gigs.length} show${gigs.length === 1 ? '' : 's'}`;
-  emptyState.hidden = Boolean(gigs.length);
+  archiveStats.innerHTML = `<span>${gigs.length} shows</span><span>${new Set(gigs.map((gig) => gig.artist.toLowerCase())).size} artists</span><span>${new Set(gigs.map((gig) => `${gig.venue}|${gig.city}`.toLowerCase())).size} venues</span><span>${gigs.filter((gig) => gig.favorite).length} favourites</span><span>${gigs.reduce((total, gig) => total + (gig.songs?.length || 0), 0)} songs</span>`;
+  const query = showFilter?.value.trim().toLowerCase() || '';
+  const year = yearFilter?.value || '';
+  const sort = sortFilter?.value || 'newest';
+  const filtered = gigs.filter((gig) => (!query || [gig.artist, gig.venue, gig.city].some((value) => value.toLowerCase().includes(query))) && (!year || gig.date.startsWith(year)) && (!favouriteFilter?.checked || gig.favorite));
+  emptyState.hidden = Boolean(filtered.length);
   copyPlaylist.hidden = !gigs.some((gig) => gig.songs?.length);
   gigList.replaceChildren();
-  const orderedGigs = [...gigs].sort((a, b) => Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || b.date.localeCompare(a.date));
+  const orderedGigs = [...filtered].sort((a, b) => sort === 'oldest' ? a.date.localeCompare(b.date) : sort === 'rating' ? (Number(b.performanceRating || 0) - Number(a.performanceRating || 0)) || b.date.localeCompare(a.date) : Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || b.date.localeCompare(a.date));
   for (const gig of orderedGigs) {
     const card = document.querySelector('#gig-template').content.cloneNode(true);
     card.querySelector('.gig-card').id = `gig-${gig.id}`;
     card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
-    const date = new Date(`${gig.date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    card.querySelector('.show-detail-link').href = `/show?id=${encodeURIComponent(gig.id)}`;
+    const date = formatGigDate(gig.date);
     card.querySelector('.gig-date').textContent = date;
     card.querySelector('h3').innerHTML = `<a class="artist-link" href="/artist?name=${encodeURIComponent(gig.artist)}">${escapeHtml(gig.artist)}</a>`;
-    card.querySelector('.gig-place').textContent = `${gig.venue} · ${gig.city}`;
+    card.querySelector('.gig-place').innerHTML = `<a class="venue-link" href="/venue?name=${encodeURIComponent(gig.venue)}&city=${encodeURIComponent(gig.city)}">${escapeHtml(gig.venue)}</a> · ${escapeHtml(gig.city)}`;
     card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
     card.querySelector('.venue-notes').textContent = gig.venueNotes ? `Venue: ${gig.venueNotes}` : '';
     card.querySelector('.song-total').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist';
@@ -459,6 +650,16 @@ function renderGigs() {
     gigList.append(card);
   }
 }
+
+function populateYearFilter() {
+  if (!yearFilter) return;
+  const selected = yearFilter.value;
+  yearFilter.replaceChildren(new Option('All years', ''));
+  [...new Set(gigs.map((gig) => gig.date.slice(0, 4)))].sort().reverse().forEach((year) => yearFilter.add(new Option(year, year)));
+  yearFilter.value = selected;
+}
+
+[showFilter, yearFilter, sortFilter, favouriteFilter].forEach((control) => control?.addEventListener('input', renderGigs));
 
 function quickRating(field, label, value) {
   const rating = Number(value) || 0;
@@ -618,10 +819,15 @@ async function initializeApp() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('connected')) setMessage(`${providerName(params.get('connected'))} connected. Choose a show to export.`);
     if (params.get('integrationError')) setMessage('Could not connect that music service. Check its configuration and try again.', true);
+    populateYearFilter();
+    populateShowAutofill();
     renderGigs();
     renderProfiles();
     renderSharedShows();
     await renderArtistPage();
+    renderShowPage();
+    await renderVenuePage();
+    await renderVenueEditPage();
     renderEditPage();
     if (page === 'map' && loadMapButton) loadMapButton.click();
 }

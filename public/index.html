@@ -50,10 +50,10 @@
         </div>
         <form id="gig-form">
           <div class="form-grid">
-            <label>Artist <input name="artist" required placeholder="e.g. The National" /></label>
-            <label>Date <input name="date" required type="date" /></label>
-            <label>Venue <input name="venue" required placeholder="e.g. The Tivoli" /></label>
-            <label>City <input name="city" required placeholder="e.g. Brisbane" /></label>
+            <label>Artist <input name="artist" list="artist-options" required placeholder="e.g. The National" autocomplete="off" /></label>
+            <label>Date <input name="date" type="date" /><small>Optional — leave blank for an undated memory</small></label>
+            <label>Venue <input name="venue" list="venue-options" required placeholder="e.g. The Tivoli" autocomplete="off" /></label>
+            <label>City <input name="city" list="city-options" required placeholder="e.g. Brisbane" autocomplete="off" /></label>
             <fieldset class="rating-choice" data-rating-input="performanceRating">
               <legend>Artist performance</legend>
               <div class="star-picker" aria-label="Rate the artist performance out of five stars">
@@ -70,8 +70,9 @@
             </fieldset>
             <label class="notes">Performance note <textarea name="performanceNotes" placeholder="The set, sound, stage presence…"></textarea></label>
             <label class="notes">Venue note <textarea name="venueNotes" placeholder="The room, crowd, location…"></textarea></label>
-            <label class="notes media-upload">Photos and videos <input id="media-input" name="media" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>Up to 20 MB per file</small></label>
+            <label class="notes media-upload">Photos and videos <input id="media-input" name="media" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>Up to 5 GB per file · uploads stream directly to disk</small></label>
           </div>
+          <datalist id="artist-options"></datalist><datalist id="venue-options"></datalist><datalist id="city-options"></datalist>
           <div class="form-actions">
             <input name="favorite" type="hidden" value="false" />
             <button class="favorite-choice" id="favorite-choice" type="button" aria-pressed="false" title="Mark as a favourite"><span>♡</span> Favourite show</button>
@@ -88,6 +89,8 @@
           <div><p class="eyebrow">02 / The archive</p><h2 id="archive-heading">Shows attended</h2></div>
           <button class="text-button" id="copy-playlist" type="button" hidden>Copy selected setlist</button>
         </div>
+        <div class="archive-filters" aria-label="Filter shows"><label>Search <input id="show-filter" type="search" placeholder="Artist, venue, city" /></label><label>Year <select id="year-filter"><option value="">All years</option></select></label><label>View <select id="sort-filter"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="rating">Highest rated</option></select></label><label class="filter-favourite"><input id="favourite-filter" type="checkbox" /> Favourites only</label></div>
+        <div class="archive-stats" id="archive-stats" aria-label="Archive statistics"></div>
         <div id="empty-state" class="empty-state">Your first gig is waiting to be logged.</div>
         <div class="gig-list" id="gig-list"></div>
       </section>
@@ -103,10 +106,27 @@
         <p class="empty-state" id="artist-empty" hidden>No shows by this artist yet.</p>
       </section>
 
+      <section class="show-page" id="show-page" aria-labelledby="show-heading">
+        <a class="text-button" href="/shows">← Back to shows</a>
+        <div class="show-detail-header"><div><p class="eyebrow">Show memory</p><h1 id="show-heading">Loading show…</h1><p class="show-detail-place" id="show-detail-place"></p><p class="show-detail-date" id="show-detail-date"></p></div><a class="button button-secondary" id="show-edit-link" href="#">Edit show</a></div>
+        <div class="show-detail-grid"><section><p class="eyebrow">Your notes</p><p class="show-detail-notes" id="show-detail-notes"></p><p class="show-detail-venue-notes" id="show-detail-venue-notes"></p></section><section><p class="eyebrow">Ratings</p><div class="show-detail-ratings" id="show-detail-ratings"></div></section></div>
+        <section class="show-detail-media"><p class="eyebrow">Captured at the show</p><div class="media-gallery" id="show-detail-gallery"></div><p class="empty-state" id="show-detail-no-media" hidden>No photos or videos attached yet.</p></section>
+        <section class="show-detail-setlist"><p class="eyebrow">Setlist</p><div class="setlist" id="show-detail-setlist"></div></section>
+      </section>
+
+      <section class="venue-page" id="venue-page" aria-labelledby="venue-heading">
+        <a class="text-button" href="/shows">← Back to shows</a>
+        <div class="venue-profile"><div class="section-heading"><p class="eyebrow">Venue archive</p><h1 id="venue-heading">Loading venue…</h1><p class="venue-page-city" id="venue-page-city"></p><p class="venue-description" id="venue-description"></p><p class="venue-bio" id="venue-bio"></p><a class="artist-source" id="venue-source" target="_blank" rel="noreferrer" hidden>Read more on Wikipedia ↗</a><a class="button button-secondary venue-edit-link" id="venue-edit-link" href="#">Edit venue info</a></div><img class="venue-image" id="venue-image" alt="" hidden /></div>
+        <div class="venue-stats" id="venue-stats"></div>
+        <div class="artist-shows-heading"><p class="eyebrow">Your history here</p><h2>Shows attended</h2></div><div class="gig-list" id="venue-shows"></div><p class="empty-state" id="venue-empty" hidden>No shows at this venue yet.</p>
+      </section>
+
+      <section class="venue-edit-page" id="venue-edit-page" aria-labelledby="venue-edit-heading"><a class="text-button" id="venue-edit-back" href="/shows">← Back to shows</a><div class="section-heading"><p class="eyebrow">Venue edit</p><h1 id="venue-edit-heading">Edit venue info</h1></div><form class="venue-edit-form" id="venue-edit-form"><label>Display name<input name="title" /></label><label>Short description<input name="description" /></label><label>Bio<textarea name="bio"></textarea></label><label>Photo URL<input name="image" type="url" /></label><label>Source URL<input name="source" type="url" /></label><button class="button" type="submit">Save venue info</button><p class="form-message" id="venue-edit-message" role="status"></p></form></section>
+
       <section class="edit-page" id="edit-page" aria-labelledby="edit-heading">
         <a class="text-button" href="/shows">← Back to shows</a>
         <div class="section-heading"><p class="eyebrow">Show edit</p><h1 id="edit-heading">Edit show</h1></div>
-        <form id="edit-form"><div class="form-grid"><label>Artist <input name="artist" required /></label><label>Date <input name="date" required type="date" /></label><label>Venue <input name="venue" required /></label><label>City <input name="city" required /></label><label class="notes">Photos and videos <input id="edit-media-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>Up to 20 MB per file</small></label></div><div class="form-actions"><button class="button" type="submit">Save changes</button></div><p class="form-message" id="edit-message" role="status"></p></form>
+        <form id="edit-form"><div class="form-grid"><label>Artist <input name="artist" required /></label><label>Date <input name="date" type="date" /></label><label>Venue <input name="venue" required /></label><label>City <input name="city" required /></label><label class="notes">Photos and videos <input id="edit-media-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>Up to 5 GB per file · uploads stream directly to disk</small></label></div><div class="edit-setlist"><p class="eyebrow">Setlist</p><div id="edit-setlist-tracks"></div><button class="button button-secondary" id="add-edit-track" type="button">+ Add track</button></div><div class="form-actions"><button class="button" type="submit">Save changes</button></div><p class="form-message" id="edit-message" role="status"></p></form>
         <div class="edit-gallery-heading"><p class="eyebrow">Attached media</p></div><div class="media-gallery edit-gallery" id="edit-gallery"></div>
       </section>
 
@@ -123,7 +143,7 @@
         </div>
         <div class="profile-bar" id="profile-bar" hidden>
           <label>Signed in as <select id="profile-select" disabled><option value="">Loading…</option></select></label>
-          <button class="button button-secondary" id="create-invite" type="button" hidden>Create invite</button><button class="text-button" id="logout" type="button">Sign out</button>
+          <button class="button button-secondary" id="create-invite" type="button" hidden>Create invite</button><button class="button button-secondary" id="download-backup" type="button">Download backup</button><button class="text-button" id="logout" type="button">Sign out</button>
         </div>
         <p class="shared-message" id="shared-message">Create profiles for the people sharing this server, then share shows into the collaborative archive.</p>
         <div class="shared-list" id="shared-list"></div>
@@ -143,7 +163,7 @@
       <article class="gig-card">
         <div class="gig-date"></div>
         <div class="gig-summary"><h3></h3><p class="gig-place"></p><p class="gig-notes"></p><p class="venue-notes"></p></div>
-        <div class="gig-meta"><button class="heart-toggle" aria-label="Mark as favourite" title="Mark as favourite">♡</button><span class="song-total"></span><button class="share-gig" type="button">Share</button><a class="edit-gig" href="#">Edit</a><button class="icon-button delete-gig" aria-label="Remove show" title="Remove show">×</button></div>
+        <div class="gig-meta"><button class="heart-toggle" aria-label="Mark as favourite" title="Mark as favourite">♡</button><span class="song-total"></span><a class="show-detail-link" href="#">Open memory</a><button class="share-gig" type="button">Share</button><a class="edit-gig" href="#">Edit</a><button class="icon-button delete-gig" aria-label="Remove show" title="Remove show">×</button></div>
         <div class="gig-ratings"></div>
         <div class="setlist"></div>
         <div class="media-gallery" aria-label="Photos and videos from this show"></div>
@@ -167,6 +187,8 @@
         <div class="shared-review"><p class="eyebrow">Your review</p><div class="shared-rating-row"><span>Performance</span><div class="shared-stars" data-field="performanceRating"></div><span class="shared-rating-number"></span></div><div class="shared-rating-row"><span>Venue</span><div class="shared-stars" data-field="venueRating"></div><span class="shared-rating-number"></span></div><textarea class="shared-notes" placeholder="Your memory of the night…"></textarea><button class="button button-secondary save-shared-review" type="button">Save review</button></div>
       </article>
     </template>
+
+    <div class="media-lightbox" id="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Media viewer"><button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Close media viewer">×</button><img id="media-lightbox-image" alt="" /><video id="media-lightbox-video" controls></video><p id="media-lightbox-caption"></p></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="/app.js"></script>

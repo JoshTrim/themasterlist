@@ -3,5 +3,6 @@ data/gigs.json
 data/connections.json
 data/geocodes.json
 data/master-list.sqlite*
+data/media/
 node_modules/
 .DS_Store
