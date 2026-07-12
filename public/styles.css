@@ -99,11 +99,12 @@ body[data-page="shows"] h1, body[data-page="shows"] h2, body[data-page="shows"] 
 #set-player-stage .set-player-preload { transition: opacity .65s ease; }
 #set-player-stage .set-player-fading-out { opacity: 0; }
 #set-player-stage .set-player-fading-in { opacity: 1; z-index: 2; }
-.set-player-timeline { position: relative; margin: 14px 2px 8px; padding-top: 16px; }
+.set-player-timeline { position: relative; margin: 14px 2px 8px; padding-top: 16px; cursor: pointer; }
 .set-player-timeline::before { content: ''; position: absolute; top: 7px; left: 0; right: 0; height: 4px; background: #3a1855; border: 1px solid #7422a0; }
 .set-player-progress { position: absolute; z-index: 1; top: 7px; left: 0; height: 4px; width: 0; background: #ff2d9b; box-shadow: 0 0 8px #ff2d9b; transition: width .4s ease; }
 .set-player-markers { position: absolute; top: 0; left: 0; right: 0; height: 18px; }
-.set-marker { position: absolute; transform: translateX(-50%); color: #ffd0ef; font: 11px "VT323", monospace; }
+.set-marker { position: absolute; transform: translateX(-50%); color: #ffd0ef; font: 11px "VT323", monospace; cursor: pointer; }
+.set-marker:hover { color: #fff; text-shadow: 0 0 8px #ff2d9b; }
 .set-player-times { display: flex; justify-content: space-between; color: #caa5d8; font: 12px "VT323", monospace; margin-top: 4px; }
 .set-player .button { margin-top: 10px; }
 .set-player-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

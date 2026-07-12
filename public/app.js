@@ -107,6 +107,7 @@ if (setPlayerNext?.parentNode) { setPlayerNext.parentNode.insertBefore(setPlayer
 const setPlayerStatus = document.querySelector('#set-player-status');
 const setPlayerProgress = document.querySelector('#set-player-progress');
 const setPlayerMarkers = document.querySelector('#set-player-markers');
+const setPlayerTimeline = document.querySelector('.set-player-timeline');
 const setPlayerElapsed = document.querySelector('#set-player-elapsed');
 const setPlayerTotal = document.querySelector('#set-player-total');
 let setQueue = [];
@@ -116,11 +117,30 @@ let activeYoutubePlayer;
 let activeYoutubeVideoId = '';
 const formatPlaybackTime = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 function renderSetTimeline(gig) {
-  setPlayerMarkers.innerHTML = setQueue.map((entry, index) => `<span class="set-marker" style="left:${((index + .5) / setQueue.length) * 100}%" title="${escapeHtml(gig.songs[entry.songIndex].title)}">${index + 1}</span>`).join('');
-  setPlayerProgress.style.width = `${(setQueueIndex / Math.max(1, setQueue.length)) * 100}%`;
+  const markerDenominator = Math.max(1, setQueue.length - 1);
+  setPlayerMarkers.innerHTML = setQueue.map((entry, index) => `<span class="set-marker" style="left:${(index / markerDenominator) * 100}%" title="${escapeHtml(gig.songs[entry.songIndex].title)}">${index + 1}</span>`).join('');
+  setPlayerMarkers.querySelectorAll('.set-marker').forEach((marker, index) => marker.addEventListener('click', () => { setQueueIndex = index; playSetTrack(); }));
+  setPlayerProgress.style.width = `${(setQueueIndex / markerDenominator) * 100}%`;
   setPlayerElapsed.textContent = formatPlaybackTime(setQueueIndex * 240);
   setPlayerTotal.textContent = `~${formatPlaybackTime(setQueue.length * 240)}`;
 }
+setPlayerTimeline?.addEventListener('click', (event) => {
+  if (event.target.closest('.set-marker')) return;
+  if (!setQueue.length) return;
+  const rect = setPlayerTimeline.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  const position = ratio * Math.max(1, setQueue.length - 1);
+  const index = Math.min(setQueue.length - 1, Math.floor(position));
+  const withinTrack = position - index;
+  setPlayerProgress.style.width = `${ratio * 100}%`;
+  if (index !== setQueueIndex) { setQueueIndex = index; playSetTrack(); }
+  requestAnimationFrame(() => {
+    setPlayerProgress.style.width = `${ratio * 100}%`;
+    const video = setPlayerStage.querySelector('video');
+    if (video?.duration) video.currentTime = withinTrack * video.duration;
+    else if (activeYoutubePlayer?.seekTo && activeYoutubePlayer.getDuration) activeYoutubePlayer.seekTo(withinTrack * activeYoutubePlayer.getDuration(), true);
+  });
+});
 function loadYouTubeApi() {
   if (window.YT?.Player) return Promise.resolve(window.YT);
   if (!youtubeApiPromise) youtubeApiPromise = new Promise((resolve) => { const previous = window.onYouTubeIframeAPIReady; window.onYouTubeIframeAPIReady = () => { previous?.(); resolve(window.YT); }; const script = document.createElement('script'); script.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(script); });
