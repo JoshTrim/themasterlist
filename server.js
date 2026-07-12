@@ -95,6 +95,7 @@ addColumnIfMissing('gig_media', 'external_url', 'TEXT');
 addColumnIfMissing('gig_media', 'song_index', 'INTEGER');
 addColumnIfMissing('gig_media', 'playback_filename', 'TEXT');
 addColumnIfMissing('gig_media', 'playback_mime', 'TEXT');
+addColumnIfMissing('gig_media', 'checksum', 'TEXT');
 database.exec(`
   CREATE TABLE IF NOT EXISTS profiles (
     id TEXT PRIMARY KEY,
@@ -512,6 +513,8 @@ function mediaExtension(mimeType, filename) {
   const known = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov' };
   return known[mimeType] || path.extname(filename || '').slice(1).replace(/[^a-z0-9]/gi, '').slice(0, 6) || 'bin';
 }
+function safeMediaName(value) { return String(value || 'undated').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'unknown'; }
+async function hashFile(filePath) { const hash = createHash('sha256'); for await (const chunk of legacyFs.createReadStream(filePath)) hash.update(chunk); return hash.digest('hex'); }
 function optimizeMp4(filePath) {
   return new Promise((resolve) => {
     const outputPath = `${filePath}.faststart`;
@@ -1035,7 +1038,7 @@ async function handleApi(request, response, url) {
     if (!session) { const stored = `${randomUUID()}.${mediaExtension(String(request.headers['content-type'] || ''), filename)}`; session = { gigId, filename, total, offset: 0, stored, path: path.join(MEDIA_DIR, `${stored}.uploading`) }; await fs.mkdir(MEDIA_DIR, { recursive: true }); uploadSessions.set(uploadId, session); }
     if (offset !== session.offset) return sendJson(response, 409, { offset: session.offset });
     const output = legacyFs.createWriteStream(session.path, { flags: offset ? 'a' : 'w' }); for await (const chunk of request) { session.offset += chunk.length; if (!output.write(chunk)) await new Promise((resolve) => output.once('drain', resolve)); } await new Promise((resolve, reject) => output.end((error) => error ? reject(error) : resolve()));
-    if (session.offset >= session.total) { await fs.rename(session.path, path.join(MEDIA_DIR, session.stored)); const id = randomUUID(); const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next; database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, rotation, size, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, 0, ?, ?)').run(id, gigId, session.stored, String(request.headers['content-type'] || 'video/mp4'), filename, sortOrder, session.total, new Date().toISOString()); uploadSessions.delete(uploadId); return sendJson(response, 201, { complete: true, media: mediaRows(gigId).find((entry) => entry.id === id) }); }
+    if (session.offset >= session.total) { await fs.rename(session.path, path.join(MEDIA_DIR, session.stored)); const digest = await hashFile(path.join(MEDIA_DIR, session.stored)); const duplicate = database.prepare('SELECT id FROM gig_media WHERE gig_id = ? AND checksum = ? AND size = ?').get(gigId, digest, session.total); if (duplicate) { await fs.rm(path.join(MEDIA_DIR, session.stored), { force: true }); uploadSessions.delete(uploadId); return sendJson(response, 200, { complete: true, duplicate: true, media: mediaRows(gigId).find((entry) => entry.id === duplicate.id) }); } const id = randomUUID(); const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next; database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, rotation, checksum, size, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?)').run(id, gigId, session.stored, String(request.headers['content-type'] || 'video/mp4'), filename, sortOrder, digest, session.total, new Date().toISOString()); uploadSessions.delete(uploadId); return sendJson(response, 201, { complete: true, media: mediaRows(gigId).find((entry) => entry.id === id) }); }
     return sendJson(response, 200, { complete: false, offset: session.offset });
   }
   if (mediaCollectionMatch && request.method === 'GET') {
@@ -1060,9 +1063,11 @@ async function handleApi(request, response, url) {
       let playbackFilename = null;
       const output = legacyFs.createWriteStream(temporaryPath, { flags: 'wx' });
       let size = 0;
+      const checksum = createHash('sha256');
       try {
         for await (const chunk of request) {
           size += chunk.length;
+          checksum.update(chunk);
           if (size > MAX_MEDIA_SIZE) throw new Error('Each upload must be 50 GB or smaller.');
           if (!output.write(chunk)) await new Promise((resolve) => output.once('drain', resolve));
         }
@@ -1074,9 +1079,12 @@ async function handleApi(request, response, url) {
         return sendError(response, 413, error.message);
       }
       const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next;
-      database.prepare('INSERT INTO gig_media (id, gig_id, filename, playback_filename, mime_type, caption, is_cover, sort_order, rotation, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, playbackFilename, mimeType, decodeURIComponent(String(request.headers['x-media-caption'] || filename)).trim(), 0, sortOrder, 0, size, new Date().toISOString());
+      const digest = checksum.digest('hex');
+      const duplicate = database.prepare('SELECT id FROM gig_media WHERE gig_id = ? AND checksum = ? AND size = ?').get(gigId, digest, size);
+      if (duplicate) { await fs.rm(path.join(MEDIA_DIR, storedFilename), { force: true }); return sendJson(response, 200, { duplicate: true, media: mediaRows(gigId).find((entry) => entry.id === duplicate.id) }); }
+      database.prepare('INSERT INTO gig_media (id, gig_id, filename, playback_filename, mime_type, caption, is_cover, sort_order, rotation, checksum, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, playbackFilename, mimeType, decodeURIComponent(String(request.headers['x-media-caption'] || filename)).trim(), 0, sortOrder, 0, digest, size, new Date().toISOString());
       console.log(`[media] upload complete: ${id}`);
-      if (mimeType.startsWith('video/')) { const proxyName = `${id}.playback.mp4`; setImmediate(async () => { if (await createPlaybackProxy(path.join(MEDIA_DIR, storedFilename), path.join(MEDIA_DIR, proxyName))) database.prepare('UPDATE gig_media SET playback_filename = ?, playback_mime = ? WHERE id = ?').run(proxyName, 'video/mp4', id); }); }
+      if (mimeType.startsWith('video/')) { const gigInfo = database.prepare('SELECT artist, venue, date FROM gigs WHERE id = ?').get(gigId); const proxyName = `${safeMediaName(gigInfo?.artist)}-${safeMediaName(gigInfo?.venue)}-${safeMediaName(gigInfo?.date)}-${id.slice(0, 8)}-playback.mp4`; setImmediate(async () => { if (await createPlaybackProxy(path.join(MEDIA_DIR, storedFilename), path.join(MEDIA_DIR, proxyName))) database.prepare('UPDATE gig_media SET playback_filename = ?, playback_mime = ? WHERE id = ?').run(proxyName, 'video/mp4', id); }); }
       return sendJson(response, 201, mediaRows(gigId).find((media) => media.id === id));
     }
     const body = await readBody(request);
