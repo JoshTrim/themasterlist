@@ -27,7 +27,7 @@
     </svg>
     <header class="site-header">
       <a class="brand" href="/">The<br /><em>Master</em> List</a>
-      <nav class="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/shows">Shows</a><a href="/shared">Shared</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a></nav>
+      <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">☰</button><nav class="site-nav" id="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/shows">Shows</a><a href="/shared">Shared</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a><a href="/login">Sign in</a></nav>
       <span class="record-count" id="record-count">0 shows</span>
     </header>
 
@@ -70,7 +70,7 @@
             </fieldset>
             <label class="notes">Performance note <textarea name="performanceNotes" placeholder="The set, sound, stage presence…"></textarea></label>
             <label class="notes">Venue note <textarea name="venueNotes" placeholder="The room, crowd, location…"></textarea></label>
-            <label class="notes media-upload">Photos and videos <input id="media-input" name="media" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>Up to 5 GB per file · uploads stream directly to disk</small></label>
+            <label class="notes media-upload">Photos and videos <input id="media-input" name="media" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>Up to 20 GB per file · uploads stream directly to disk</small></label>
             <label class="notes media-upload">Other media · YouTube <input id="youtube-media-input" type="url" placeholder="https://youtube.com/watch?v=…" /><small>Paste a video URL to embed it with this show</small></label>
           </div>
           <datalist id="artist-options"></datalist><datalist id="venue-options"></datalist><datalist id="city-options"></datalist>
@@ -149,6 +149,7 @@
         <p class="shared-message" id="shared-message">Create profiles for the people sharing this server, then share shows into the collaborative archive.</p>
         <div class="shared-list" id="shared-list"></div>
       </section>
+      <section class="account-page" id="account-page" aria-labelledby="account-heading"><div class="section-heading"><p class="eyebrow">Profile settings</p><h1 id="account-heading">Account</h1></div><form id="account-form"><label>Display name<input name="name" required maxlength="80" /></label><label>Current password<input name="currentPassword" type="password" required /></label><label>New password<input name="newPassword" type="password" minlength="10" required /></label><button class="button" type="submit">Update account</button><p class="form-message" id="account-message" role="status"></p></form></section>
 
       <section class="map-section" id="map-page" aria-labelledby="map-heading">
         <div class="section-heading map-heading">
@@ -158,13 +159,14 @@
         <p class="map-message" id="map-message">Plot each venue to see the geography of your live-music life.</p>
         <div class="gig-map" id="gig-map" aria-label="Map of venues you have attended" hidden></div>
       </section>
+      <section class="city-page" id="city-page" aria-labelledby="city-heading"><a class="text-button" href="/shows">← Back to shows</a><div class="section-heading"><p class="eyebrow">Location archive</p><h1 id="city-heading">Loading location…</h1><p id="city-subtitle"></p></div><div class="venue-list" id="city-venues"></div></section>
     </main>
 
     <template id="gig-template">
       <article class="gig-card">
         <div class="gig-date"></div>
         <div class="gig-summary"><h3></h3><p class="gig-place"></p><p class="gig-notes"></p><p class="venue-notes"></p></div>
-        <div class="gig-meta"><button class="heart-toggle" aria-label="Mark as favourite" title="Mark as favourite">♡</button><span class="song-total"></span><a class="show-detail-link" href="#">Open memory</a><button class="share-gig" type="button">Share</button><a class="edit-gig" href="#">Edit</a><button class="icon-button delete-gig" aria-label="Remove show" title="Remove show">×</button></div>
+        <div class="gig-meta"><button class="heart-toggle" aria-label="Mark as favourite" title="Mark as favourite">♡</button><span class="song-total"></span><a class="show-detail-link" href="#">Open memory</a><a class="play-gig" href="#">▶ Play set</a><button class="share-gig" type="button">Share</button><a class="edit-gig" href="#">Edit</a><button class="icon-button delete-gig" aria-label="Remove show" title="Remove show">×</button></div>
         <div class="gig-ratings"></div>
         <div class="setlist"></div>
         <div class="media-gallery" aria-label="Photos and videos from this show"></div>

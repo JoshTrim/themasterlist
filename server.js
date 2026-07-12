@@ -9,6 +9,7 @@ const { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash } = req
 loadEnvFile();
 
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '127.0.0.1';
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = path.join(ROOT, 'data');
@@ -19,7 +20,9 @@ const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
 const GEOCODES_FILE = path.join(DATA_DIR, 'geocodes.json');
 const SETLIST_API = 'https://api.setlist.fm/rest/1.0/search/setlists';
 const pendingOAuth = new Map();
-const MAX_MEDIA_SIZE = 5 * 1024 * 1024 * 1024;
+const rotateJobs = new Map();
+const uploadSessions = new Map();
+const MAX_MEDIA_SIZE = Number(process.env.MAX_MEDIA_SIZE_GB || 50) * 1024 * 1024 * 1024;
 
 const database = new Database(DB_FILE);
 database.pragma('journal_mode = WAL');
@@ -90,6 +93,8 @@ addColumnIfMissing('gig_media', 'rotation', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('gig_media', 'category', "TEXT NOT NULL DEFAULT 'show'");
 addColumnIfMissing('gig_media', 'external_url', 'TEXT');
 addColumnIfMissing('gig_media', 'song_index', 'INTEGER');
+addColumnIfMissing('gig_media', 'playback_filename', 'TEXT');
+addColumnIfMissing('gig_media', 'playback_mime', 'TEXT');
 database.exec(`
   CREATE TABLE IF NOT EXISTS profiles (
     id TEXT PRIMARY KEY,
@@ -177,7 +182,7 @@ async function readGigs() {
     setlistFmId: row.setlist_fm_id,
     setlistFmUrl: row.setlist_fm_url,
     songs: JSON.parse(row.songs || '[]'),
-    media: database.prepare('SELECT id, filename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id).map((media) => ({ ...media, isCover: Boolean(media.isCover), rotation: Number(media.rotation || 0), songIndex: media.songIndex === null ? null : Number(media.songIndex), url: media.externalUrl || `/api/media/${media.id}` })),
+    media: database.prepare('SELECT id, filename, playback_filename AS playbackFilename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id).map((media) => ({ ...media, isCover: Boolean(media.isCover), rotation: Number(media.rotation || 0), songIndex: media.songIndex === null ? null : Number(media.songIndex), url: media.externalUrl || `/api/media/${media.id}` })),
     createdAt: row.created_at
   }));
 }
@@ -507,15 +512,28 @@ function mediaExtension(mimeType, filename) {
   const known = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov' };
   return known[mimeType] || path.extname(filename || '').slice(1).replace(/[^a-z0-9]/gi, '').slice(0, 6) || 'bin';
 }
+function optimizeMp4(filePath) {
+  return new Promise((resolve) => {
+    const outputPath = `${filePath}.faststart`;
+    const process = spawn('ffmpeg', ['-y', '-nostdin', '-i', filePath, '-c', 'copy', '-movflags', '+faststart', outputPath]);
+    process.on('close', async (code) => { if (code === 0) { await fs.rename(outputPath, filePath).catch(() => {}); } else await fs.rm(outputPath, { force: true }).catch(() => {}); resolve(); });
+    process.on('error', () => resolve());
+  });
+}
+function createPlaybackProxy(filePath, outputPath) {
+  return new Promise((resolve) => { console.log(`[media] starting playback encode: ${filePath}`); const process = spawn('ffmpeg', ['-y', '-nostdin', '-i', filePath, '-vf', 'scale=-2:1080', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', outputPath]); process.on('close', (code) => { console.log(`[media] playback encode ${code === 0 ? 'complete' : `failed (${code})`}: ${outputPath}`); resolve(code === 0); }); process.on('error', (error) => { console.error('[media] ffmpeg could not start:', error.message); resolve(false); }); });
+}
 
 function mediaRows(gigId) {
   return database.prepare('SELECT id, filename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(gigId).map((media) => ({ ...media, isCover: Boolean(media.isCover), rotation: Number(media.rotation || 0), songIndex: media.songIndex === null ? null : Number(media.songIndex), url: media.externalUrl || `/api/media/${media.id}` }));
 }
 
-function rotateVideoFile(inputPath, outputPath, direction = 'clockwise') {
+function probeDuration(inputPath) { return new Promise((resolve) => { const probe = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', inputPath]); let out = ''; probe.stdout.on('data', (chunk) => { out += chunk; }); probe.on('close', () => resolve(Number(out.trim()) || 0)); probe.on('error', () => resolve(0)); }); }
+function rotateVideoFile(inputPath, outputPath, direction = 'clockwise', onProgress = () => {}) {
   return new Promise((resolve, reject) => {
     const transpose = direction === 'counterclockwise' ? 'transpose=2' : 'transpose=1';
-    const process = spawn('ffmpeg', ['-y', '-nostdin', '-i', inputPath, '-map', '0', '-vf', transpose, '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-c:a', 'aac', '-movflags', '+faststart', '-f', 'mp4', outputPath], { stdio: ['ignore', 'ignore', 'pipe'] });
+    const process = spawn('ffmpeg', ['-y', '-nostdin', '-i', inputPath, '-map', '0', '-vf', transpose, '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-c:a', 'aac', '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-f', 'mp4', outputPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let progress = ''; process.stdout.on('data', (chunk) => { progress += chunk.toString(); const match = progress.match(/out_time_ms=(\d+)/); if (match) { onProgress(Number(match[1])); progress = progress.slice(progress.lastIndexOf('out_time_ms=')); } });
     let error = '';
     process.stderr.on('data', (chunk) => { error += chunk.toString(); });
     process.on('error', reject);
@@ -808,6 +826,17 @@ async function handleApi(request, response, url) {
     return sendJson(response, 200, { id: profile.id, name: profile.name, isAdmin: profile.isAdmin }, sessionHeaders(profile.id));
   }
 
+  if (request.method === 'PATCH' && url.pathname === '/api/auth/account') {
+    try {
+      const account = requireAccount(request);
+      const body = await readBody(request);
+      if (!passwordMatches(String(body.currentPassword || ''), database.prepare('SELECT password_hash FROM profiles WHERE id = ?').get(account.id)?.password_hash)) return sendError(response, 401, 'Current password is incorrect.');
+      const { name, password } = validateAccount({ name: body.name, password: body.newPassword });
+      database.prepare('UPDATE profiles SET name = ?, password_hash = ? WHERE id = ?').run(name, hashPassword(password), account.id);
+      return sendJson(response, 200, { id: account.id, name, isAdmin: account.isAdmin });
+    } catch (error) { return sendError(response, error.message === 'Sign in required.' ? 401 : 400, error.message); }
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/auth/register') {
     try {
       const body = await readBody(request);
@@ -845,9 +874,19 @@ async function handleApi(request, response, url) {
     const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(mediaFileMatch[1]);
     if (!media) return sendError(response, 404, 'Media not found.');
     try {
-      const file = await fs.readFile(path.join(MEDIA_DIR, media.filename));
-      response.writeHead(200, { 'Content-Type': media.mime_type, 'Content-Length': file.length, 'Cache-Control': 'private, max-age=3600' });
-      return response.end(file);
+      const filePath = path.join(MEDIA_DIR, media.playback_filename || media.filename);
+      const stat = await fs.stat(filePath);
+      const range = request.headers.range;
+      if (range) {
+        const match = range.match(/bytes=(\d*)-(\d*)/);
+        const start = match?.[1] ? Number(match[1]) : 0;
+        const end = match?.[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
+        if (start >= stat.size || start > end) return sendError(response, 416, 'Requested range not satisfiable.');
+        response.writeHead(206, { 'Content-Type': media.playback_mime || media.mime_type, 'Content-Length': end - start + 1, 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=3600' });
+        return legacyFs.createReadStream(filePath, { start, end }).pipe(response);
+      }
+      response.writeHead(200, { 'Content-Type': media.playback_mime || media.mime_type, 'Content-Length': stat.size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=3600' });
+      return legacyFs.createReadStream(filePath).pipe(response);
     } catch (error) { return sendError(response, 404, 'Media file not found.'); }
   }
 
@@ -987,12 +1026,25 @@ async function handleApi(request, response, url) {
 
   const gigMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)$/);
   const mediaCollectionMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/media$/);
+  const chunkMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/media\/chunk$/);
+  if (chunkMatch && request.method === 'POST') {
+    console.log(`[media] chunk upload request for gig ${chunkMatch[1]} offset ${request.headers['x-upload-offset'] || 0}`);
+    const gigId = chunkMatch[1]; const uploadId = String(request.headers['x-upload-id'] || ''); const filename = decodeURIComponent(String(request.headers['x-media-filename'] || 'upload')); const total = Number(request.headers['x-upload-total'] || 0); const offset = Number(request.headers['x-upload-offset'] || 0);
+    if (!uploadId || !total) return sendError(response, 400, 'Invalid upload session.');
+    let session = uploadSessions.get(uploadId);
+    if (!session) { const stored = `${randomUUID()}.${mediaExtension(String(request.headers['content-type'] || ''), filename)}`; session = { gigId, filename, total, offset: 0, stored, path: path.join(MEDIA_DIR, `${stored}.uploading`) }; await fs.mkdir(MEDIA_DIR, { recursive: true }); uploadSessions.set(uploadId, session); }
+    if (offset !== session.offset) return sendJson(response, 409, { offset: session.offset });
+    const output = legacyFs.createWriteStream(session.path, { flags: offset ? 'a' : 'w' }); for await (const chunk of request) { session.offset += chunk.length; if (!output.write(chunk)) await new Promise((resolve) => output.once('drain', resolve)); } await new Promise((resolve, reject) => output.end((error) => error ? reject(error) : resolve()));
+    if (session.offset >= session.total) { await fs.rename(session.path, path.join(MEDIA_DIR, session.stored)); const id = randomUUID(); const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next; database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, rotation, size, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, 0, ?, ?)').run(id, gigId, session.stored, String(request.headers['content-type'] || 'video/mp4'), filename, sortOrder, session.total, new Date().toISOString()); uploadSessions.delete(uploadId); return sendJson(response, 201, { complete: true, media: mediaRows(gigId).find((entry) => entry.id === id) }); }
+    return sendJson(response, 200, { complete: false, offset: session.offset });
+  }
   if (mediaCollectionMatch && request.method === 'GET') {
     if (!database.prepare('SELECT id FROM gigs WHERE id = ?').get(mediaCollectionMatch[1])) return sendError(response, 404, 'Gig not found.');
     return sendJson(response, 200, mediaRows(mediaCollectionMatch[1]));
   }
   if (mediaCollectionMatch && request.method === 'POST') {
     const gigId = mediaCollectionMatch[1];
+    console.log(`[media] upload request for gig ${gigId}: ${request.headers['content-type'] || 'unknown'} (${request.headers['content-length'] || 'unknown'} bytes)`);
     if (!database.prepare('SELECT id FROM gigs WHERE id = ?').get(gigId)) return sendError(response, 404, 'Gig not found.');
     const contentType = String(request.headers['content-type'] || '');
     if (!contentType.includes('application/json')) {
@@ -1000,27 +1052,31 @@ async function handleApi(request, response, url) {
       const filename = decodeURIComponent(String(request.headers['x-media-filename'] || 'upload')).slice(0, 180);
       const expectedSize = Number(request.headers['content-length'] || 0);
       if (!/^image\/(jpeg|png|gif|webp)$|^video\/(mp4|webm|quicktime)$/.test(mimeType)) return sendError(response, 415, 'Upload an image or video file.');
-      if (expectedSize > MAX_MEDIA_SIZE) return sendError(response, 413, 'Each upload must be 5 GB or smaller.');
+      if (expectedSize > MAX_MEDIA_SIZE) return sendError(response, 413, 'Each upload must be 50 GB or smaller.');
       await fs.mkdir(MEDIA_DIR, { recursive: true });
       const id = randomUUID();
       const storedFilename = `${id}.${mediaExtension(mimeType, filename)}`;
       const temporaryPath = path.join(MEDIA_DIR, `${storedFilename}.uploading`);
+      let playbackFilename = null;
       const output = legacyFs.createWriteStream(temporaryPath, { flags: 'wx' });
       let size = 0;
       try {
         for await (const chunk of request) {
           size += chunk.length;
-          if (size > MAX_MEDIA_SIZE) throw new Error('Each upload must be 5 GB or smaller.');
+          if (size > MAX_MEDIA_SIZE) throw new Error('Each upload must be 50 GB or smaller.');
           if (!output.write(chunk)) await new Promise((resolve) => output.once('drain', resolve));
         }
         await new Promise((resolve, reject) => { output.end((error) => error ? reject(error) : resolve()); });
         await fs.rename(temporaryPath, path.join(MEDIA_DIR, storedFilename));
+        console.log(`[media] upload stored: ${storedFilename} (${size} bytes)`);
       } catch (error) {
         output.destroy(); await fs.rm(temporaryPath, { force: true });
         return sendError(response, 413, error.message);
       }
       const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next;
-      database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, rotation, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, mimeType, decodeURIComponent(String(request.headers['x-media-caption'] || filename)).trim(), 0, sortOrder, 0, size, new Date().toISOString());
+      database.prepare('INSERT INTO gig_media (id, gig_id, filename, playback_filename, mime_type, caption, is_cover, sort_order, rotation, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, playbackFilename, mimeType, decodeURIComponent(String(request.headers['x-media-caption'] || filename)).trim(), 0, sortOrder, 0, size, new Date().toISOString());
+      console.log(`[media] upload complete: ${id}`);
+      if (mimeType.startsWith('video/')) { const proxyName = `${id}.playback.mp4`; setImmediate(async () => { if (await createPlaybackProxy(path.join(MEDIA_DIR, storedFilename), path.join(MEDIA_DIR, proxyName))) database.prepare('UPDATE gig_media SET playback_filename = ?, playback_mime = ? WHERE id = ?').run(proxyName, 'video/mp4', id); }); }
       return sendJson(response, 201, mediaRows(gigId).find((media) => media.id === id));
     }
     const body = await readBody(request);
@@ -1038,7 +1094,7 @@ async function handleApi(request, response, url) {
     if (!/^image\/(jpeg|png|gif|webp)$|^video\/(mp4|webm|quicktime)$/.test(mimeType)) return sendError(response, 415, 'Upload an image or video file.');
     const encoded = String(body.data || '').replace(/^data:[^;]+;base64,/, '');
     const file = Buffer.from(encoded, 'base64');
-    if (!file.length || file.length > MAX_MEDIA_SIZE) return sendError(response, 413, 'Each upload must be between 1 byte and 5 GB.');
+    if (!file.length || file.length > MAX_MEDIA_SIZE) return sendError(response, 413, 'Each upload must be between 1 byte and 50 GB.');
     await fs.mkdir(MEDIA_DIR, { recursive: true });
     const id = randomUUID();
     const storedFilename = `${id}.${mediaExtension(mimeType, filename)}`;
@@ -1068,19 +1124,15 @@ async function handleApi(request, response, url) {
     const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(rotateMatch[1]);
     if (!media) return sendError(response, 404, 'Media not found.');
     if (!media.mime_type.startsWith('video/')) return sendError(response, 400, 'Only video files can be rotated this way.');
-    const inputPath = path.join(MEDIA_DIR, media.filename);
+    const inputPath = path.join(MEDIA_DIR, media.playback_filename || media.filename);
     const outputPath = `${inputPath}.rotating.mp4`;
     const direction = url.searchParams.get('direction') === 'counterclockwise' ? 'counterclockwise' : 'clockwise';
-    try {
-      await rotateVideoFile(inputPath, outputPath, direction);
-      await fs.rename(outputPath, inputPath);
-      database.prepare('UPDATE gig_media SET rotation = 0 WHERE id = ?').run(media.id);
-      return sendJson(response, 200, mediaRows(media.gig_id).find((entry) => entry.id === media.id));
-    } catch (error) {
-      await fs.rm(outputPath, { force: true });
-      return sendError(response, 500, error.message);
-    }
+    const jobId = randomUUID(); rotateJobs.set(jobId, { status: 'running', progress: 5 });
+    setImmediate(async () => { try { const duration = await probeDuration(inputPath); await rotateVideoFile(inputPath, outputPath, direction, (timeMs) => { const progress = duration ? Math.min(99, Math.round((timeMs / 1000000 / duration) * 100)) : 10; rotateJobs.set(jobId, { status: 'running', progress }); }); await fs.rename(outputPath, inputPath); database.prepare('UPDATE gig_media SET rotation = 0 WHERE id = ?').run(media.id); rotateJobs.set(jobId, { status: 'complete', progress: 100 }); } catch (error) { await fs.rm(outputPath, { force: true }); rotateJobs.set(jobId, { status: 'error', progress: 0, error: error.message }); } });
+    return sendJson(response, 202, { jobId });
   }
+  const rotateStatusMatch = url.pathname.match(/^\/api\/media\/rotate\/([\w-]+)$/);
+  if (request.method === 'GET' && rotateStatusMatch) return sendJson(response, 200, rotateJobs.get(rotateStatusMatch[1]) || { status: 'missing', progress: 0 });
   if (request.method === 'PATCH' && gigMatch) {
     const update = await readBody(request);
     const gigs = await readGigs();
@@ -1180,7 +1232,7 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-server.listen(PORT, '127.0.0.1', () => console.log(`The Master List is running at http://127.0.0.1:${PORT}`));
+server.listen(PORT, HOST, () => console.log(`The Master List is running at http://${HOST}:${PORT}`));
 
 function loadEnvFile() {
   try {

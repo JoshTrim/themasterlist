@@ -1,4 +1,10 @@
 const form = document.querySelector('#gig-form');
+const mobileMenuToggle = document.querySelector('#mobile-menu-toggle');
+const siteNav = document.querySelector('#site-nav');
+mobileMenuToggle?.addEventListener('click', () => { const open = siteNav.classList.toggle('is-open'); mobileMenuToggle.setAttribute('aria-expanded', String(open)); });
+const jobQueue = new Map();
+const jobPanel = document.createElement('aside'); jobPanel.className = 'job-queue'; jobPanel.hidden = true; jobPanel.innerHTML = '<p class="eyebrow">Background jobs</p><div class="job-queue-list"></div>'; document.body.append(jobPanel);
+function updateJob(id, patch) { jobQueue.set(id, { ...jobQueue.get(id), ...patch }); const list = jobPanel.querySelector('.job-queue-list'); list.innerHTML = [...jobQueue.values()].map((job) => `<div class="job-entry" data-job-id="${job.id}"><div><strong>${escapeHtml(job.type)}</strong><span>${escapeHtml(job.name)}</span><button class="job-dismiss" type="button" aria-label="Cancel or dismiss job">×</button></div><div class="job-bar"><i style="width:${job.progress || 0}%"></i></div><small>${job.status === 'complete' ? 'Complete' : job.status === 'error' ? 'Failed' : job.status === 'cancelled' ? 'Cancelled' : `${Math.round(job.progress || 0)}%`}</small></div>`).join(''); list.querySelectorAll('.job-dismiss').forEach((button) => button.addEventListener('click', () => { const job = jobQueue.get(button.closest('.job-entry').dataset.jobId); if (job?.status === 'running' && job.cancel) job.cancel(); else jobQueue.delete(job.id); updateJob(job.id, { status: 'cancelled', progress: 0 }); if (job.status !== 'running') jobQueue.delete(job.id); })); jobPanel.hidden = !jobQueue.size; }
 const message = document.querySelector('#form-message');
 const results = document.querySelector('#search-results');
 const gigList = document.querySelector('#gig-list');
@@ -25,6 +31,8 @@ const authMessage = document.querySelector('#auth-message');
 const setupForm = document.querySelector('#setup-form');
 const loginForm = document.querySelector('#login-form');
 const registerForm = document.querySelector('#register-form');
+const accountForm = document.querySelector('#account-form');
+const accountMessage = document.querySelector('#account-message');
 const profileBar = document.querySelector('#profile-bar');
 const inviteButton = document.querySelector('#create-invite');
 const downloadBackupButton = document.querySelector('#download-backup');
@@ -40,22 +48,25 @@ let musicKitConfigured = false;
 let venueMap;
 let venueLayer;
 
-const page = ({ '/': 'home', '/shows': 'shows', '/shared': 'shared', '/artist': 'artist', '/show': 'show', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[window.location.pathname] || 'home';
+const page = ({ '/': 'home', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[window.location.pathname] || 'home';
 document.body.dataset.page = page;
 const routeSections = {
   home: ['home-page'],
   add: ['add-page'],
   shows: ['shows-archive'],
   shared: ['shows-shared'],
+  login: ['shows-shared'],
   artist: ['artist-page'],
   show: ['show-page'],
+  playback: ['show-page'],
+  city: ['city-page'],
   venue: ['venue-page'],
   'venue-edit': ['venue-edit-page'],
   edit: ['edit-page'],
   map: ['map-page'],
-  account: ['shows-shared']
+  account: ['account-page']
 };
-for (const id of ['home-page', 'add-page', 'shows-archive', 'artist-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page']) {
+for (const id of ['home-page', 'add-page', 'shows-archive', 'artist-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
   document.querySelector(`#${id}`).hidden = !routeSections[page].includes(id);
 }
 const chestButton = document.querySelector('#open-chest');
@@ -72,6 +83,13 @@ const artistEmpty = document.querySelector('#artist-empty');
 const editForm = document.querySelector('#edit-form');
 const editMessage = document.querySelector('#edit-message');
 const editMediaInput = document.querySelector('#edit-media-input');
+const pendingMedia = new WeakMap();
+function setupMobileFileQueue(input) { if (!input || !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) return; input.removeAttribute('multiple'); pendingMedia.set(input, []); input.addEventListener('change', () => { const files = pendingMedia.get(input); if (input.files[0]) files.push(input.files[0]); input.value = ''; }); }
+setupMobileFileQueue(mediaInput);
+setupMobileFileQueue(editMediaInput);
+function addFileClearButton(input) { if (!input) return; const button = document.createElement('button'); button.type = 'button'; button.className = 'button button-secondary file-clear'; button.textContent = 'Clear selected files'; button.addEventListener('click', () => { input.value = ''; if (pendingMedia.has(input)) pendingMedia.set(input, []); }); input.insertAdjacentElement('afterend', button); }
+addFileClearButton(mediaInput);
+addFileClearButton(editMediaInput);
 const editGallery = document.querySelector('#edit-gallery');
 const editSetlistTracks = document.querySelector('#edit-setlist-tracks');
 const addEditTrack = document.querySelector('#add-edit-track');
@@ -118,7 +136,7 @@ let activeYoutubeVideoId = '';
 const formatPlaybackTime = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 function renderSetTimeline(gig) {
   const markerDenominator = Math.max(1, setQueue.length - 1);
-  setPlayerMarkers.innerHTML = setQueue.map((entry, index) => `<span class="set-marker" style="left:${(index / markerDenominator) * 100}%" title="${escapeHtml(gig.songs[entry.songIndex].title)}">${index + 1}</span>`).join('');
+  setPlayerMarkers.innerHTML = setQueue.map((entry, index) => `<span class="set-marker${index === 0 ? ' marker-first' : ''}${index === setQueue.length - 1 ? ' marker-last' : ''}" style="left:${(index / markerDenominator) * 100}%" title="${escapeHtml(gig.songs[entry.songIndex].title)}">${index + 1} · ${escapeHtml(gig.songs[entry.songIndex].title)}</span>`).join('');
   setPlayerMarkers.querySelectorAll('.set-marker').forEach((marker, index) => marker.addEventListener('click', () => { setQueueIndex = index; playSetTrack(); }));
   setPlayerProgress.style.width = `${(setQueueIndex / markerDenominator) * 100}%`;
   setPlayerElapsed.textContent = formatPlaybackTime(setQueueIndex * 240);
@@ -226,12 +244,13 @@ async function fileAsBase64(file) {
   return btoa(binary);
 }
 
-async function uploadGigMedia(gigId, files) {
-  for (const file of files) {
-    const response = await fetch(`/api/gigs/${gigId}/media`, { method: 'POST', headers: { 'Content-Type': file.type, 'X-Media-Filename': encodeURIComponent(file.name), 'X-Media-Caption': encodeURIComponent(file.name) }, body: file });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || 'Media upload failed.');
-  }
+async function uploadGigMedia(gigId, files, onProgress = () => {}) {
+  if (!crypto.randomUUID) Object.defineProperty(crypto, 'randomUUID', { value: () => `${Date.now()}-${Math.random().toString(36).slice(2)}` });
+  const queue = [...files];
+  const uploadChunked = async (file, jobId) => { const chunkSize = 8 * 1024 * 1024; const uploadId = crypto.randomUUID(); let offset = 0; while (offset < file.size) { const chunk = file.slice(offset, offset + chunkSize); let attempt = 0; while (true) { try { const response = await fetch(`/api/gigs/${gigId}/media/chunk`, { method: 'POST', headers: { 'Content-Type': file.type, 'X-Upload-Id': uploadId, 'X-Upload-Offset': String(offset), 'X-Upload-Total': String(file.size), 'X-Media-Filename': encodeURIComponent(file.name) }, body: chunk }); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Chunk failed'); offset = body.offset || file.size; updateJob(jobId, { progress: offset / file.size * 100 }); onProgress(file, offset / file.size); break; } catch (error) { if (++attempt >= 3) throw error; await new Promise((resolve) => setTimeout(resolve, 1000 * attempt)); } } } };
+  const worker = async () => { while (queue.length) { const file = queue.shift(); const jobId = `${Date.now()}-${Math.random()}`; updateJob(jobId, { id: jobId, type: 'Uploading', name: file.name, status: 'running', progress: 0 }); try { if (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) await uploadChunked(file, jobId); else await new Promise((resolve, reject) => { const xhr = new XMLHttpRequest(); updateJob(jobId, { cancel: () => xhr.abort() }); xhr.open('POST', `/api/gigs/${gigId}/media`); xhr.setRequestHeader('Content-Type', file.type); xhr.setRequestHeader('X-Media-Filename', encodeURIComponent(file.name)); xhr.setRequestHeader('X-Media-Caption', encodeURIComponent(file.name)); xhr.upload.onprogress = (event) => { if (event.lengthComputable) { updateJob(jobId, { progress: (event.loaded / event.total) * 100 }); onProgress(file, event.loaded / event.total); } }; xhr.onload = () => { let body = {}; try { body = JSON.parse(xhr.responseText); } catch {} if (xhr.status >= 200 && xhr.status < 300) { updateJob(jobId, { status: 'complete', progress: 100 }); resolve(body); } else reject(new Error(body.error || 'Media upload failed.')); }; xhr.onerror = () => reject(new Error('Media upload failed.')); xhr.send(file); }); updateJob(jobId, { status: 'complete', progress: 100 }); } catch (error) { updateJob(jobId, { status: 'error' }); throw error; } } };
+  const concurrency = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ? 1 : 2;
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
 }
 
 async function addYouTubeMedia(gigId, input) {
@@ -305,7 +324,9 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
       if (item.mimeType.startsWith('video/')) {
         button.disabled = true; button.textContent = 'Rotating…';
         const direction = button.classList.contains('media-rotate-ccw') ? 'counterclockwise' : 'clockwise';
-        await fetchJson(`/api/media/${item.id}/rotate?direction=${direction}`, { method: 'POST' });
+        const job = await fetchJson(`/api/media/${item.id}/rotate?direction=${direction}`, { method: 'POST' });
+        let status; do { await new Promise((resolve) => setTimeout(resolve, 1000)); status = await fetchJson(`/api/media/rotate/${job.jobId}`); button.textContent = `Rotating ${status.progress}%`; } while (status.status === 'running');
+        if (status.status === 'error') throw new Error(status.error || 'Video rotation failed.');
       } else {
         item.rotation = ((item.rotation || 0) + 90) % 360;
         await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rotation: item.rotation }) });
@@ -339,6 +360,13 @@ function renderArtistShows(records) {
     const card = document.querySelector('#gig-template').content.cloneNode(true);
     card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
     card.querySelector('.show-detail-link').href = `/show?id=${encodeURIComponent(gig.id)}`;
+    card.querySelector('.play-gig').href = `/playback?id=${encodeURIComponent(gig.id)}`;
+    card.querySelector('.play-gig').textContent = '▶';
+    card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
+    card.querySelector('.show-detail-link').href = `/show?id=${encodeURIComponent(gig.id)}`;
+    card.querySelector('.play-gig').href = `/playback?id=${encodeURIComponent(gig.id)}`;
+    card.querySelector('.play-gig').textContent = '▶';
+    card.querySelector('.play-gig').setAttribute('aria-label', 'Play set');
     card.querySelector('.gig-date').textContent = formatGigDate(gig.date, { day: '2-digit', month: 'short', year: 'numeric' });
     card.querySelector('.gig-summary h3').textContent = gig.artist;
     card.querySelector('.gig-place').textContent = `${gig.venue} · ${gig.city}`;
@@ -388,6 +416,10 @@ async function renderVenuePage() {
   venueShows.replaceChildren();
   records.forEach((gig) => {
     const card = document.querySelector('#gig-template').content.cloneNode(true);
+    card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
+    card.querySelector('.show-detail-link').href = `/show?id=${encodeURIComponent(gig.id)}`;
+    card.querySelector('.play-gig').href = `/playback?id=${encodeURIComponent(gig.id)}`;
+    card.querySelector('.play-gig').textContent = '▶';
     card.querySelector('.gig-date').textContent = formatGigDate(gig.date, { day: '2-digit', month: 'short', year: 'numeric' });
     card.querySelector('.gig-summary h3').innerHTML = `<a class="artist-link" href="/artist?name=${encodeURIComponent(gig.artist)}">${escapeHtml(gig.artist)}</a>`;
     card.querySelector('.gig-place').textContent = `${gig.venue} · ${gig.city}`;
@@ -438,6 +470,7 @@ function renderEditPage() {
   if (page !== 'edit') return;
   const gig = gigs.find((entry) => entry.id === editGigId);
   if (!gig) { editMessage.textContent = 'Show not found.'; editMessage.classList.add('error'); return; }
+  if (!editMediaInput.dataset.immediateUpload) { editMediaInput.dataset.immediateUpload = 'true'; editMediaInput.addEventListener('change', async () => { const files = pendingMedia.get(editMediaInput) || [...(editMediaInput.files || [])]; if (!files.length) return; editMessage.textContent = `Uploading ${files.length} file${files.length === 1 ? '' : 's'}…`; try { await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; }); pendingMedia.set(editMediaInput, []); editMediaInput.value = ''; editMessage.textContent = 'Media uploaded.'; const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`); renderMediaGallery(editGallery, refreshed, { editable: true, songs: gig.songs || [] }); } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); } }); }
   editForm.elements.artist.value = gig.artist;
   editForm.elements.date.value = gig.date;
   editForm.elements.venue.value = gig.venue;
@@ -452,12 +485,14 @@ function renderEditPage() {
   renderMediaGallery(editGallery, gig.media, { editable: true, songs: gig.songs || [] });
   editForm.addEventListener('submit', async (event) => {
     event.preventDefault();
+    const submitButton = editForm.querySelector('button[type="submit"]');
     try {
+      submitButton.disabled = true;
       const update = Object.fromEntries(new FormData(editForm).entries());
       update.songs = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row) => ({ title: row.querySelector('.edit-track-title').value, artist: row.querySelector('.edit-track-artist').value, encore: false }));
       const saved = await fetchJson(`/api/gigs/${gig.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
-      const files = [...(editMediaInput?.files || [])];
-      if (files.length) await uploadGigMedia(gig.id, files);
+      const files = pendingMedia.get(editMediaInput) || [...(editMediaInput?.files || [])];
+      if (files.length) await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; });
       await addYouTubeMedia(gig.id, editYoutubeMediaInput);
       gigs = gigs.map((entry) => entry.id === gig.id ? { ...entry, ...saved } : entry);
       editMessage.textContent = files.length ? 'Show and media saved.' : 'Show saved.';
@@ -466,16 +501,16 @@ function renderEditPage() {
       const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`);
       renderMediaGallery(editGallery, refreshed, { editable: true, songs: gig.songs || [] });
       renderGigs();
-    } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); }
+    } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); } finally { submitButton.disabled = false; }
   });
 }
 
 function renderShowPage() {
-  if (page !== 'show') return;
+  if (!['show', 'playback'].includes(page)) return;
   const gig = gigs.find((entry) => entry.id === showDetailId);
   if (!gig) { showDetailHeading.textContent = 'Show not found'; return; }
   showDetailHeading.textContent = gig.artist;
-  showDetailPlace.innerHTML = `<a class="venue-link" href="/venue?name=${encodeURIComponent(gig.venue)}&city=${encodeURIComponent(gig.city)}">${escapeHtml(gig.venue)}</a> · ${escapeHtml(gig.city)}`;
+  showDetailPlace.innerHTML = `<a class="venue-link" href="/venue?name=${encodeURIComponent(gig.venue)}&city=${encodeURIComponent(gig.city)}">${escapeHtml(gig.venue)}</a> · <a class="venue-link" href="/city?name=${encodeURIComponent(gig.city)}">${escapeHtml(gig.city)}</a>`;
   showDetailDate.textContent = formatGigDate(gig.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   showDetailNotes.textContent = gig.performanceNotes || gig.notes || 'No performance notes yet.';
   showDetailVenueNotes.textContent = gig.venueNotes ? `Venue: ${gig.venueNotes}` : 'No venue notes yet.';
@@ -486,6 +521,7 @@ function renderShowPage() {
   // Keep the gallery manageable from the show page too, including YouTube videos
   // attached by the setlist search.
   renderMediaGallery(showDetailGallery, gig.media, { editable: true, songs: gig.songs || [] });
+  if (page === 'playback' || new URLSearchParams(window.location.search).get('play') === '1') setTimeout(() => playWholeSet?.click(), 0);
 }
 
 function playSetTrack() {
@@ -663,7 +699,7 @@ async function submitAuth(form, endpoint, extra = {}) {
     const signedIn = await fetchJson(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     account = signedIn;
     activeProfileId = account.id;
-    await initializeApp();
+    window.location.replace('/');
   } catch (error) { authMessage.textContent = error.message; authMessage.classList.add('error'); }
 }
 
@@ -671,6 +707,7 @@ setupForm.addEventListener('submit', (event) => { event.preventDefault(); submit
 loginForm.addEventListener('submit', (event) => { event.preventDefault(); submitAuth(loginForm, '/api/auth/login'); });
 registerForm.addEventListener('submit', (event) => { event.preventDefault(); submitAuth(registerForm, '/api/auth/register', { inviteToken: new URLSearchParams(window.location.search).get('invite') }); });
 logoutButton.addEventListener('click', async () => { await fetchJson('/api/auth/logout', { method: 'POST' }); account = null; activeProfileId = ''; showAuth({ configured: true }); });
+accountForm?.addEventListener('submit', async (event) => { event.preventDefault(); const body = Object.fromEntries(new FormData(accountForm)); accountMessage.textContent = 'Updating…'; try { account = await fetchJson('/api/auth/account', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); accountMessage.textContent = 'Account updated.'; accountForm.reset(); accountForm.elements.name.value = account.name; } catch (error) { accountMessage.textContent = error.message; accountMessage.classList.add('error'); } });
 inviteButton.addEventListener('click', async () => {
   try {
     const invite = await fetchJson('/api/auth/invites', { method: 'POST' });
@@ -735,12 +772,14 @@ function renderMatches(setlists) {
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const gig = formValues();
-  const mediaFiles = [...(mediaInput?.files || [])];
+  const mediaFiles = pendingMedia.get(mediaInput) || [...(mediaInput?.files || [])];
   delete gig.media;
   const payload = { ...gig, songs: selectedSetlist?.songs || [], setlistFmId: selectedSetlist?.id || null, setlistFmUrl: selectedSetlist?.url || null };
+  const submitButton = form.querySelector('button[type="submit"]');
   try {
+    submitButton.disabled = true;
     const saved = await fetchJson('/api/gigs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (mediaFiles.length) await uploadGigMedia(saved.id, mediaFiles);
+    if (mediaFiles.length) await uploadGigMedia(saved.id, mediaFiles, (file, fraction) => setMessage(fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`));
     await addYouTubeMedia(saved.id, youtubeMediaInput);
     gigs.unshift(saved);
     form.reset();
@@ -751,7 +790,7 @@ form.addEventListener('submit', async (event) => {
     renderGigs();
   } catch (error) {
     setMessage(error.message, true);
-  }
+  } finally { submitButton.disabled = false; }
 });
 
 function renderGigs() {
@@ -770,10 +809,13 @@ function renderGigs() {
     card.querySelector('.gig-card').id = `gig-${gig.id}`;
     card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
     card.querySelector('.show-detail-link').href = `/show?id=${encodeURIComponent(gig.id)}`;
+    card.querySelector('.play-gig').href = `/playback?id=${encodeURIComponent(gig.id)}`;
+    card.querySelector('.play-gig').textContent = '▶';
+    card.querySelector('.play-gig').setAttribute('aria-label', 'Play set');
     const date = formatGigDate(gig.date);
     card.querySelector('.gig-date').textContent = date;
     card.querySelector('h3').innerHTML = `<a class="artist-link" href="/artist?name=${encodeURIComponent(gig.artist)}">${escapeHtml(gig.artist)}</a>`;
-    card.querySelector('.gig-place').innerHTML = `<a class="venue-link" href="/venue?name=${encodeURIComponent(gig.venue)}&city=${encodeURIComponent(gig.city)}">${escapeHtml(gig.venue)}</a> · ${escapeHtml(gig.city)}`;
+    card.querySelector('.gig-place').innerHTML = `<a class="venue-link" href="/venue?name=${encodeURIComponent(gig.venue)}&city=${encodeURIComponent(gig.city)}">${escapeHtml(gig.venue)}</a> · <a class="venue-link" href="/city?name=${encodeURIComponent(gig.city)}">${escapeHtml(gig.city)}</a>`;
     card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
     card.querySelector('.venue-notes').textContent = gig.venueNotes ? `Venue: ${gig.venueNotes}` : '';
     card.querySelector('.song-total').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist';
@@ -830,6 +872,15 @@ function renderGigs() {
     });
     gigList.append(card);
   }
+}
+
+function renderCityPage() {
+  if (page !== 'city') return;
+  const city = new URLSearchParams(window.location.search).get('name')?.trim() || '';
+  document.querySelector('#city-heading').textContent = city || 'Location';
+  const venues = [...new Map(gigs.filter((gig) => gig.city.toLowerCase() === city.toLowerCase()).map((gig) => [`${gig.venue}|${gig.city}`, gig])).values()];
+  document.querySelector('#city-subtitle').textContent = `${venues.length} venue${venues.length === 1 ? '' : 's'} in this area`;
+  document.querySelector('#city-venues').innerHTML = venues.map((gig) => `<a class="city-venue-card" href="/venue?name=${encodeURIComponent(gig.venue)}&city=${encodeURIComponent(gig.city)}"><strong>${escapeHtml(gig.venue)}</strong><span>${gigs.filter((entry) => entry.venue === gig.venue && entry.city === gig.city).length} show${gigs.filter((entry) => entry.venue === gig.venue && entry.city === gig.city).length === 1 ? '' : 's'}</span></a>`).join('') || '<p class="empty-state">No venues recorded here yet.</p>';
 }
 
 function populateYearFilter() {
@@ -984,7 +1035,9 @@ copyPlaylist.addEventListener('click', async () => {
 async function initializeApp() {
   const auth = await fetchJson('/api/auth/status');
   account = auth.account;
+  if (accountForm && account) accountForm.elements.name.value = account.name;
   if (!account) {
+    if (page === 'home') { window.location.replace('/login'); return; }
     showAuth(auth);
   } else {
     authPanel.hidden = true;
@@ -1007,6 +1060,7 @@ async function initializeApp() {
     renderSharedShows();
     await renderArtistPage();
     renderShowPage();
+    renderCityPage();
     await renderVenuePage();
     await renderVenueEditPage();
     renderEditPage();
