@@ -3,6 +3,7 @@ const Database = require('better-sqlite3');
 const fs = require('node:fs/promises');
 const legacyFs = require('node:fs');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash } = require('node:crypto');
 
 loadEnvFile();
@@ -72,14 +73,23 @@ database.exec(`
     caption TEXT NOT NULL DEFAULT '',
     is_cover INTEGER NOT NULL DEFAULT 0,
     sort_order INTEGER NOT NULL DEFAULT 0,
+    rotation INTEGER NOT NULL DEFAULT 0,
+    category TEXT NOT NULL DEFAULT 'show',
+    external_url TEXT,
+    song_index INTEGER,
     size INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     FOREIGN KEY (gig_id) REFERENCES gigs(id) ON DELETE CASCADE
   )
 `);
+database.exec(`CREATE TABLE IF NOT EXISTS youtube_search_cache (cache_key TEXT PRIMARY KEY, results TEXT NOT NULL, created_at TEXT NOT NULL)`);
 addColumnIfMissing('gig_media', 'caption', "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing('gig_media', 'is_cover', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('gig_media', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('gig_media', 'rotation', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('gig_media', 'category', "TEXT NOT NULL DEFAULT 'show'");
+addColumnIfMissing('gig_media', 'external_url', 'TEXT');
+addColumnIfMissing('gig_media', 'song_index', 'INTEGER');
 database.exec(`
   CREATE TABLE IF NOT EXISTS profiles (
     id TEXT PRIMARY KEY,
@@ -167,7 +177,7 @@ async function readGigs() {
     setlistFmId: row.setlist_fm_id,
     setlistFmUrl: row.setlist_fm_url,
     songs: JSON.parse(row.songs || '[]'),
-    media: database.prepare('SELECT id, filename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id).map((media) => ({ ...media, isCover: Boolean(media.isCover), url: `/api/media/${media.id}` })),
+    media: database.prepare('SELECT id, filename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id).map((media) => ({ ...media, isCover: Boolean(media.isCover), rotation: Number(media.rotation || 0), songIndex: media.songIndex === null ? null : Number(media.songIndex), url: media.externalUrl || `/api/media/${media.id}` })),
     createdAt: row.created_at
   }));
 }
@@ -499,7 +509,18 @@ function mediaExtension(mimeType, filename) {
 }
 
 function mediaRows(gigId) {
-  return database.prepare('SELECT id, filename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(gigId).map((media) => ({ ...media, isCover: Boolean(media.isCover), url: `/api/media/${media.id}` }));
+  return database.prepare('SELECT id, filename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(gigId).map((media) => ({ ...media, isCover: Boolean(media.isCover), rotation: Number(media.rotation || 0), songIndex: media.songIndex === null ? null : Number(media.songIndex), url: media.externalUrl || `/api/media/${media.id}` }));
+}
+
+function rotateVideoFile(inputPath, outputPath, direction = 'clockwise') {
+  return new Promise((resolve, reject) => {
+    const transpose = direction === 'counterclockwise' ? 'transpose=2' : 'transpose=1';
+    const process = spawn('ffmpeg', ['-y', '-nostdin', '-i', inputPath, '-map', '0', '-vf', transpose, '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-c:a', 'aac', '-movflags', '+faststart', '-f', 'mp4', outputPath], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let error = '';
+    process.stderr.on('data', (chunk) => { error += chunk.toString(); });
+    process.on('error', reject);
+    process.on('close', (code) => code === 0 ? resolve() : reject(new Error(error.slice(-500) || 'Video rotation failed.')));
+  });
 }
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -648,6 +669,41 @@ async function exportYouTube(gig) {
     }, 'YouTube playlist');
   }
   return { url: `https://www.youtube.com/playlist?list=${playlist.id}`, matched: videos.length, unmatched };
+}
+
+async function searchYouTubeForGig(gig) {
+  const accessToken = await getAccessToken('youtube');
+  const headers = { Authorization: `Bearer ${accessToken}` };
+  const matches = [];
+  const venueNeedle = String(gig.venue || '').trim().toLowerCase();
+  const dateNeedles = [];
+  if (gig.date) {
+    const date = new Date(`${gig.date}T00:00:00`);
+    if (!Number.isNaN(date.getTime())) {
+      dateNeedles.push(String(date.getFullYear()));
+      dateNeedles.push(date.toLocaleDateString('en-US', { month: 'long' }).toLowerCase());
+      dateNeedles.push(date.toLocaleDateString('en-US', { month: 'short' }).toLowerCase());
+    }
+  }
+  for (const [index, song] of gig.songs.entries()) {
+    const cacheKey = `${gig.id}:${index}:${gig.artist}:${gig.venue}:${gig.date || ''}`;
+    const cached = database.prepare('SELECT results, created_at AS createdAt FROM youtube_search_cache WHERE cache_key = ?').get(cacheKey);
+    if (cached && Date.now() - Date.parse(cached.createdAt) < 24 * 60 * 60 * 1000) {
+      matches.push({ index, title: song.title, results: JSON.parse(cached.results) });
+      continue;
+    }
+    const query = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '10', q: `${song.artist || gig.artist} ${song.title} ${gig.venue} ${gig.city} live` });
+    const result = await providerResponse(`https://www.googleapis.com/youtube/v3/search?${query}`, { headers }, 'YouTube search');
+    const filtered = (result.items || []).filter((item) => {
+      if (!item.id?.videoId) return false;
+      const text = `${item.snippet?.title || ''} ${item.snippet?.description || ''}`.toLowerCase();
+      return (venueNeedle && text.includes(venueNeedle)) || dateNeedles.some((needle) => text.includes(needle));
+    });
+    const results = filtered.slice(0, 3).map((item) => ({ id: item.id.videoId, title: item.snippet?.title || '', channel: item.snippet?.channelTitle || '', thumbnail: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url || '' }));
+    database.prepare('INSERT INTO youtube_search_cache (cache_key, results, created_at) VALUES (?, ?, ?) ON CONFLICT(cache_key) DO UPDATE SET results = excluded.results, created_at = excluded.created_at').run(cacheKey, JSON.stringify(results), new Date().toISOString());
+    matches.push({ index, title: song.title, results });
+  }
+  return matches;
 }
 
 async function exportAppleMusic(gig, musicUserToken) {
@@ -964,10 +1020,19 @@ async function handleApi(request, response, url) {
         return sendError(response, 413, error.message);
       }
       const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next;
-      database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, mimeType, decodeURIComponent(String(request.headers['x-media-caption'] || filename)).trim(), 0, sortOrder, size, new Date().toISOString());
+      database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, rotation, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, mimeType, decodeURIComponent(String(request.headers['x-media-caption'] || filename)).trim(), 0, sortOrder, 0, size, new Date().toISOString());
       return sendJson(response, 201, mediaRows(gigId).find((media) => media.id === id));
     }
     const body = await readBody(request);
+    if (body.externalUrl) {
+      let parsed;
+      try { parsed = new URL(String(body.externalUrl)); } catch { return sendError(response, 400, 'Enter a valid YouTube URL.'); }
+      if (!['youtube.com', 'www.youtube.com', 'youtu.be', 'www.youtube-nocookie.com'].includes(parsed.hostname.toLowerCase())) return sendError(response, 400, 'Only YouTube URLs can be added as external media.');
+      const id = randomUUID();
+      const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next;
+      database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, rotation, category, external_url, song_index, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, 'external', 'video/youtube', String(body.caption || 'YouTube video').trim(), 0, sortOrder, 0, 'other', parsed.toString(), Number.isInteger(body.songIndex) ? body.songIndex : null, 0, new Date().toISOString());
+      return sendJson(response, 201, mediaRows(gigId).find((media) => media.id === id));
+    }
     const mimeType = String(body.mimeType || '');
     const filename = String(body.filename || 'upload').slice(0, 180);
     if (!/^image\/(jpeg|png|gif|webp)$|^video\/(mp4|webm|quicktime)$/.test(mimeType)) return sendError(response, 415, 'Upload an image or video file.');
@@ -979,7 +1044,7 @@ async function handleApi(request, response, url) {
     const storedFilename = `${id}.${mediaExtension(mimeType, filename)}`;
     await fs.writeFile(path.join(MEDIA_DIR, storedFilename), file);
     const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next;
-    database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, mimeType, String(body.caption || filename).trim(), body.isCover ? 1 : 0, sortOrder, file.length, new Date().toISOString());
+    database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, rotation, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, mimeType, String(body.caption || filename).trim(), body.isCover ? 1 : 0, sortOrder, 0, file.length, new Date().toISOString());
     return sendJson(response, 201, mediaRows(gigId).find((media) => media.id === id));
   }
   const mediaMatch = url.pathname.match(/^\/api\/media\/([\w-]+)$/);
@@ -988,7 +1053,7 @@ async function handleApi(request, response, url) {
     if (!media) return sendError(response, 404, 'Media not found.');
     const body = await readBody(request);
     if ('isCover' in body && body.isCover) database.prepare('UPDATE gig_media SET is_cover = 0 WHERE gig_id = ?').run(media.gig_id);
-    database.prepare('UPDATE gig_media SET caption = COALESCE(?, caption), is_cover = COALESCE(?, is_cover), sort_order = COALESCE(?, sort_order) WHERE id = ?').run('caption' in body ? String(body.caption || '').trim() : null, 'isCover' in body ? (body.isCover ? 1 : 0) : null, 'sortOrder' in body ? Number(body.sortOrder) : null, mediaMatch[1]);
+    database.prepare('UPDATE gig_media SET caption = COALESCE(?, caption), is_cover = COALESCE(?, is_cover), sort_order = COALESCE(?, sort_order), rotation = COALESCE(?, rotation), song_index = CASE WHEN ? THEN ? ELSE song_index END WHERE id = ?').run('caption' in body ? String(body.caption || '').trim() : null, 'isCover' in body ? (body.isCover ? 1 : 0) : null, 'sortOrder' in body ? Number(body.sortOrder) : null, 'rotation' in body ? ((Number(body.rotation) % 360) + 360) % 360 : null, 'songIndex' in body ? 1 : 0, 'songIndex' in body && body.songIndex !== null && body.songIndex !== '' ? Number(body.songIndex) : null, mediaMatch[1]);
     return sendJson(response, 200, mediaRows(media.gig_id).find((entry) => entry.id === mediaMatch[1]));
   }
   if (request.method === 'DELETE' && mediaMatch) {
@@ -997,6 +1062,24 @@ async function handleApi(request, response, url) {
     await fs.rm(path.join(MEDIA_DIR, media.filename), { force: true });
     database.prepare('DELETE FROM gig_media WHERE id = ?').run(mediaMatch[1]);
     return sendJson(response, 200, { ok: true });
+  }
+  const rotateMatch = url.pathname.match(/^\/api\/media\/([\w-]+)\/rotate$/);
+  if (request.method === 'POST' && rotateMatch) {
+    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(rotateMatch[1]);
+    if (!media) return sendError(response, 404, 'Media not found.');
+    if (!media.mime_type.startsWith('video/')) return sendError(response, 400, 'Only video files can be rotated this way.');
+    const inputPath = path.join(MEDIA_DIR, media.filename);
+    const outputPath = `${inputPath}.rotating.mp4`;
+    const direction = url.searchParams.get('direction') === 'counterclockwise' ? 'counterclockwise' : 'clockwise';
+    try {
+      await rotateVideoFile(inputPath, outputPath, direction);
+      await fs.rename(outputPath, inputPath);
+      database.prepare('UPDATE gig_media SET rotation = 0 WHERE id = ?').run(media.id);
+      return sendJson(response, 200, mediaRows(media.gig_id).find((entry) => entry.id === media.id));
+    } catch (error) {
+      await fs.rm(outputPath, { force: true });
+      return sendError(response, 500, error.message);
+    }
   }
   if (request.method === 'PATCH' && gigMatch) {
     const update = await readBody(request);
@@ -1026,6 +1109,12 @@ async function handleApi(request, response, url) {
   }
 
   const exportMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/export\/(spotify|youtube|apple-music)$/);
+  const youtubeSearchMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/youtube-search$/);
+  if (request.method === 'POST' && youtubeSearchMatch) {
+    const gig = findGig(await readGigs(), youtubeSearchMatch[1]);
+    if (!configured('youtube')) return sendError(response, 503, 'YouTube is not configured yet.');
+    return sendJson(response, 200, { matches: await searchYouTubeForGig(gig) });
+  }
   if (request.method === 'POST' && exportMatch) {
     const provider = exportMatch[2];
     if (!configured(provider)) return sendError(response, 503, `${provider === 'apple-music' ? 'Apple Music' : provider === 'youtube' ? 'YouTube' : 'Spotify'} is not configured yet.`);

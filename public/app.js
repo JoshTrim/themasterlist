@@ -15,6 +15,8 @@ const mapMessage = document.querySelector('#map-message');
 const mapElement = document.querySelector('#gig-map');
 const favoriteChoice = document.querySelector('#favorite-choice');
 const mediaInput = document.querySelector('#media-input');
+const youtubeMediaInput = document.querySelector('#youtube-media-input');
+const editYoutubeMediaInput = document.querySelector('#edit-youtube-media-input');
 const profileSelect = document.querySelector('#profile-select');
 const sharedMessage = document.querySelector('#shared-message');
 const sharedList = document.querySelector('#shared-list');
@@ -89,6 +91,41 @@ const showDetailRatings = document.querySelector('#show-detail-ratings');
 const showDetailGallery = document.querySelector('#show-detail-gallery');
 const showDetailNoMedia = document.querySelector('#show-detail-no-media');
 const showDetailSetlist = document.querySelector('#show-detail-setlist');
+const findYouTubeSet = document.querySelector('#find-youtube-set');
+const youtubeResults = document.querySelector('#youtube-results');
+const youtubeSearchMessage = document.querySelector('#youtube-search-message');
+const playWholeSet = document.querySelector('#play-whole-set');
+const setPlayer = document.querySelector('#set-player');
+const setPlayerTitle = document.querySelector('#set-player-title');
+const setPlayerStage = document.querySelector('#set-player-stage');
+const setPlayerNext = document.querySelector('#set-player-next');
+const setPlayerFullscreen = document.querySelector('#set-player-fullscreen');
+const setPlayerPrev = document.createElement('button');
+setPlayerPrev.type = 'button'; setPlayerPrev.className = 'button button-secondary'; setPlayerPrev.textContent = '← Previous';
+const setPlayerControls = document.createElement('div'); setPlayerControls.className = 'set-player-controls';
+if (setPlayerNext?.parentNode) { setPlayerNext.parentNode.insertBefore(setPlayerControls, setPlayerNext); setPlayerControls.append(setPlayerPrev); if (setPlayerFullscreen) setPlayerControls.append(setPlayerFullscreen); setPlayerControls.append(setPlayerNext); }
+const setPlayerStatus = document.querySelector('#set-player-status');
+const setPlayerProgress = document.querySelector('#set-player-progress');
+const setPlayerMarkers = document.querySelector('#set-player-markers');
+const setPlayerElapsed = document.querySelector('#set-player-elapsed');
+const setPlayerTotal = document.querySelector('#set-player-total');
+let setQueue = [];
+let setQueueIndex = 0;
+let youtubeApiPromise;
+let activeYoutubePlayer;
+let activeYoutubeVideoId = '';
+const formatPlaybackTime = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+function renderSetTimeline(gig) {
+  setPlayerMarkers.innerHTML = setQueue.map((entry, index) => `<span class="set-marker" style="left:${((index + .5) / setQueue.length) * 100}%" title="${escapeHtml(gig.songs[entry.songIndex].title)}">${index + 1}</span>`).join('');
+  setPlayerProgress.style.width = `${(setQueueIndex / Math.max(1, setQueue.length)) * 100}%`;
+  setPlayerElapsed.textContent = formatPlaybackTime(setQueueIndex * 240);
+  setPlayerTotal.textContent = `~${formatPlaybackTime(setQueue.length * 240)}`;
+}
+function loadYouTubeApi() {
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  if (!youtubeApiPromise) youtubeApiPromise = new Promise((resolve) => { const previous = window.onYouTubeIframeAPIReady; window.onYouTubeIframeAPIReady = () => { previous?.(); resolve(window.YT); }; const script = document.createElement('script'); script.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(script); });
+  return youtubeApiPromise;
+}
 const showEditLink = document.querySelector('#show-edit-link');
 const venueNameFromUrl = new URLSearchParams(window.location.search).get('name')?.trim() || '';
 const venueCityFromUrl = new URLSearchParams(window.location.search).get('city')?.trim() || '';
@@ -177,40 +214,83 @@ async function uploadGigMedia(gigId, files) {
   }
 }
 
+async function addYouTubeMedia(gigId, input) {
+  const externalUrl = input?.value.trim();
+  if (!externalUrl) return;
+  await fetchJson(`/api/gigs/${gigId}/media`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ externalUrl, caption: 'YouTube video' }) });
+  input.value = '';
+}
+
+function youtubeEmbedUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const id = parsed.hostname === 'youtu.be' ? parsed.pathname.slice(1) : parsed.searchParams.get('v') || parsed.pathname.split('/').filter(Boolean).pop();
+    return id ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?enablejsapi=1&autoplay=1&origin=${encodeURIComponent(window.location.origin)}` : url;
+  } catch { return url; }
+}
+
 function openMediaLightbox(item) {
   mediaLightbox.hidden = false;
   mediaLightboxImage.hidden = !item.mimeType.startsWith('image/');
   mediaLightboxVideo.hidden = !item.mimeType.startsWith('video/');
   if (mediaLightboxImage.hidden) mediaLightboxVideo.src = item.url; else mediaLightboxImage.src = item.url;
+  mediaLightboxImage.style.transform = `rotate(${item.rotation || 0}deg)`;
+  mediaLightboxVideo.style.transform = 'none';
   mediaLightboxCaption.textContent = item.caption || item.filename || '';
 }
 
 mediaLightboxClose.addEventListener('click', () => { mediaLightbox.hidden = true; mediaLightboxVideo.pause(); });
 mediaLightbox.addEventListener('click', (event) => { if (event.target === mediaLightbox) mediaLightboxClose.click(); });
 
-function renderMediaGallery(container, media = [], { editable = false } = {}) {
+function renderMediaGallery(container, media = [], { editable = false, songs = [] } = {}) {
   container.replaceChildren();
   if (!media.length) return;
-  container.innerHTML = media.map((item, index) => `<figure class="media-item${item.isCover ? ' is-cover' : ''}" data-media-id="${item.id}">${item.mimeType.startsWith('video/') ? `<video src="${item.url}" controls preload="metadata"></video>` : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" /></button>`}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${editable ? `<div class="media-actions"><button type="button" class="media-caption">Caption</button><button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button><button type="button" class="media-delete">Delete</button><button type="button" class="media-up" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" class="media-down" ${index === media.length - 1 ? 'disabled' : ''}>↓</button></div>` : ''}</figure>`).join('');
+  container.innerHTML = media.map((item, index) => `<figure class="media-item${item.isCover ? ' is-cover' : ''}" data-media-id="${item.id}">${item.mimeType === 'video/youtube' ? `<iframe src="${youtubeEmbedUrl(item.url)}" title="${escapeHtml(item.caption || 'YouTube video')}" loading="lazy" allowfullscreen></iframe>` : item.mimeType.startsWith('video/') ? `<video src="${item.url}" controls preload="metadata"></video>` : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" style="transform:rotate(${item.rotation || 0}deg)" /></button>`}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${editable ? `<div class="media-actions"><button type="button" class="media-menu-toggle" aria-expanded="false">⋮ Options</button><div class="media-action-menu" hidden>${songs.length ? `<label class="media-song-label">Setlist track<select class="media-song-select"><option value="">Unassigned</option>${songs.map((song, songIndex) => `<option value="${songIndex}" ${item.songIndex === songIndex ? 'selected' : ''}>${songIndex + 1}. ${escapeHtml(song.title)}</option>`).join('')}</select></label>` : ''}<button type="button" class="media-caption">Caption</button><button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button>${item.mimeType.startsWith('video/') && item.mimeType !== 'video/youtube' ? '<button type="button" class="media-rotate media-rotate-cw">↻ Clockwise</button><button type="button" class="media-rotate media-rotate-ccw">↺ Counter-clockwise</button>' : ''}<button type="button" class="media-delete">Delete</button><button type="button" class="media-up" ${index === 0 ? 'disabled' : ''}>↑ Move earlier</button><button type="button" class="media-down" ${index === media.length - 1 ? 'disabled' : ''}>↓ Move later</button></div></div>` : ''}</figure>`).join('');
   container.querySelectorAll('.media-open').forEach((button, index) => button.addEventListener('click', () => openMediaLightbox(media[index])));
   if (editable) {
+    container.querySelectorAll('.media-song-select').forEach((select) => select.addEventListener('change', async () => {
+      const item = media.find((entry) => entry.id === select.closest('.media-item').dataset.mediaId);
+      const value = select.value === '' ? null : Number(select.value);
+      await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ songIndex: value }) });
+      item.songIndex = value;
+    }));
+    container.querySelectorAll('.media-menu-toggle').forEach((button) => button.addEventListener('click', () => {
+      const menu = button.nextElementSibling;
+      const open = menu.hidden;
+      container.querySelectorAll('.media-action-menu').forEach((entry) => { entry.hidden = true; });
+      container.querySelectorAll('.media-menu-toggle').forEach((entry) => entry.setAttribute('aria-expanded', 'false'));
+      menu.hidden = !open;
+      button.setAttribute('aria-expanded', String(open));
+    }));
     container.querySelectorAll('.media-caption').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
       const caption = prompt('Caption this memory', item.caption || item.filename || '');
       if (caption === null) return;
       await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caption }) });
-      item.caption = caption; renderMediaGallery(container, media, { editable: true });
+      item.caption = caption; renderMediaGallery(container, media, { editable: true, songs });
     }));
     container.querySelectorAll('.media-cover').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
       await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isCover: true }) });
-      media.forEach((entry) => { entry.isCover = entry.id === item.id; }); renderMediaGallery(container, media, { editable: true });
+      media.forEach((entry) => { entry.isCover = entry.id === item.id; }); renderMediaGallery(container, media, { editable: true, songs });
     }));
     container.querySelectorAll('.media-delete').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
       if (!confirm('Delete this memory?')) return;
       await fetchJson(`/api/media/${item.id}`, { method: 'DELETE' });
-      media.splice(media.indexOf(item), 1); renderMediaGallery(container, media, { editable: true });
+      media.splice(media.indexOf(item), 1); renderMediaGallery(container, media, { editable: true, songs });
+    }));
+    container.querySelectorAll('.media-rotate').forEach((button) => button.addEventListener('click', async () => {
+      const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
+      if (item.mimeType.startsWith('video/')) {
+        button.disabled = true; button.textContent = 'Rotating…';
+        const direction = button.classList.contains('media-rotate-ccw') ? 'counterclockwise' : 'clockwise';
+        await fetchJson(`/api/media/${item.id}/rotate?direction=${direction}`, { method: 'POST' });
+      } else {
+        item.rotation = ((item.rotation || 0) + 90) % 360;
+        await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rotation: item.rotation }) });
+      }
+      renderMediaGallery(container, media, { editable: true, songs });
     }));
     container.querySelectorAll('.media-up, .media-down').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
@@ -218,7 +298,7 @@ function renderMediaGallery(container, media = [], { editable = false } = {}) {
       if (nextIndex < 0 || nextIndex >= media.length) return;
       [media[index], media[nextIndex]] = [media[nextIndex], media[index]];
       await Promise.all(media.map((entry, order) => fetchJson(`/api/media/${entry.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sortOrder: order }) })));
-      renderMediaGallery(container, media, { editable: true });
+      renderMediaGallery(container, media, { editable: true, songs });
     }));
   }
 }
@@ -349,7 +429,7 @@ function renderEditPage() {
   };
   renderTracks();
   addEditTrack.onclick = () => { tracks.push({ title: '', artist: gig.artist }); renderTracks(); editSetlistTracks.lastElementChild?.querySelector('.edit-track-title')?.focus(); };
-  renderMediaGallery(editGallery, gig.media, { editable: true });
+  renderMediaGallery(editGallery, gig.media, { editable: true, songs: gig.songs || [] });
   editForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
@@ -358,12 +438,13 @@ function renderEditPage() {
       const saved = await fetchJson(`/api/gigs/${gig.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
       const files = [...(editMediaInput?.files || [])];
       if (files.length) await uploadGigMedia(gig.id, files);
+      await addYouTubeMedia(gig.id, editYoutubeMediaInput);
       gigs = gigs.map((entry) => entry.id === gig.id ? { ...entry, ...saved } : entry);
       editMessage.textContent = files.length ? 'Show and media saved.' : 'Show saved.';
       editMessage.classList.remove('error');
       editMediaInput.value = '';
       const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`);
-      renderMediaGallery(editGallery, refreshed, { editable: true });
+      renderMediaGallery(editGallery, refreshed, { editable: true, songs: gig.songs || [] });
       renderGigs();
     } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); }
   });
@@ -382,8 +463,87 @@ function renderShowPage() {
   showDetailSetlist.innerHTML = gig.songs?.length ? `<ol>${gig.songs.map((song) => `<li>${escapeHtml(song.title)}${song.artist && song.artist !== gig.artist ? ` <span>— ${escapeHtml(song.artist)}</span>` : ''}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>` : '<p>No setlist attached.</p>';
   showEditLink.href = `/edit?id=${encodeURIComponent(gig.id)}`;
   showDetailNoMedia.hidden = Boolean(gig.media?.length);
-  renderMediaGallery(showDetailGallery, gig.media);
+  // Keep the gallery manageable from the show page too, including YouTube videos
+  // attached by the setlist search.
+  renderMediaGallery(showDetailGallery, gig.media, { editable: true, songs: gig.songs || [] });
 }
+
+function playSetTrack() {
+  const gig = gigs.find((entry) => entry.id === showDetailId);
+  const entry = setQueue[setQueueIndex];
+  if (!gig || !entry) { setPlayerStatus.textContent = 'End of available set.'; return; }
+  const song = gig.songs[entry.songIndex];
+  setPlayer.hidden = false;
+  setPlayerTitle.textContent = `${entry.songIndex + 1}. ${song.title}`;
+  renderSetTimeline(gig);
+  if (entry.media.mimeType === 'video/youtube' && activeYoutubePlayer) {
+    const parsed = new URL(entry.media.url);
+    const videoId = parsed.searchParams.get('v') || parsed.pathname.split('/').filter(Boolean).pop();
+    activeYoutubeVideoId = videoId;
+    activeYoutubePlayer.loadVideoById(videoId);
+    return;
+  }
+  const next = setQueue[setQueueIndex + 1];
+  const currentMarkup = entry.media.mimeType === 'video/youtube'
+    ? `<iframe src="${youtubeEmbedUrl(entry.media.url)}" title="${escapeHtml(song.title)}" allowfullscreen></iframe>`
+    : `<video class="set-player-current" src="${entry.media.url}" controls autoplay playsinline></video>`;
+  const preloadMarkup = next?.media.mimeType === 'video/youtube'
+    ? `<iframe class="set-player-preload" src="${youtubeEmbedUrl(next.media.url)}" title="Preloaded next track" aria-hidden="true"></iframe>`
+    : next ? `<video class="set-player-preload" src="${next.media.url}" preload="auto" muted playsinline></video>` : '';
+  setPlayerStage.innerHTML = `${currentMarkup}${preloadMarkup}`;
+  setPlayerStatus.textContent = `${setQueueIndex + 1} of ${setQueue.length}`;
+  const video = setPlayerStage.querySelector('video');
+  if (video) video.play().catch(() => { setPlayerStatus.textContent = `${setQueueIndex + 1} of ${setQueue.length} · Press play to continue`; });
+  if (video) video.addEventListener('ended', () => {
+    const nextVideo = setPlayerStage.querySelector('.set-player-preload');
+    if (nextVideo?.tagName === 'VIDEO' && next?.media.mimeType !== 'video/youtube') {
+      nextVideo.classList.add('set-player-fading-in');
+      video.classList.add('set-player-fading-out');
+      nextVideo.muted = false;
+      nextVideo.play().catch(() => {});
+      setTimeout(() => { setQueueIndex += 1; playSetTrack(); }, 650);
+    } else { setQueueIndex += 1; playSetTrack(); }
+  });
+  const youtubeFrame = setPlayerStage.querySelector('iframe:not(.set-player-preload)');
+  if (youtubeFrame) {
+    youtubeFrame.id = `set-player-youtube-${Date.now()}`;
+    loadYouTubeApi().then((YT) => {
+      activeYoutubePlayer = new YT.Player(youtubeFrame.id, { events: { onReady: (event) => event.target.playVideo(), onStateChange: (event) => { if (event.data === YT.PlayerState.ENDED) { setQueueIndex += 1; playSetTrack(); } } } });
+    }).catch(() => {});
+  }
+}
+
+playWholeSet?.addEventListener('click', () => {
+  const gig = gigs.find((entry) => entry.id === showDetailId);
+  setQueue = (gig?.media || []).filter((media) => Number.isInteger(media.songIndex) && gig.songs[media.songIndex]).sort((a, b) => a.songIndex - b.songIndex).map((media) => ({ media, songIndex: media.songIndex }));
+  setQueueIndex = 0;
+  if (!setQueue.length) { setPlayer.hidden = false; setPlayerStatus.textContent = 'Assign media to setlist tracks first.'; return; }
+  playSetTrack();
+});
+setPlayerNext?.addEventListener('click', () => { setQueueIndex += 1; playSetTrack(); });
+setPlayerPrev.addEventListener('click', () => { if (setQueueIndex > 0) { setQueueIndex -= 1; playSetTrack(); } });
+setPlayerFullscreen?.addEventListener('click', async () => {
+  if (!document.fullscreenElement) await setPlayer.requestFullscreen?.();
+  else await document.exitFullscreen?.();
+});
+
+findYouTubeSet.addEventListener('click', async () => {
+  const gig = gigs.find((entry) => entry.id === showDetailId);
+  if (!gig?.songs?.length) { youtubeSearchMessage.textContent = 'Add a setlist before searching YouTube.'; return; }
+  findYouTubeSet.disabled = true; findYouTubeSet.textContent = 'Searching YouTube…'; youtubeSearchMessage.textContent = ''; youtubeResults.replaceChildren();
+  try {
+    const payload = await fetchJson(`/api/gigs/${gig.id}/youtube-search`, { method: 'POST' });
+    youtubeResults.innerHTML = payload.matches.map((match) => `<article class="youtube-match" data-song-index="${match.index}"><h3>${escapeHtml(match.title)}</h3><div class="youtube-match-options">${match.results.map((result) => `<div class="youtube-result"><img src="${escapeHtml(result.thumbnail)}" alt="" /><div><p>${escapeHtml(result.title)}</p><small>${escapeHtml(result.channel)}</small><button type="button" data-youtube-url="https://www.youtube.com/watch?v=${encodeURIComponent(result.id)}">Add to other media</button></div></div>`).join('') || '<p>No matching videos found.</p>'}</div></article>`).join('');
+    youtubeResults.querySelectorAll('[data-youtube-url]').forEach((button) => button.addEventListener('click', async () => {
+      button.disabled = true; button.textContent = 'Adding…';
+      const match = button.closest('.youtube-match');
+      const songIndex = Number(match?.dataset.songIndex);
+      const added = await fetchJson(`/api/gigs/${gig.id}/media`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ externalUrl: button.dataset.youtubeUrl, caption: button.closest('.youtube-result').querySelector('p').textContent, songIndex: Number.isInteger(songIndex) ? songIndex : null }) });
+      gig.media = [...(gig.media || []), added]; button.textContent = 'Added'; renderMediaGallery(document.querySelector('#show-detail-gallery'), gig.media, { editable: true, songs: gig.songs || [] });
+    }));
+  } catch (error) { youtubeSearchMessage.textContent = error.message; youtubeSearchMessage.classList.add('error'); }
+  finally { findYouTubeSet.disabled = false; findYouTubeSet.textContent = 'Find YouTube videos'; }
+});
 
 function renderProfiles() {
   if (!profiles.some((profile) => profile.id === activeProfileId)) activeProfileId = account?.id || '';
@@ -561,6 +721,7 @@ form.addEventListener('submit', async (event) => {
   try {
     const saved = await fetchJson('/api/gigs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (mediaFiles.length) await uploadGigMedia(saved.id, mediaFiles);
+    await addYouTubeMedia(saved.id, youtubeMediaInput);
     gigs.unshift(saved);
     form.reset();
     resetReviewForm();
@@ -705,7 +866,7 @@ function drawMap(locations) {
   }
   venueLayer.clearLayers();
   for (const location of locations) {
-    const popup = `<strong>${escapeHtml(location.venue)}</strong><br><span>${escapeHtml(location.city)}</span><ul>${location.gigs.map((gig) => `<li><a href="#gig-${gig.id}">${escapeHtml(gig.artist)}</a> · ${escapeHtml(gig.date)}</li>`).join('')}</ul>`;
+    const popup = `<strong>${escapeHtml(location.venue)}</strong><br><span>${escapeHtml(location.city)}</span><ul>${location.gigs.map((gig) => `<li><a href="/artist?name=${encodeURIComponent(gig.artist)}">${escapeHtml(gig.artist)}</a> · ${escapeHtml(gig.date || 'Date unknown')}</li>`).join('')}</ul>`;
     L.circleMarker([location.lat, location.lng], {
       radius: Math.min(7 + location.gigs.length * 2, 16), color: '#274b42', weight: 2, fillColor: '#e85c34', fillOpacity: 0.9
     }).bindPopup(popup).addTo(venueLayer);

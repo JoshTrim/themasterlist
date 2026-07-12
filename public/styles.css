@@ -67,10 +67,58 @@ body[data-page="shows"] h1, body[data-page="shows"] h2, body[data-page="shows"] 
 .media-item { position: relative; min-width: 0; margin: 0; border: 1px solid #7422a0; background: #0b0613; box-shadow: 0 0 12px rgba(197, 45, 255, .2); }
 .media-item.is-cover { border-color: #ff2d9b; box-shadow: 0 0 15px rgba(255, 45, 155, .45); }
 .media-item img, .media-item video { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.media-item iframe { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; background: #0b0613; }
+.youtube-results { display: grid; gap: 16px; margin-top: 18px; }
+.youtube-match { padding-top: 14px; border-top: 1px solid #5e2a78; }
+.youtube-match h3 { margin: 0 0 10px; color: #ff82c8; font: 11px "Press Start 2P", monospace; }
+.youtube-match-options { display: grid; gap: 10px; }
+.youtube-result { display: grid; grid-template-columns: 150px 1fr; gap: 12px; align-items: center; padding: 8px; border: 1px solid #7422a0; background: rgba(16, 11, 29, .7); }
+.youtube-result img { width: 150px; aspect-ratio: 16 / 9; object-fit: cover; }
+.youtube-result p { margin: 0 0 4px; color: #efd7f6; font-size: 17px; }
+.youtube-result small { color: #d6a9e2; }
+.youtube-result button { display: block; margin-top: 8px; padding: 5px 8px; border: 1px solid #ff2d9b; background: transparent; color: #ff82c8; font: 11px "VT323", monospace; cursor: pointer; }
+@media (max-width: 640px) { .youtube-result { grid-template-columns: 1fr; }.youtube-result img { width: 100%; } }
+.media-item img, .media-item video, .media-lightbox img, .media-lightbox video { transform-origin: center; }
 .media-open { display: block; width: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; }
 .media-item figcaption { padding: 6px 8px; color: #efd7f6; font-size: 13px; line-height: 1.2; }
-.media-actions { display: flex; gap: 5px; padding: 0 8px 8px; }
-.media-actions button { padding: 4px 5px; border: 1px solid #7422a0; background: transparent; color: #ff82c8; font: 9px "DM Mono", monospace; cursor: pointer; }
+.media-actions { position: relative; padding: 0 8px 8px; }
+.media-actions button { padding: 6px 8px; border: 1px solid #7422a0; background: #160b25; color: #ff82c8; font: 10px "VT323", monospace; line-height: 1; cursor: pointer; white-space: nowrap; }
+.media-actions button:hover:not(:disabled) { border-color: #ff2d9b; background: #2c1041; }
+.media-menu-toggle { width: 100%; text-align: left; }
+.media-action-menu { position: absolute; z-index: 5; right: 8px; bottom: 38px; display: grid; gap: 4px; min-width: 145px; padding: 6px; border: 1px solid #ff2d9b; background: #160b25; box-shadow: 0 0 14px rgba(255, 45, 155, .45); }
+.media-action-menu[hidden] { display: none; }
+.media-action-menu button { width: 100%; text-align: left; }
+.set-player { position: relative; z-index: 1002; margin-top: 18px; padding: 14px; border: 1px solid #ff2d9b; background: #12071f; box-shadow: 0 0 18px rgba(255, 45, 155, .25); }
+.media-item:has(video), .media-item:has(iframe) { position: relative; z-index: 1002; }
+.set-player h3 { color: #fff0fb; margin: 4px 0 10px; }
+.set-player video, .set-player iframe { display: block; width: 100%; max-height: 420px; aspect-ratio: 16 / 9; border: 1px solid #7422a0; background: #05020a; }
+.set-player iframe { border: 0; }
+#set-player-stage { position: relative; overflow: hidden; }
+#set-player-stage .set-player-preload { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+#set-player-stage .set-player-current { position: relative; z-index: 1; transition: opacity .65s ease; }
+#set-player-stage .set-player-preload { transition: opacity .65s ease; }
+#set-player-stage .set-player-fading-out { opacity: 0; }
+#set-player-stage .set-player-fading-in { opacity: 1; z-index: 2; }
+.set-player-timeline { position: relative; margin: 14px 2px 8px; padding-top: 16px; }
+.set-player-timeline::before { content: ''; position: absolute; top: 7px; left: 0; right: 0; height: 4px; background: #3a1855; border: 1px solid #7422a0; }
+.set-player-progress { position: absolute; z-index: 1; top: 7px; left: 0; height: 4px; width: 0; background: #ff2d9b; box-shadow: 0 0 8px #ff2d9b; transition: width .4s ease; }
+.set-player-markers { position: absolute; top: 0; left: 0; right: 0; height: 18px; }
+.set-marker { position: absolute; transform: translateX(-50%); color: #ffd0ef; font: 11px "VT323", monospace; }
+.set-player-times { display: flex; justify-content: space-between; color: #caa5d8; font: 12px "VT323", monospace; margin-top: 4px; }
+.set-player .button { margin-top: 10px; }
+.set-player-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.set-player-controls .button { flex: 0 1 auto; }
+.set-player-fullscreen { display: inline-block; }
+.set-player:fullscreen { width: 100vw; height: 100vh; box-sizing: border-box; margin: 0; padding: 3vh 4vw; display: flex; flex-direction: column; justify-content: center; background: #08030f; }
+.set-player:fullscreen #set-player-title { margin: 0 0 1vh; }
+.set-player:fullscreen #set-player-stage { width: 100%; max-height: 78vh; flex: 1 1 auto; display: flex; align-items: center; justify-content: center; }
+.set-player:fullscreen #set-player-stage video, .set-player:fullscreen #set-player-stage iframe { width: 100%; height: 100%; max-height: 78vh; object-fit: contain; }
+.set-player:fullscreen .set-player-timeline { flex: 0 0 auto; width: 100%; margin: 1.5vh 0 .5vh; }
+.set-player:fullscreen > .button { font-size: 12px; padding: 4px 9px; margin: 3px 2px 0 0; }
+.set-player:fullscreen .set-player-controls { justify-content: space-between; }
+.set-player:fullscreen .set-player-fullscreen { margin: 3px 0 0; }
+.set-player:fullscreen #set-player-status { margin: 4px 0 0; font-size: 12px; }
+.media-actions button:disabled { opacity: .45; cursor: not-allowed; }
 .media-lightbox { position: fixed; inset: 0; z-index: 2000; display: grid; place-items: center; padding: 5vw; background: rgba(8, 2, 15, .94); }
 .media-lightbox[hidden] { display: none; }
 .media-lightbox img, .media-lightbox video { max-width: min(92vw, 1100px); max-height: 82vh; object-fit: contain; border: 2px solid #ff2d9b; box-shadow: 0 0 35px rgba(255, 45, 155, .5); }
@@ -107,6 +155,16 @@ body[data-page="shows"] h1, body[data-page="shows"] h2, body[data-page="shows"] 
 .venue-edit-form { display: grid; gap: 12px; margin-top: 18px; padding: 16px; border: 1px solid #7422a0; background: rgba(16, 11, 29, .7); }
 .venue-edit-form label { color: #d6a9e2; font: 10px "Press Start 2P", monospace; }
 .venue-edit-form input, .venue-edit-form textarea { display: block; width: 100%; margin-top: 7px; padding: 8px; border: 1px solid #7422a0; background: #100b1d; color: #efd7f6; font: 16px "VT323", monospace; }
+.gig-map .leaflet-popup-content-wrapper { border: 2px solid #ff2d9b; border-radius: 0; background: #100b1d; color: #efd7f6; box-shadow: 5px 5px 0 #32104c, 0 0 22px rgba(255, 45, 155, .45); }
+.gig-map .leaflet-popup-tip { border: 2px solid #ff2d9b; background: #100b1d; box-shadow: 3px 3px 0 #32104c; }
+.gig-map .leaflet-popup-content { margin: 15px 18px; color: #efd7f6; font: 17px/1.35 "VT323", monospace; }
+.gig-map .leaflet-popup-content strong { display: block; margin-bottom: 5px; color: #ff82c8; font: 11px/1.5 "Press Start 2P", monospace; text-shadow: 2px 2px 0 #53136d; }
+.gig-map .leaflet-popup-content span { color: #d6a9e2; }
+.gig-map .leaflet-popup-content ul { margin: 12px 0 0; padding-left: 18px; border-top: 1px solid #5e2a78; padding-top: 9px; }
+.gig-map .leaflet-popup-content li { margin: 3px 0; }
+.gig-map .leaflet-popup-content a { color: #ff82c8; text-decoration: none; }
+.gig-map .leaflet-popup-content a:hover { color: #ffd1ed; text-shadow: 0 0 6px rgba(255, 45, 155, .6); }
+.gig-map .leaflet-popup-close-button { top: 5px !important; right: 7px !important; color: #ff82c8 !important; font: 24px/1 "VT323", monospace !important; }
 .venue-edit-form textarea { min-height: 100px; resize: vertical; }
 .edit-setlist { grid-column: 1 / -1; margin-top: 24px; padding: 18px; border: 1px solid #5e2a78; background: rgba(29, 18, 48, .65); }
 .edit-track { display: grid; grid-template-columns: 28px 1fr 1fr auto; gap: 8px; align-items: center; margin-bottom: 8px; }
