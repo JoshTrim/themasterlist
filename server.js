@@ -86,6 +86,19 @@ database.exec(`
   )
 `);
 database.exec(`CREATE TABLE IF NOT EXISTS youtube_search_cache (cache_key TEXT PRIMARY KEY, results TEXT NOT NULL, created_at TEXT NOT NULL)`);
+database.exec(`CREATE TABLE IF NOT EXISTS album_lookup_cache (cache_key TEXT PRIMARY KEY, album TEXT, created_at TEXT NOT NULL)`);
+database.exec(`CREATE TABLE IF NOT EXISTS background_jobs (id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL, progress INTEGER NOT NULL DEFAULT 0, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+database.exec(`CREATE TABLE IF NOT EXISTS api_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  quota_units INTEGER NOT NULL DEFAULT 1,
+  status INTEGER,
+  requested_at TEXT NOT NULL,
+  usage_day TEXT NOT NULL
+)`);
+database.exec('CREATE INDEX IF NOT EXISTS api_usage_day_provider ON api_usage (usage_day, provider)');
+database.prepare("UPDATE background_jobs SET status = 'error', error = 'Interrupted by server restart', updated_at = ? WHERE status = 'running'").run(new Date().toISOString());
 addColumnIfMissing('gig_media', 'caption', "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing('gig_media', 'is_cover', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('gig_media', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
@@ -96,6 +109,13 @@ addColumnIfMissing('gig_media', 'song_index', 'INTEGER');
 addColumnIfMissing('gig_media', 'playback_filename', 'TEXT');
 addColumnIfMissing('gig_media', 'playback_mime', 'TEXT');
 addColumnIfMissing('gig_media', 'checksum', 'TEXT');
+addColumnIfMissing('gig_media', 'recognition_status', "TEXT NOT NULL DEFAULT 'not_started'");
+addColumnIfMissing('gig_media', 'recognition_result', 'TEXT');
+addColumnIfMissing('gig_media', 'recognition_title', 'TEXT');
+addColumnIfMissing('gig_media', 'recognition_artist', 'TEXT');
+addColumnIfMissing('gig_media', 'recognition_album', 'TEXT');
+addColumnIfMissing('gig_media', 'recognition_error', 'TEXT');
+addColumnIfMissing('gig_media', 'recognition_override', 'INTEGER NOT NULL DEFAULT 0');
 database.exec(`
   CREATE TABLE IF NOT EXISTS profiles (
     id TEXT PRIMARY KEY,
@@ -159,6 +179,63 @@ function addColumnIfMissing(table, column, definition) {
   if (!columns.some((entry) => entry.name === column)) database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
+function saveBackgroundJob(id, type, name, status, progress = 0, error = null) {
+  const now = new Date().toISOString();
+  database.prepare(`INSERT INTO background_jobs (id, type, name, status, progress, error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET status=excluded.status, progress=excluded.progress, error=excluded.error, updated_at=excluded.updated_at`).run(id, type, name, status, progress, error, now, now);
+  rotateJobs.set(id, { id, type, name, status, progress, error });
+}
+
+function usageDay() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function usageProvider(provider, url) {
+  const hint = String(provider || '').toLowerCase();
+  let hostname = '';
+  try { hostname = new URL(url).hostname.toLowerCase(); } catch { /* keep the provider hint */ }
+  if (hint.includes('youtube') || (hostname.includes('googleapis.com') && String(url).includes('/youtube/v3/'))) return 'youtube';
+  if (hint.includes('spotify') || hostname.includes('spotify.com')) return 'spotify';
+  if (hint.includes('setlist') || hostname.includes('setlist.fm')) return 'setlist.fm';
+  if (hint.includes('apple') || hostname.includes('apple.com')) return 'apple-music';
+  if (hint.includes('audd') || hostname.includes('audd.io')) return 'audd';
+  if (hint.includes('musicbrainz') || hostname.includes('musicbrainz.org')) return 'musicbrainz';
+  if (hint.includes('wikipedia') || hostname.includes('wikipedia.org')) return 'wikipedia';
+  if (hint.includes('google') || hostname.includes('googleapis.com')) return 'google';
+  return hint || 'other';
+}
+
+function usageMeta(url, options = {}, provider = '') {
+  const service = usageProvider(provider, url);
+  let parsed;
+  try { parsed = new URL(url); } catch { parsed = { pathname: url }; }
+  const method = String(options.method || 'GET').toUpperCase();
+  const segments = String(parsed.pathname || '').split('/').filter(Boolean);
+  const operation = service === 'youtube'
+    ? `youtube.${segments.at(-1) || 'request'}`
+    : segments.slice(-2).join('/') || service;
+  let quotaUnits = 1;
+  // YouTube Data API costs are fixed by operation. OAuth refreshes are not
+  // Data API quota calls, so record them for diagnostics with zero units.
+  if (service === 'youtube') {
+    if (!String(parsed.pathname).startsWith('/youtube/v3/')) quotaUnits = 0;
+    else if (segments.at(-1) === 'search') quotaUnits = 100;
+    else if (segments.at(-1) === 'playlists' && method === 'POST') quotaUnits = 50;
+    else if (segments.at(-1) === 'playlistItems' && method === 'POST') quotaUnits = 50;
+  }
+  return { service, operation, quotaUnits };
+}
+
+function recordApiUsage(provider, operation, quotaUnits = 1, status = null, requestedAt = new Date().toISOString()) {
+  try {
+    database.prepare('INSERT INTO api_usage (provider, operation, quota_units, status, requested_at, usage_day) VALUES (?, ?, ?, ?, ?, ?)').run(provider, operation, Math.max(0, Number(quotaUnits) || 0), status, requestedAt, usageDay());
+  } catch (error) {
+    console.warn('[api-usage] could not record request:', error.message);
+  }
+}
+
 const contentTypes = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -183,7 +260,7 @@ async function readGigs() {
     setlistFmId: row.setlist_fm_id,
     setlistFmUrl: row.setlist_fm_url,
     songs: JSON.parse(row.songs || '[]'),
-    media: database.prepare('SELECT id, filename, playback_filename AS playbackFilename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id).map((media) => ({ ...media, isCover: Boolean(media.isCover), rotation: Number(media.rotation || 0), songIndex: media.songIndex === null ? null : Number(media.songIndex), url: media.externalUrl || `/api/media/${media.id}` })),
+    media: database.prepare('SELECT id, filename, playback_filename AS playbackFilename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt, recognition_status AS recognitionStatus, recognition_title AS recognitionTitle, recognition_artist AS recognitionArtist, recognition_album AS recognitionAlbum, recognition_error AS recognitionError, recognition_override AS recognitionOverride FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id).map((media) => ({ ...media, isCover: Boolean(media.isCover), recognitionOverride: Boolean(media.recognitionOverride), rotation: Number(media.rotation || 0), songIndex: media.songIndex === null ? null : Number(media.songIndex), url: media.externalUrl || `/api/media/${media.id}` })),
     createdAt: row.created_at
   }));
 }
@@ -328,11 +405,20 @@ function configured(provider) {
   if (provider === 'spotify') return Boolean(process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET);
   if (provider === 'youtube') return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
   if (provider === 'apple-music') return Boolean(process.env.APPLE_MUSIC_DEVELOPER_TOKEN);
+  if (provider === 'audd') return Boolean(process.env.AUDD_API_TOKEN);
   return false;
 }
 
 async function providerResponse(url, options, provider) {
-  const result = await fetch(url, options);
+  const meta = usageMeta(url, options, provider);
+  let result;
+  try {
+    result = await fetch(url, options);
+  } catch (error) {
+    recordApiUsage(meta.service, meta.operation, meta.quotaUnits, null);
+    throw error;
+  }
+  recordApiUsage(meta.service, meta.operation, meta.quotaUnits, result.status);
   if (result.ok) return result.json();
   const body = await result.json().catch(() => ({}));
   const detail = body.error?.message || body.error_description || body.message || body.error || `HTTP ${result.status}`;
@@ -528,7 +614,7 @@ function createPlaybackProxy(filePath, outputPath) {
 }
 
 function mediaRows(gigId) {
-  return database.prepare('SELECT id, filename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(gigId).map((media) => ({ ...media, isCover: Boolean(media.isCover), rotation: Number(media.rotation || 0), songIndex: media.songIndex === null ? null : Number(media.songIndex), url: media.externalUrl || `/api/media/${media.id}` }));
+  return database.prepare('SELECT id, filename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt, recognition_status AS recognitionStatus, recognition_title AS recognitionTitle, recognition_artist AS recognitionArtist, recognition_album AS recognitionAlbum, recognition_error AS recognitionError, recognition_override AS recognitionOverride FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(gigId).map((media) => ({ ...media, isCover: Boolean(media.isCover), recognitionOverride: Boolean(media.recognitionOverride), rotation: Number(media.rotation || 0), songIndex: media.songIndex === null ? null : Number(media.songIndex), url: media.externalUrl || `/api/media/${media.id}` }));
 }
 
 function probeDuration(inputPath) { return new Promise((resolve) => { const probe = spawn('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', inputPath]); let out = ''; probe.stdout.on('data', (chunk) => { out += chunk; }); probe.on('close', () => resolve(Number(out.trim()) || 0)); probe.on('error', () => resolve(0)); }); }
@@ -542,6 +628,61 @@ function rotateVideoFile(inputPath, outputPath, direction = 'clockwise', onProgr
     process.on('error', reject);
     process.on('close', (code) => code === 0 ? resolve() : reject(new Error(error.slice(-500) || 'Video rotation failed.')));
   });
+}
+function trimVideoFile(inputPath, outputPath, start, duration, onProgress = () => {}) {
+  return new Promise((resolve, reject) => {
+    const process = spawn('ffmpeg', ['-y', '-nostdin', '-ss', String(start), '-i', inputPath, '-t', String(duration), '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-c:a', 'aac', '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-f', 'mp4', outputPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let progress = ''; process.stdout.on('data', (chunk) => { progress += chunk.toString(); const match = progress.match(/out_time_ms=(\d+)/); if (match) { onProgress(Number(match[1])); progress = progress.slice(progress.lastIndexOf('out_time_ms=')); } });
+    let error = ''; process.stderr.on('data', (chunk) => { error += chunk.toString(); }); process.on('close', (code) => code === 0 ? resolve() : reject(new Error(error.slice(-500) || 'ffmpeg trim failed.'))); process.on('error', reject);
+  });
+}
+
+function extractRecognitionSample(inputPath, outputPath, startSeconds = 0) {
+  return new Promise((resolve, reject) => {
+    const process = spawn('ffmpeg', ['-y', '-nostdin', '-ss', String(Math.max(0, startSeconds)), '-i', inputPath, '-t', '12', '-vn', '-ac', '1', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '128k', outputPath], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let error = '';
+    process.stderr.on('data', (chunk) => { error += chunk.toString(); });
+    process.on('error', reject);
+    process.on('close', (code) => code === 0 ? resolve() : reject(new Error(error.slice(-500) || 'Could not extract an audio sample.')));
+  });
+}
+
+function recognitionKey(value) { return String(value || '').toLowerCase().replace(/\([^)]*\)|\[[^\]]*\]/g, '').replace(/[^a-z0-9]+/g, ''); }
+
+async function recognizeVideoTrack(gigId, mediaId, filePath, filename) {
+  if (!process.env.AUDD_API_TOKEN) return;
+  const jobId = randomUUID();
+  const samplePath = `${filePath}.${mediaId}.recognition.mp3`;
+  saveBackgroundJob(jobId, 'Detect track', filename, 'running', 5);
+  database.prepare("UPDATE gig_media SET recognition_status = 'running', recognition_error = NULL WHERE id = ?").run(mediaId);
+  try {
+    const duration = await probeDuration(filePath);
+    const start = duration > 18 ? Math.max(0, Math.min(120, (duration / 2) - 6)) : 0;
+    await extractRecognitionSample(filePath, samplePath, start);
+    saveBackgroundJob(jobId, 'Detect track', filename, 'running', 45);
+    const audio = await fs.readFile(samplePath);
+    const form = new FormData();
+    form.append('api_token', process.env.AUDD_API_TOKEN);
+    form.append('return', 'apple_music,spotify');
+    form.append('file', new Blob([audio], { type: 'audio/mpeg' }), `${mediaId}.mp3`);
+    const payload = await providerResponse('https://api.audd.io/', { method: 'POST', body: form }, 'audd');
+    if (payload?.status !== 'success') throw new Error(payload?.error?.error_message || payload?.error || 'AudD could not identify this clip.');
+    const result = payload.result || null;
+    const title = result?.title ? String(result.title) : null;
+    const artist = result?.artist ? String(result.artist) : null;
+    const album = result?.album ? String(result.album) : null;
+    const songs = findGigSync(gigId).songs || [];
+    const matchIndex = title ? songs.findIndex((song) => recognitionKey(song.title) === recognitionKey(title)) : -1;
+    const status = matchIndex >= 0 ? 'matched' : result ? 'identified' : 'not_found';
+    database.prepare(`UPDATE gig_media SET recognition_status = ?, recognition_result = ?, recognition_title = ?, recognition_artist = ?, recognition_album = ?, recognition_error = NULL,
+      song_index = CASE WHEN song_index IS NULL AND recognition_override = 0 AND ? >= 0 THEN ? ELSE song_index END WHERE id = ?`).run(status, result ? JSON.stringify(result) : null, title, artist, album, matchIndex, matchIndex >= 0 ? matchIndex : null, mediaId);
+    saveBackgroundJob(jobId, 'Detect track', filename, 'complete', 100);
+  } catch (error) {
+    database.prepare("UPDATE gig_media SET recognition_status = 'error', recognition_error = ? WHERE id = ?").run(error.message, mediaId);
+    saveBackgroundJob(jobId, 'Detect track', filename, 'error', 0, error.message);
+  } finally {
+    await fs.rm(samplePath, { force: true }).catch(() => {});
+  }
 }
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -595,6 +736,45 @@ function normaliseSongs(setlist) {
       info: song.info || ''
     }))
   );
+}
+
+async function resolveAlbum(artist, title) {
+  const key = `v6::${artist}::${title}`.toLowerCase();
+  const cached = database.prepare('SELECT album FROM album_lookup_cache WHERE cache_key = ?').get(key);
+  if (cached) return cached.album || null;
+  let album = null;
+  const clean = (value) => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/&/g, ' and ').replace(/\b(feat\.?|ft\.?).*$/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const wantedArtist = clean(artist);
+  const wantedTitle = clean(title);
+  try {
+    const result = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(`${artist} ${title}`)}&entity=song&limit=8`);
+    if (result.ok) {
+      const matches = (await result.json()).results || [];
+      const scored = matches.map((entry) => {
+        const entryTitle = clean(entry.trackName); const entryArtist = clean(entry.artistName);
+        const titleMatch = entryTitle === wantedTitle ? 3 : (entryTitle.includes(wantedTitle) || wantedTitle.includes(entryTitle) ? 1 : 0);
+        const artistMatch = entryArtist === wantedArtist ? 3 : (entryArtist.includes(wantedArtist) || wantedArtist.includes(entryArtist) ? 1 : 0);
+        return { entry, score: titleMatch + artistMatch };
+      }).filter((candidate) => candidate.score >= 5).sort((a, b) => b.score - a.score);
+      const exact = scored.find(({ entry }) => entry.collectionType === 'Album' && Number(entry.trackCount) > 1) || scored[0]?.entry;
+      if (exact) album = exact.collectionType === 'single' || Number(exact.trackCount) === 1 ? 'Single' : (exact.collectionName || null);
+    }
+  } catch {}
+  if (!album) {
+    try {
+      const query = `artist:"${artist.replace(/"/g, '')}" AND recording:"${title.replace(/"/g, '')}"`;
+      const result = await fetch(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(query)}&fmt=json&limit=8`, { headers: { 'User-Agent': 'TheMasterList/0.1 (personal music archive)' } });
+      if (result.ok) {
+        const recordings = (await result.json()).recordings || [];
+        const recording = recordings.find((entry) => clean(entry.title) === wantedTitle) || recordings[0];
+        const releases = (recording?.releases || []).filter((release) => release.title);
+        const albumRelease = releases.find((release) => release['release-group']?.['primary-type'] === 'Album' && release.status === 'Official') || releases.find((release) => release['release-group']?.['primary-type'] === 'Album');
+        album = albumRelease?.title || (releases.length === 1 ? 'Single' : null);
+      }
+    } catch {}
+  }
+  database.prepare('INSERT OR REPLACE INTO album_lookup_cache (cache_key, album, created_at) VALUES (?, ?, ?)').run(key, album, new Date().toISOString());
+  return album;
 }
 
 function validateGig(gig) {
@@ -972,6 +1152,69 @@ async function handleApi(request, response, url) {
     return sendJson(response, 200, { format: 'the-master-list-backup-v1', createdAt: new Date().toISOString(), database: (await fs.readFile(DB_FILE)).toString('base64'), media: files });
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/archive/export') {
+    requireAccount(request);
+    const gigs = await readGigs();
+    return sendJson(response, 200, { format: 'the-master-list-export-v1', createdAt: new Date().toISOString(), gigs });
+  }
+  if (request.method === 'POST' && url.pathname === '/api/archive/import') {
+    requireAccount(request);
+    const body = await readBody(request);
+    if (!Array.isArray(body.gigs)) return sendError(response, 400, 'Import must contain a gigs array.');
+    const imported = body.gigs.map((gig) => ({ ...gig, id: gig.id || randomUUID(), artist: String(gig.artist || '').trim(), venue: String(gig.venue || '').trim(), city: String(gig.city || '').trim(), date: String(gig.date || '').trim(), songs: Array.isArray(gig.songs) ? gig.songs : [], createdAt: gig.createdAt || new Date().toISOString() }));
+    imported.forEach(validateGig);
+    const importGigs = database.transaction((records) => { const statement = database.prepare(`INSERT INTO gigs (id, artist, venue, city, date, notes, performance_notes, venue_notes, performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET artist=excluded.artist, venue=excluded.venue, city=excluded.city, date=excluded.date, notes=excluded.notes, performance_notes=excluded.performance_notes, venue_notes=excluded.venue_notes, performance_rating=excluded.performance_rating, venue_rating=excluded.venue_rating, favorite=excluded.favorite, setlist_fm_id=excluded.setlist_fm_id, setlist_fm_url=excluded.setlist_fm_url, songs=excluded.songs`); records.forEach((gig) => statement.run(gig.id, gig.artist, gig.venue, gig.city, gig.date, gig.notes || '', gig.performanceNotes || gig.notes || '', gig.venueNotes || '', gig.performanceRating ?? null, gig.venueRating ?? null, gig.favorite ? 1 : 0, gig.setlistFmId || null, gig.setlistFmUrl || null, JSON.stringify(gig.songs || []), gig.createdAt)); });
+    importGigs(imported);
+    return sendJson(response, 200, { imported: imported.length });
+  }
+  if (request.method === 'GET' && url.pathname === '/api/stats') {
+    const gigs = database.prepare('SELECT artist, venue, city, date, favorite, songs FROM gigs').all();
+    const songs = gigs.flatMap((gig) => JSON.parse(gig.songs || '[]'));
+    const countBy = (values) => Object.entries(values.reduce((result, value) => { const key = String(value || 'Unknown'); result[key] = (result[key] || 0) + 1; return result; }, {})).sort((a, b) => b[1] - a[1]);
+    return sendJson(response, 200, { shows: gigs.length, artists: new Set(gigs.map((gig) => gig.artist.toLowerCase())).size, venues: new Set(gigs.map((gig) => `${gig.venue}|${gig.city}`.toLowerCase())).size, cities: new Set(gigs.map((gig) => gig.city.toLowerCase())).size, songs: songs.length, favourites: gigs.filter((gig) => gig.favorite).length, topArtists: countBy(gigs.map((gig) => gig.artist)).slice(0, 5), topVenues: countBy(gigs.map((gig) => gig.venue)).slice(0, 5), years: countBy(gigs.map((gig) => gig.date?.slice(0, 4)).filter(Boolean)) });
+  }
+  if (request.method === 'GET' && url.pathname === '/api/limits') {
+    requireAccount(request);
+    const day = usageDay();
+    const usage = database.prepare(`SELECT provider, COUNT(*) AS requests, COALESCE(SUM(quota_units), 0) AS units,
+      SUM(CASE WHEN status IS NOT NULL AND status >= 400 THEN 1 ELSE 0 END) AS errors,
+      MAX(requested_at) AS lastRequest
+      FROM api_usage WHERE usage_day = ? GROUP BY provider`).all(day);
+    const operations = database.prepare(`SELECT provider, operation, COUNT(*) AS requests, COALESCE(SUM(quota_units), 0) AS units,
+      MAX(requested_at) AS lastRequest FROM api_usage WHERE usage_day = ? GROUP BY provider, operation ORDER BY units DESC, requests DESC LIMIT 30`).all(day);
+    const recent = database.prepare(`SELECT provider, operation, quota_units AS units, status, requested_at AS requestedAt
+      FROM api_usage WHERE usage_day = ? ORDER BY id DESC LIMIT 20`).all(day);
+    const usageByProvider = new Map(usage.map((entry) => [entry.provider, entry]));
+    const youtubeQuota = Math.max(1, Number(process.env.YOUTUBE_DAILY_QUOTA_UNITS || 10000));
+    const definitions = [
+      { id: 'youtube', name: 'YouTube Data API', configured: configured('youtube'), limit: youtubeQuota, unit: 'quota units', reset: 'Midnight Pacific Time', note: 'Estimated from this app’s requests. Search costs 100 units; playlist writes cost 50.' },
+      { id: 'setlist.fm', name: 'setlist.fm', configured: Boolean(process.env.SETLIST_FM_API_KEY && process.env.SETLIST_FM_API_KEY !== 'replace-me'), limit: null, unit: 'requests', reset: 'Provider-managed', note: 'The API does not return a remaining-quota value, so this page shows tracked requests and errors.' },
+      { id: 'spotify', name: 'Spotify Web API', configured: configured('spotify'), limit: null, unit: 'requests', reset: 'Provider-managed', note: 'Spotify does not publish a simple daily allowance; watch the recent error status for 429 responses.' },
+      { id: 'apple-music', name: 'Apple Music API', configured: configured('apple-music'), limit: null, unit: 'requests', reset: 'Provider-managed', note: 'Apple Music does not expose a remaining request count to this app.' },
+      { id: 'audd', name: 'AudD music recognition', configured: configured('audd'), limit: null, unit: 'requests', reset: 'Provider-managed', note: 'AudD usage is tracked here, but the provider controls the allowance and billing.' }
+    ];
+    return sendJson(response, 200, {
+      day,
+      generatedAt: new Date().toISOString(),
+      providers: definitions.map((definition) => {
+        const entry = usageByProvider.get(definition.id) || { requests: 0, units: 0, errors: 0, lastRequest: null };
+        return { ...definition, requests: Number(entry.requests), units: Number(entry.units), errors: Number(entry.errors), remaining: definition.limit === null ? null : Math.max(0, definition.limit - Number(entry.units)), lastRequest: entry.lastRequest };
+      }),
+      operations,
+      recent
+    });
+  }
+  if (request.method === 'GET' && url.pathname === '/api/jobs') {
+    return sendJson(response, 200, database.prepare("SELECT id, type, name, status, progress, error FROM background_jobs WHERE status IN ('running', 'queued') ORDER BY created_at").all());
+  }
+  if (request.method === 'POST' && url.pathname === '/api/media/cleanup') {
+    requireAccount(request);
+    const referenced = new Set(database.prepare('SELECT filename, playback_filename FROM gig_media').all().flatMap((row) => [row.filename, row.playback_filename].filter(Boolean)));
+    const entries = await fs.readdir(MEDIA_DIR, { withFileTypes: true }); let removed = 0;
+    for (const entry of entries) { if (!entry.isFile() || referenced.has(entry.name)) continue; await fs.rm(path.join(MEDIA_DIR, entry.name), { force: true }); removed += 1; }
+    return sendJson(response, 200, { removed });
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/artists') {
     return sendJson(response, 200, await fetchArtistInfo(url.searchParams.get('name')));
   }
@@ -999,6 +1242,18 @@ async function handleApi(request, response, url) {
   if (request.method === 'GET' && url.pathname === '/api/gigs') {
     const gigs = await readGigs();
     return sendJson(response, 200, gigs.sort((a, b) => b.date.localeCompare(a.date)));
+  }
+
+  const albumStatsMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/album-stats$/);
+  if (albumStatsMatch && request.method === 'GET') {
+    const gig = database.prepare('SELECT artist, songs FROM gigs WHERE id = ?').get(albumStatsMatch[1]);
+    if (!gig) return sendError(response, 404, 'Gig not found.');
+    const songs = JSON.parse(gig.songs || '[]');
+    const enriched = await Promise.all(songs.map(async (song) => ({ ...song, album: await resolveAlbum(song.artist || gig.artist, song.title) || song.album || null })));
+    database.prepare('UPDATE gigs SET songs = ? WHERE id = ?').run(JSON.stringify(enriched), albumStatsMatch[1]);
+    const counts = {};
+    enriched.forEach((song) => { const album = song.album || 'Unknown album'; counts[album] = (counts[album] || 0) + 1; });
+    return sendJson(response, 200, { songs: enriched, albums: counts });
   }
 
   if (request.method === 'POST' && url.pathname === '/api/gigs') {
@@ -1034,11 +1289,22 @@ async function handleApi(request, response, url) {
     console.log(`[media] chunk upload request for gig ${chunkMatch[1]} offset ${request.headers['x-upload-offset'] || 0}`);
     const gigId = chunkMatch[1]; const uploadId = String(request.headers['x-upload-id'] || ''); const filename = decodeURIComponent(String(request.headers['x-media-filename'] || 'upload')); const total = Number(request.headers['x-upload-total'] || 0); const offset = Number(request.headers['x-upload-offset'] || 0);
     if (!uploadId || !total) return sendError(response, 400, 'Invalid upload session.');
+    for (const [sessionId, entry] of uploadSessions) if (entry.expiresAt && entry.expiresAt < Date.now()) uploadSessions.delete(sessionId);
     let session = uploadSessions.get(uploadId);
+    if (session?.complete) return sendJson(response, 200, { complete: true, offset: session.total, media: mediaRows(gigId).find((entry) => entry.id === session.mediaId) });
     if (!session) { const stored = `${randomUUID()}.${mediaExtension(String(request.headers['content-type'] || ''), filename)}`; session = { gigId, filename, total, offset: 0, stored, path: path.join(MEDIA_DIR, `${stored}.uploading`) }; await fs.mkdir(MEDIA_DIR, { recursive: true }); uploadSessions.set(uploadId, session); }
     if (offset !== session.offset) return sendJson(response, 409, { offset: session.offset });
     const output = legacyFs.createWriteStream(session.path, { flags: offset ? 'a' : 'w' }); for await (const chunk of request) { session.offset += chunk.length; if (!output.write(chunk)) await new Promise((resolve) => output.once('drain', resolve)); } await new Promise((resolve, reject) => output.end((error) => error ? reject(error) : resolve()));
-    if (session.offset >= session.total) { await fs.rename(session.path, path.join(MEDIA_DIR, session.stored)); const digest = await hashFile(path.join(MEDIA_DIR, session.stored)); const duplicate = database.prepare('SELECT id FROM gig_media WHERE gig_id = ? AND checksum = ? AND size = ?').get(gigId, digest, session.total); if (duplicate) { await fs.rm(path.join(MEDIA_DIR, session.stored), { force: true }); uploadSessions.delete(uploadId); return sendJson(response, 200, { complete: true, duplicate: true, media: mediaRows(gigId).find((entry) => entry.id === duplicate.id) }); } const id = randomUUID(); const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next; database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, rotation, checksum, size, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?)').run(id, gigId, session.stored, String(request.headers['content-type'] || 'video/mp4'), filename, sortOrder, digest, session.total, new Date().toISOString()); uploadSessions.delete(uploadId); return sendJson(response, 201, { complete: true, media: mediaRows(gigId).find((entry) => entry.id === id) }); }
+    if (session.offset >= session.total) {
+      await fs.rename(session.path, path.join(MEDIA_DIR, session.stored)); const digest = await hashFile(path.join(MEDIA_DIR, session.stored));
+      const duplicate = database.prepare('SELECT id FROM gig_media WHERE gig_id = ? AND checksum = ? AND size = ?').get(gigId, digest, session.total);
+      if (duplicate) { await fs.rm(path.join(MEDIA_DIR, session.stored), { force: true }); uploadSessions.set(uploadId, { ...session, complete: true, mediaId: duplicate.id, expiresAt: Date.now() + 10 * 60 * 1000 }); return sendJson(response, 200, { complete: true, duplicate: true, offset: session.total, media: mediaRows(gigId).find((entry) => entry.id === duplicate.id) }); }
+      const id = randomUUID(); const mimeType = String(request.headers['content-type'] || 'video/mp4'); const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next;
+      database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, rotation, checksum, size, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?)').run(id, gigId, session.stored, mimeType, filename, sortOrder, digest, session.total, new Date().toISOString()); uploadSessions.set(uploadId, { ...session, complete: true, mediaId: id, expiresAt: Date.now() + 10 * 60 * 1000 });
+      if (process.env.AUDD_API_TOKEN && mimeType.startsWith('video/')) database.prepare("UPDATE gig_media SET recognition_status = 'queued' WHERE id = ?").run(id);
+      if (mimeType.startsWith('video/')) { const gigInfo = database.prepare('SELECT artist, venue, date FROM gigs WHERE id = ?').get(gigId); const sourcePath = path.join(MEDIA_DIR, session.stored); const proxyName = `${safeMediaName(gigInfo?.artist)}-${safeMediaName(gigInfo?.venue)}-${safeMediaName(gigInfo?.date)}-${id.slice(0, 8)}-playback.mp4`; const encodeJobId = randomUUID(); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'running', 1); setImmediate(async () => { const encoded = await createPlaybackProxy(sourcePath, path.join(MEDIA_DIR, proxyName)); if (encoded) { database.prepare('UPDATE gig_media SET playback_filename = ?, playback_mime = ? WHERE id = ?').run(proxyName, 'video/mp4', id); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'complete', 100); } else saveBackgroundJob(encodeJobId, 'Encode video', filename, 'error', 0, 'Playback encode failed.'); }); setImmediate(() => recognizeVideoTrack(gigId, id, sourcePath, filename)); }
+      return sendJson(response, 201, { complete: true, media: mediaRows(gigId).find((entry) => entry.id === id) });
+    }
     return sendJson(response, 200, { complete: false, offset: session.offset });
   }
   if (mediaCollectionMatch && request.method === 'GET') {
@@ -1083,8 +1349,9 @@ async function handleApi(request, response, url) {
       const duplicate = database.prepare('SELECT id FROM gig_media WHERE gig_id = ? AND checksum = ? AND size = ?').get(gigId, digest, size);
       if (duplicate) { await fs.rm(path.join(MEDIA_DIR, storedFilename), { force: true }); return sendJson(response, 200, { duplicate: true, media: mediaRows(gigId).find((entry) => entry.id === duplicate.id) }); }
       database.prepare('INSERT INTO gig_media (id, gig_id, filename, playback_filename, mime_type, caption, is_cover, sort_order, rotation, checksum, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, playbackFilename, mimeType, decodeURIComponent(String(request.headers['x-media-caption'] || filename)).trim(), 0, sortOrder, 0, digest, size, new Date().toISOString());
+      if (process.env.AUDD_API_TOKEN && mimeType.startsWith('video/')) database.prepare("UPDATE gig_media SET recognition_status = 'queued' WHERE id = ?").run(id);
       console.log(`[media] upload complete: ${id}`);
-      if (mimeType.startsWith('video/')) { const gigInfo = database.prepare('SELECT artist, venue, date FROM gigs WHERE id = ?').get(gigId); const proxyName = `${safeMediaName(gigInfo?.artist)}-${safeMediaName(gigInfo?.venue)}-${safeMediaName(gigInfo?.date)}-${id.slice(0, 8)}-playback.mp4`; setImmediate(async () => { if (await createPlaybackProxy(path.join(MEDIA_DIR, storedFilename), path.join(MEDIA_DIR, proxyName))) database.prepare('UPDATE gig_media SET playback_filename = ?, playback_mime = ? WHERE id = ?').run(proxyName, 'video/mp4', id); }); }
+      if (mimeType.startsWith('video/')) { const gigInfo = database.prepare('SELECT artist, venue, date FROM gigs WHERE id = ?').get(gigId); const sourcePath = path.join(MEDIA_DIR, storedFilename); const proxyName = `${safeMediaName(gigInfo?.artist)}-${safeMediaName(gigInfo?.venue)}-${safeMediaName(gigInfo?.date)}-${id.slice(0, 8)}-playback.mp4`; const encodeJobId = randomUUID(); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'running', 1); setImmediate(async () => { const encoded = await createPlaybackProxy(sourcePath, path.join(MEDIA_DIR, proxyName)); if (encoded) { database.prepare('UPDATE gig_media SET playback_filename = ?, playback_mime = ? WHERE id = ?').run(proxyName, 'video/mp4', id); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'complete', 100); } else saveBackgroundJob(encodeJobId, 'Encode video', filename, 'error', 0, 'Playback encode failed.'); }); setImmediate(() => recognizeVideoTrack(gigId, id, sourcePath, filename)); }
       return sendJson(response, 201, mediaRows(gigId).find((media) => media.id === id));
     }
     const body = await readBody(request);
@@ -1109,6 +1376,8 @@ async function handleApi(request, response, url) {
     await fs.writeFile(path.join(MEDIA_DIR, storedFilename), file);
     const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next;
     database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, rotation, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, mimeType, String(body.caption || filename).trim(), body.isCover ? 1 : 0, sortOrder, 0, file.length, new Date().toISOString());
+    if (process.env.AUDD_API_TOKEN && mimeType.startsWith('video/')) database.prepare("UPDATE gig_media SET recognition_status = 'queued' WHERE id = ?").run(id);
+    if (mimeType.startsWith('video/')) setImmediate(() => recognizeVideoTrack(gigId, id, path.join(MEDIA_DIR, storedFilename), filename));
     return sendJson(response, 201, mediaRows(gigId).find((media) => media.id === id));
   }
   const mediaMatch = url.pathname.match(/^\/api\/media\/([\w-]+)$/);
@@ -1117,7 +1386,7 @@ async function handleApi(request, response, url) {
     if (!media) return sendError(response, 404, 'Media not found.');
     const body = await readBody(request);
     if ('isCover' in body && body.isCover) database.prepare('UPDATE gig_media SET is_cover = 0 WHERE gig_id = ?').run(media.gig_id);
-    database.prepare('UPDATE gig_media SET caption = COALESCE(?, caption), is_cover = COALESCE(?, is_cover), sort_order = COALESCE(?, sort_order), rotation = COALESCE(?, rotation), song_index = CASE WHEN ? THEN ? ELSE song_index END WHERE id = ?').run('caption' in body ? String(body.caption || '').trim() : null, 'isCover' in body ? (body.isCover ? 1 : 0) : null, 'sortOrder' in body ? Number(body.sortOrder) : null, 'rotation' in body ? ((Number(body.rotation) % 360) + 360) % 360 : null, 'songIndex' in body ? 1 : 0, 'songIndex' in body && body.songIndex !== null && body.songIndex !== '' ? Number(body.songIndex) : null, mediaMatch[1]);
+    database.prepare('UPDATE gig_media SET caption = COALESCE(?, caption), is_cover = COALESCE(?, is_cover), sort_order = COALESCE(?, sort_order), rotation = COALESCE(?, rotation), song_index = CASE WHEN ? THEN ? ELSE song_index END, recognition_override = COALESCE(?, recognition_override) WHERE id = ?').run('caption' in body ? String(body.caption || '').trim() : null, 'isCover' in body ? (body.isCover ? 1 : 0) : null, 'sortOrder' in body ? Number(body.sortOrder) : null, 'rotation' in body ? ((Number(body.rotation) % 360) + 360) % 360 : null, 'songIndex' in body ? 1 : 0, 'songIndex' in body && body.songIndex !== null && body.songIndex !== '' ? Number(body.songIndex) : null, 'recognitionOverride' in body ? (body.recognitionOverride ? 1 : 0) : null, mediaMatch[1]);
     return sendJson(response, 200, mediaRows(media.gig_id).find((entry) => entry.id === mediaMatch[1]));
   }
   if (request.method === 'DELETE' && mediaMatch) {
@@ -1127,6 +1396,16 @@ async function handleApi(request, response, url) {
     database.prepare('DELETE FROM gig_media WHERE id = ?').run(mediaMatch[1]);
     return sendJson(response, 200, { ok: true });
   }
+  const trimMatch = url.pathname.match(/^\/api\/media\/([\w-]+)\/trim$/);
+  if (request.method === 'POST' && trimMatch) {
+    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(trimMatch[1]);
+    if (!media || !media.mime_type.startsWith('video/')) return sendError(response, 400, 'Only uploaded videos can be trimmed.');
+    const start = Number(url.searchParams.get('start')); const end = Number(url.searchParams.get('end'));
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) return sendError(response, 400, 'Trim times are invalid.');
+    const inputPath = path.join(MEDIA_DIR, media.filename); const outputPath = `${inputPath}.trimming.mp4`; const jobId = randomUUID(); saveBackgroundJob(jobId, 'Trim video', media.filename, 'running', 5);
+    setImmediate(async () => { try { await trimVideoFile(inputPath, outputPath, start, end - start, (timeMs) => saveBackgroundJob(jobId, 'Trim video', media.filename, 'running', Math.min(99, Math.round((timeMs / 1000000 / (end - start)) * 100)))); await fs.rename(outputPath, inputPath); if (media.playback_filename) await fs.rm(path.join(MEDIA_DIR, media.playback_filename), { force: true }); database.prepare('UPDATE gig_media SET playback_filename = NULL, playback_mime = NULL, size = ?, checksum = ? WHERE id = ?').run((await fs.stat(inputPath)).size, await hashFile(inputPath), media.id); saveBackgroundJob(jobId, 'Trim video', media.filename, 'complete', 100); } catch (error) { await fs.rm(outputPath, { force: true }); saveBackgroundJob(jobId, 'Trim video', media.filename, 'error', 0, error.message); } });
+    return sendJson(response, 202, { jobId });
+  }
   const rotateMatch = url.pathname.match(/^\/api\/media\/([\w-]+)\/rotate$/);
   if (request.method === 'POST' && rotateMatch) {
     const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(rotateMatch[1]);
@@ -1135,12 +1414,12 @@ async function handleApi(request, response, url) {
     const inputPath = path.join(MEDIA_DIR, media.playback_filename || media.filename);
     const outputPath = `${inputPath}.rotating.mp4`;
     const direction = url.searchParams.get('direction') === 'counterclockwise' ? 'counterclockwise' : 'clockwise';
-    const jobId = randomUUID(); rotateJobs.set(jobId, { status: 'running', progress: 5 });
-    setImmediate(async () => { try { const duration = await probeDuration(inputPath); await rotateVideoFile(inputPath, outputPath, direction, (timeMs) => { const progress = duration ? Math.min(99, Math.round((timeMs / 1000000 / duration) * 100)) : 10; rotateJobs.set(jobId, { status: 'running', progress }); }); await fs.rename(outputPath, inputPath); database.prepare('UPDATE gig_media SET rotation = 0 WHERE id = ?').run(media.id); rotateJobs.set(jobId, { status: 'complete', progress: 100 }); } catch (error) { await fs.rm(outputPath, { force: true }); rotateJobs.set(jobId, { status: 'error', progress: 0, error: error.message }); } });
+    const jobId = randomUUID(); saveBackgroundJob(jobId, 'Rotate video', media.filename, 'running', 5);
+    setImmediate(async () => { try { const duration = await probeDuration(inputPath); await rotateVideoFile(inputPath, outputPath, direction, (timeMs) => { const progress = duration ? Math.min(99, Math.round((timeMs / 1000000 / duration) * 100)) : 10; saveBackgroundJob(jobId, 'Rotate video', media.filename, 'running', progress); }); await fs.rename(outputPath, inputPath); database.prepare('UPDATE gig_media SET rotation = 0 WHERE id = ?').run(media.id); saveBackgroundJob(jobId, 'Rotate video', media.filename, 'complete', 100); } catch (error) { await fs.rm(outputPath, { force: true }); saveBackgroundJob(jobId, 'Rotate video', media.filename, 'error', 0, error.message); } });
     return sendJson(response, 202, { jobId });
   }
   const rotateStatusMatch = url.pathname.match(/^\/api\/media\/rotate\/([\w-]+)$/);
-  if (request.method === 'GET' && rotateStatusMatch) return sendJson(response, 200, rotateJobs.get(rotateStatusMatch[1]) || { status: 'missing', progress: 0 });
+  if (request.method === 'GET' && rotateStatusMatch) return sendJson(response, 200, rotateJobs.get(rotateStatusMatch[1]) || database.prepare('SELECT id, type, name, status, progress, error FROM background_jobs WHERE id = ?').get(rotateStatusMatch[1]) || { status: 'missing', progress: 0 });
   if (request.method === 'PATCH' && gigMatch) {
     const update = await readBody(request);
     const gigs = await readGigs();
@@ -1201,12 +1480,14 @@ async function handleApi(request, response, url) {
     if (eventDate) upstream.searchParams.set('date', eventDate.split('-').reverse().join('-'));
     const headers = { Accept: 'application/json', 'x-api-key': process.env.SETLIST_FM_API_KEY };
     let setlistResponse = await fetch(upstream, { headers });
+    recordApiUsage('setlist.fm', 'search/setlists', 1, setlistResponse.status);
 
     // Venue city labels are not always how concertgoers name the place
     // (e.g. Hollywood Bowl is recorded as Los Angeles). Retry by artist/date.
     if (setlistResponse.status === 404) {
       upstream.searchParams.delete('cityName');
       setlistResponse = await fetch(upstream, { headers });
+      recordApiUsage('setlist.fm', 'search/setlists retry', 1, setlistResponse.status);
     }
     if (setlistResponse.status === 404) return sendJson(response, 200, { total: 0, setlists: [] });
     if (!setlistResponse.ok) {

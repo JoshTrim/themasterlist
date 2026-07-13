@@ -27,7 +27,7 @@
     </svg>
     <header class="site-header">
       <a class="brand" href="/">The<br /><em>Master</em> List</a>
-      <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">☰</button><nav class="site-nav" id="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/shows">Shows</a><a href="/shared">Shared</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a><a href="/login">Sign in</a></nav>
+      <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">☰</button><nav class="site-nav" id="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/overview">Overview</a><a href="/api-limits">API limits</a><a href="/shows">Shows</a><a href="/shared">Shared</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a><a href="/login">Sign in</a></nav>
       <span class="record-count" id="record-count">0 shows</span>
     </header>
 
@@ -70,7 +70,7 @@
             </fieldset>
             <label class="notes">Performance note <textarea name="performanceNotes" placeholder="The set, sound, stage presence…"></textarea></label>
             <label class="notes">Venue note <textarea name="venueNotes" placeholder="The room, crowd, location…"></textarea></label>
-            <label class="notes media-upload">Photos and videos <input id="media-input" name="media" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>Up to 20 GB per file · uploads stream directly to disk</small></label>
+            <label class="notes media-upload">Photos and videos <input id="media-input" name="media" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>On mobile, select multiple files if your browser allows it; they will queue one at a time.</small><div class="media-upload-status" aria-live="polite" hidden></div></label>
             <label class="notes media-upload">Other media · YouTube <input id="youtube-media-input" type="url" placeholder="https://youtube.com/watch?v=…" /><small>Paste a video URL to embed it with this show</small></label>
           </div>
           <datalist id="artist-options"></datalist><datalist id="venue-options"></datalist><datalist id="city-options"></datalist>
@@ -96,13 +96,17 @@
         <div class="gig-list" id="gig-list"></div>
       </section>
 
+      <section class="overview-page" id="overview-page" aria-labelledby="overview-heading"><div class="section-heading"><p class="eyebrow">05 / Archive intelligence</p><h1 id="overview-heading">Overview</h1><p class="lede">A snapshot of your live-music life.</p></div><div class="dashboard-stats" id="dashboard-stats"></div></section>
+
+      <section class="api-limits-page" id="api-limits-page" aria-labelledby="api-limits-heading"><div class="section-heading"><p class="eyebrow">06 / Service health</p><h1 id="api-limits-heading">API limits</h1><p class="lede">A local estimate of how much provider capacity this archive has used today.</p></div><p class="api-limits-note" id="api-limits-note">Loading tracked requests…</p><div class="api-limits-grid" id="api-limits-grid"></div><div class="api-usage-detail" id="api-usage-detail"></div></section>
+
       <section class="artist-page" id="artist-page" aria-labelledby="artist-heading">
         <a class="text-button artist-back" href="/shows">← Back to shows</a>
         <div class="artist-profile" id="artist-profile">
           <div class="artist-copy"><p class="eyebrow">Artist dossier</p><h1 id="artist-heading">Loading artist…</h1><p class="artist-description" id="artist-description"></p><p class="artist-bio" id="artist-bio"></p><a class="artist-source" id="artist-source" target="_blank" rel="noreferrer" hidden>Read more on Wikipedia ↗</a></div>
           <img class="artist-image" id="artist-image" alt="" hidden />
         </div>
-        <div class="artist-shows-heading"><p class="eyebrow">From your archive</p><h2>Shows attended</h2></div>
+        <div class="artist-shows-heading"><p class="eyebrow">From your archive</p><h2>Shows attended</h2></div><div class="artist-stats" id="artist-stats"></div>
         <div class="gig-list" id="artist-shows"></div>
         <p class="empty-state" id="artist-empty" hidden>No shows by this artist yet.</p>
       </section>
@@ -127,7 +131,7 @@
       <section class="edit-page" id="edit-page" aria-labelledby="edit-heading">
         <a class="text-button" href="/shows">← Back to shows</a>
         <div class="section-heading"><p class="eyebrow">Show edit</p><h1 id="edit-heading">Edit show</h1></div>
-        <form id="edit-form"><div class="form-grid"><label>Artist <input name="artist" required /></label><label>Date <input name="date" type="date" /></label><label>Venue <input name="venue" required /></label><label>City <input name="city" required /></label><label class="notes">Photos and videos <input id="edit-media-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>Up to 5 GB per file · uploads stream directly to disk</small></label><label class="notes media-upload">Other media · YouTube <input id="edit-youtube-media-input" type="url" placeholder="https://youtube.com/watch?v=…" /></label></div><div class="edit-setlist"><p class="eyebrow">Setlist</p><div id="edit-setlist-tracks"></div><button class="button button-secondary" id="add-edit-track" type="button">+ Add track</button></div><div class="form-actions"><button class="button" type="submit">Save changes</button></div><p class="form-message" id="edit-message" role="status"></p></form>
+        <form id="edit-form"><div class="form-grid"><label>Artist <input name="artist" required /></label><label>Date <input name="date" type="date" /></label><label>Venue <input name="venue" required /></label><label>City <input name="city" required /></label><label class="notes media-upload">Photos and videos <input id="edit-media-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>On mobile, select multiple files if your browser allows it; uploads queue one at a time.</small><div class="media-upload-status" aria-live="polite" hidden></div></label><label class="notes media-upload">Other media · YouTube <input id="edit-youtube-media-input" type="url" placeholder="https://youtube.com/watch?v=…" /></label></div><div class="edit-setlist"><p class="eyebrow">Setlist</p><p class="form-hint">Optional chapter times in seconds for the set player.</p><div id="edit-setlist-tracks"></div><button class="button button-secondary" id="add-edit-track" type="button">+ Add track</button></div><div class="form-actions"><button class="button" type="submit">Save changes</button></div><p class="form-message" id="edit-message" role="status"></p></form>
         <div class="edit-gallery-heading"><p class="eyebrow">Attached media</p></div><div class="media-gallery edit-gallery" id="edit-gallery"></div>
       </section>
 
@@ -144,7 +148,7 @@
         </div>
         <div class="profile-bar" id="profile-bar" hidden>
           <label>Signed in as <select id="profile-select" disabled><option value="">Loading…</option></select></label>
-          <button class="button button-secondary" id="create-invite" type="button" hidden>Create invite</button><button class="button button-secondary" id="download-backup" type="button">Download backup</button><button class="text-button" id="logout" type="button">Sign out</button>
+          <button class="button button-secondary" id="create-invite" type="button" hidden>Create invite</button><button class="button button-secondary" id="download-backup" type="button">Download backup</button><button class="button button-secondary" id="export-archive" type="button">Export archive</button><label class="button button-secondary import-archive-label">Import archive<input id="import-archive" type="file" accept="application/json" hidden /></label><button class="button button-secondary" id="cleanup-media" type="button">Clean unused media</button><button class="text-button" id="logout" type="button">Sign out</button>
         </div>
         <p class="shared-message" id="shared-message">Create profiles for the people sharing this server, then share shows into the collaborative archive.</p>
         <div class="shared-list" id="shared-list"></div>

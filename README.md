@@ -22,6 +22,12 @@ The app calls setlist.fm from the server, so your key is never sent to the brows
 
 setlist.fm's API is free for non-commercial use and requires its API key to be sent in the `x-api-key` header. Check its terms before changing the project scope: [API docs](https://api.setlist.fm/docs/1.0/index.html) and [terms](https://www.setlist.fm/help/terms).
 
+## Automatic track detection
+
+If `AUDD_API_TOKEN` is present in `.env`, uploaded videos are sent through a background recognition job. The server extracts a 12-second audio sample, sends it to AudD, and displays the detected title and artist in the media gallery. Exact title matches are automatically associated with the show setlist; unmatched results can still be assigned manually from the edit page. The token is kept server-side.
+
+On the edit page, selecting a different setlist track—or selecting **Unassigned**—marks that media item as a manual override and preserves your choice.
+
 ## Playlist exports
 
 Every saved show with a setlist has export buttons. Exports create **private** playlists and show the number of songs that could not be matched. The matching uses the setlist artist (or the credited cover artist) and song title.

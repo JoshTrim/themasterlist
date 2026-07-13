@@ -4,7 +4,30 @@ const siteNav = document.querySelector('#site-nav');
 mobileMenuToggle?.addEventListener('click', () => { const open = siteNav.classList.toggle('is-open'); mobileMenuToggle.setAttribute('aria-expanded', String(open)); });
 const jobQueue = new Map();
 const jobPanel = document.createElement('aside'); jobPanel.className = 'job-queue'; jobPanel.hidden = true; jobPanel.innerHTML = '<p class="eyebrow">Background jobs</p><div class="job-queue-list"></div>'; document.body.append(jobPanel);
-function updateJob(id, patch) { jobQueue.set(id, { ...jobQueue.get(id), ...patch }); const list = jobPanel.querySelector('.job-queue-list'); list.innerHTML = [...jobQueue.values()].map((job) => `<div class="job-entry" data-job-id="${job.id}"><div><strong>${escapeHtml(job.type)}</strong><span>${escapeHtml(job.name)}</span><button class="job-dismiss" type="button" aria-label="Cancel or dismiss job">×</button></div><div class="job-bar"><i style="width:${job.progress || 0}%"></i></div><small>${job.status === 'complete' ? 'Complete' : job.status === 'error' ? 'Failed' : job.status === 'cancelled' ? 'Cancelled' : `${Math.round(job.progress || 0)}%`}</small></div>`).join(''); list.querySelectorAll('.job-dismiss').forEach((button) => button.addEventListener('click', () => { const job = jobQueue.get(button.closest('.job-entry').dataset.jobId); if (job?.status === 'running' && job.cancel) job.cancel(); else jobQueue.delete(job.id); updateJob(job.id, { status: 'cancelled', progress: 0 }); if (job.status !== 'running') jobQueue.delete(job.id); })); jobPanel.hidden = !jobQueue.size; }
+function updateJob(id, patch) {
+  jobQueue.set(id, { ...jobQueue.get(id), ...patch });
+  // Mobile uploads have their own queue directly beneath the file picker. Keep
+  // them out of the floating background panel so the same upload is not shown twice.
+  const visibleJobs = [...jobQueue.values()].filter((job) => !isMobileUpload || job.type !== 'Uploading');
+  const list = jobPanel.querySelector('.job-queue-list');
+  if (!visibleJobs.length) {
+    jobPanel.hidden = true;
+    if (list.childElementCount) list.replaceChildren();
+    return;
+  }
+  list.innerHTML = visibleJobs.map((job) => `<div class="job-entry" data-job-id="${job.id}"><div><strong>${escapeHtml(job.type)}</strong><span>${escapeHtml(job.name)}</span><button class="job-dismiss" type="button" aria-label="Cancel or dismiss job">×</button></div><div class="job-bar"><i style="width:${job.progress || 0}%"></i></div><small>${job.status === 'complete' ? 'Complete' : job.status === 'error' ? 'Failed' : job.status === 'cancelled' ? 'Cancelled' : `${Math.round(job.progress || 0)}%`}</small></div>`).join('');
+  list.querySelectorAll('.job-dismiss').forEach((button) => button.addEventListener('click', () => {
+    const job = jobQueue.get(button.closest('.job-entry').dataset.jobId);
+    if (!job) return;
+    if (job.status === 'running' && job.cancel) job.cancel();
+    else jobQueue.delete(job.id);
+    updateJob(job.id, { status: 'cancelled', progress: 0 });
+    if (job.status !== 'running') jobQueue.delete(job.id);
+  }));
+  jobPanel.hidden = !visibleJobs.length;
+}
+window.addEventListener('beforeunload', (event) => { if ([...jobQueue.values()].some((job) => job.type === 'Uploading' && job.status === 'running')) { event.preventDefault(); event.returnValue = ''; } });
+async function loadPersistentJobs() { try { const jobs = await fetchJson('/api/jobs'); jobs.forEach((job) => updateJob(job.id, job)); } catch {} }
 const message = document.querySelector('#form-message');
 const results = document.querySelector('#search-results');
 const gigList = document.querySelector('#gig-list');
@@ -16,6 +39,10 @@ const yearFilter = document.querySelector('#year-filter');
 const sortFilter = document.querySelector('#sort-filter');
 const favouriteFilter = document.querySelector('#favourite-filter');
 const archiveStats = document.querySelector('#archive-stats');
+const dashboardStats = document.querySelector('#dashboard-stats');
+const apiLimitsGrid = document.querySelector('#api-limits-grid');
+const apiLimitsNote = document.querySelector('#api-limits-note');
+const apiUsageDetail = document.querySelector('#api-usage-detail');
 const loadMapButton = document.querySelector('#load-map');
 const mapMessage = document.querySelector('#map-message');
 const mapElement = document.querySelector('#gig-map');
@@ -36,6 +63,9 @@ const accountMessage = document.querySelector('#account-message');
 const profileBar = document.querySelector('#profile-bar');
 const inviteButton = document.querySelector('#create-invite');
 const downloadBackupButton = document.querySelector('#download-backup');
+const exportArchiveButton = document.querySelector('#export-archive');
+const importArchiveInput = document.querySelector('#import-archive');
+const cleanupMediaButton = document.querySelector('#cleanup-media');
 const logoutButton = document.querySelector('#logout');
 let selectedSetlist = null;
 let gigs = [];
@@ -48,10 +78,12 @@ let musicKitConfigured = false;
 let venueMap;
 let venueLayer;
 
-const page = ({ '/': 'home', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[window.location.pathname] || 'home';
+const page = ({ '/': 'home', '/overview': 'overview', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[window.location.pathname] || 'home';
 document.body.dataset.page = page;
 const routeSections = {
   home: ['home-page'],
+  overview: ['overview-page'],
+  'api-limits': ['api-limits-page'],
   add: ['add-page'],
   shows: ['shows-archive'],
   shared: ['shows-shared'],
@@ -66,7 +98,7 @@ const routeSections = {
   map: ['map-page'],
   account: ['account-page']
 };
-for (const id of ['home-page', 'add-page', 'shows-archive', 'artist-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
+for (const id of ['home-page', 'overview-page', 'api-limits-page', 'add-page', 'shows-archive', 'artist-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
   document.querySelector(`#${id}`).hidden = !routeSections[page].includes(id);
 }
 const chestButton = document.querySelector('#open-chest');
@@ -80,14 +112,125 @@ const artistImage = document.querySelector('#artist-image');
 const artistSource = document.querySelector('#artist-source');
 const artistShows = document.querySelector('#artist-shows');
 const artistEmpty = document.querySelector('#artist-empty');
+const artistStats = document.querySelector('#artist-stats');
 const editForm = document.querySelector('#edit-form');
 const editMessage = document.querySelector('#edit-message');
 const editMediaInput = document.querySelector('#edit-media-input');
 const pendingMedia = new WeakMap();
-function setupMobileFileQueue(input) { if (!input || !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) return; input.removeAttribute('multiple'); pendingMedia.set(input, []); input.addEventListener('change', () => { const files = pendingMedia.get(input); if (input.files[0]) files.push(input.files[0]); input.value = ''; }); }
+const mobileUploadStates = new WeakMap();
+const mobileUploadRenderTimers = new WeakMap();
+const isMobileUpload = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+let uploadWakeLock = null;
+let activeWakeLockUsers = 0;
+async function retainUploadWakeLock() { if (!isMobileUpload || !navigator.wakeLock) return; activeWakeLockUsers += 1; if (uploadWakeLock) return; try { uploadWakeLock = await navigator.wakeLock.request('screen'); uploadWakeLock.addEventListener?.('release', () => { uploadWakeLock = null; }); } catch { uploadWakeLock = null; } }
+function releaseUploadWakeLock() { if (!isMobileUpload) return; activeWakeLockUsers = Math.max(0, activeWakeLockUsers - 1); if (!activeWakeLockUsers && uploadWakeLock) { uploadWakeLock.release().catch(() => {}); uploadWakeLock = null; } }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && activeWakeLockUsers && !uploadWakeLock) retainUploadWakeLock(); });
+function mobileUploadStateFor(input, gigId = '') {
+  let state = mobileUploadStates.get(input);
+  if (!state) { state = { gigId: '', items: [], processing: false, startTimer: null, onUploaded: null, onDrained: null, completedSinceDrain: 0, releaseAfterDrain: false }; mobileUploadStates.set(input, state); }
+  if (gigId) state.gigId = gigId;
+  return state;
+}
+function uploadStatusContainer(input) { return input?.closest('.media-upload')?.querySelector('.media-upload-status'); }
+function formatUploadSize(bytes) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB']; const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024))); return `${(bytes / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`; }
+function scheduleMobileUploadStateRender(input, state = mobileUploadStates.get(input), immediate = false) {
+  const timer = mobileUploadRenderTimers.get(input);
+  if (immediate && timer) { clearTimeout(timer); mobileUploadRenderTimers.delete(input); }
+  if (immediate) { renderMobileUploadState(input, state); return; }
+  if (timer) return;
+  mobileUploadRenderTimers.set(input, setTimeout(() => {
+    mobileUploadRenderTimers.delete(input);
+    renderMobileUploadState(input, state);
+  }, 180));
+}
+function renderMobileUploadState(input, state = mobileUploadStates.get(input)) {
+  const container = uploadStatusContainer(input);
+  if (!container) return;
+  const items = state?.items?.slice(-6) || [];
+  container.hidden = !items.length;
+  if (!items.length) { container.replaceChildren(); return; }
+  container.innerHTML = items.map((item) => {
+    const label = item.status === 'waiting' ? 'Waiting for show' : item.status === 'queued' ? 'Queued' : item.status === 'uploading' ? `Uploading ${Math.round(item.progress || 0)}%` : item.status === 'complete' ? 'Uploaded' : `Failed · ${item.error || 'Try again'}`;
+    const retry = item.status === 'error' ? `<button type="button" class="mobile-upload-retry" data-upload-item="${item.id}">Retry</button>` : '';
+    return `<div class="mobile-upload-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(label)} · ${escapeHtml(formatUploadSize(item.size))}</span>${retry}</div><div class="mobile-upload-bar"><i style="width:${item.progress || (item.status === 'complete' ? 100 : 0)}%"></i></div></div>`;
+  }).join('');
+  container.querySelectorAll('.mobile-upload-retry').forEach((button) => button.addEventListener('click', () => {
+    const item = state.items.find((entry) => entry.id === button.dataset.uploadItem);
+    if (!item) return;
+    item.status = 'queued'; item.error = ''; item.progress = 0;
+    renderMobileUploadState(input, state);
+    processMobileUploadQueue(input, state);
+  }));
+}
+function queueMobileFiles(input, files) {
+  const state = mobileUploadStateFor(input);
+  const selectedFiles = files.filter((file) => file && file.size > 0);
+  if (!selectedFiles.length) return;
+  const items = selectedFiles.map((file) => ({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, file, name: file.name, size: file.size, status: state.gigId ? 'queued' : 'waiting', progress: 0, error: '' }));
+  state.items.push(...items);
+  if (!state.gigId) pendingMedia.set(input, [...(pendingMedia.get(input) || []), ...selectedFiles]);
+  renderMobileUploadState(input, state);
+  if (state.gigId && !state.startTimer) {
+    state.startTimer = setTimeout(() => {
+      state.startTimer = null;
+      processMobileUploadQueue(input, state);
+    }, 200);
+  }
+}
+async function processMobileUploadQueue(input, state = mobileUploadStates.get(input)) {
+  if (!state?.gigId || state.processing) return state?.runningPromise;
+  state.processing = true;
+  await retainUploadWakeLock();
+  state.runningPromise = (async () => {
+    while (true) {
+      const item = state.items.find((entry) => entry.status === 'queued');
+      if (!item) break;
+      item.status = 'uploading'; item.progress = 0; renderMobileUploadState(input, state);
+      try {
+        await uploadGigMedia(state.gigId, [item.file], (file, fraction) => { item.progress = fraction * 100; scheduleMobileUploadStateRender(input, state); });
+        item.status = 'complete'; item.progress = 100; item.file = null; renderMobileUploadState(input, state);
+        state.completedSinceDrain += 1;
+        if (state.onUploaded) { try { await state.onUploaded(item); } catch { /* keep the upload marked successful if a gallery refresh fails */ } }
+      } catch (error) {
+        item.status = 'error'; item.error = error.message; renderMobileUploadState(input, state);
+      }
+    }
+  })().finally(() => {
+    state.processing = false; state.runningPromise = null;
+    const hasQueued = state.items.some((item) => item.status === 'queued' || item.status === 'waiting' || item.status === 'uploading');
+    const needsRetry = state.items.some((item) => item.status === 'queued' || item.status === 'error');
+    if (!hasQueued && state.completedSinceDrain && state.onDrained) {
+      const completedCount = state.completedSinceDrain;
+      state.completedSinceDrain = 0;
+      Promise.resolve(state.onDrained(completedCount)).catch(() => {});
+    }
+    if (state.releaseAfterDrain && !needsRetry) { state.gigId = ''; state.releaseAfterDrain = false; }
+    releaseUploadWakeLock(); renderMobileUploadState(input, state);
+  });
+  return state.runningPromise;
+}
+function startMobileUploadQueue(input, gigId, onUploaded, onDrained) {
+  const state = mobileUploadStateFor(input, gigId);
+  state.onUploaded = onUploaded || state.onUploaded;
+  state.onDrained = onDrained || state.onDrained;
+  state.items.filter((item) => item.status === 'waiting').forEach((item) => { item.status = 'queued'; });
+  pendingMedia.set(input, []);
+  renderMobileUploadState(input, state);
+  return processMobileUploadQueue(input, state);
+}
+function setupMobileFileQueue(input) {
+  if (!input || !isMobileUpload) return;
+  pendingMedia.set(input, []);
+  mobileUploadStateFor(input);
+  input.addEventListener('change', () => {
+    const files = [...(input.files || [])];
+    input.value = '';
+    queueMobileFiles(input, files);
+  });
+}
 setupMobileFileQueue(mediaInput);
 setupMobileFileQueue(editMediaInput);
-function addFileClearButton(input) { if (!input) return; const button = document.createElement('button'); button.type = 'button'; button.className = 'button button-secondary file-clear'; button.textContent = 'Clear selected files'; button.addEventListener('click', () => { input.value = ''; if (pendingMedia.has(input)) pendingMedia.set(input, []); }); input.insertAdjacentElement('afterend', button); }
+function addFileClearButton(input) { if (!input) return; const button = document.createElement('button'); button.type = 'button'; button.className = 'button button-secondary file-clear'; button.textContent = 'Clear queued files'; button.addEventListener('click', () => { input.value = ''; if (pendingMedia.has(input)) pendingMedia.set(input, []); const state = mobileUploadStates.get(input); if (state) { if (state.startTimer) { clearTimeout(state.startTimer); state.startTimer = null; } state.items = state.items.filter((item) => item.status === 'uploading' || item.status === 'complete'); if (!state.items.some((item) => item.status === 'uploading')) { state.gigId = ''; state.releaseAfterDrain = false; } renderMobileUploadState(input, state); } }); input.insertAdjacentElement('afterend', button); }
 addFileClearButton(mediaInput);
 addFileClearButton(editMediaInput);
 const editGallery = document.querySelector('#edit-gallery');
@@ -135,21 +278,24 @@ let activeYoutubePlayer;
 let activeYoutubeVideoId = '';
 const formatPlaybackTime = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 function renderSetTimeline(gig) {
-  const markerDenominator = Math.max(1, setQueue.length - 1);
-  setPlayerMarkers.innerHTML = setQueue.map((entry, index) => `<span class="set-marker${index === 0 ? ' marker-first' : ''}${index === setQueue.length - 1 ? ' marker-last' : ''}" style="left:${(index / markerDenominator) * 100}%" title="${escapeHtml(gig.songs[entry.songIndex].title)}">${index + 1} · ${escapeHtml(gig.songs[entry.songIndex].title)}</span>`).join('');
+  const positions = playbackPositions(gig);
+  setPlayerMarkers.innerHTML = setQueue.map((entry, index) => `<span class="set-marker${index === 0 ? ' marker-first' : ''}${index === setQueue.length - 1 ? ' marker-last' : ''}" style="left:${positions[index] * 100}%" title="${escapeHtml(gig.songs[entry.songIndex].title)}">${index + 1} · ${escapeHtml(gig.songs[entry.songIndex].title)}</span>`).join('');
   setPlayerMarkers.querySelectorAll('.set-marker').forEach((marker, index) => marker.addEventListener('click', () => { setQueueIndex = index; playSetTrack(); }));
-  setPlayerProgress.style.width = `${(setQueueIndex / markerDenominator) * 100}%`;
-  setPlayerElapsed.textContent = formatPlaybackTime(setQueueIndex * 240);
-  setPlayerTotal.textContent = `~${formatPlaybackTime(setQueue.length * 240)}`;
+  setPlayerProgress.style.width = `${positions[setQueueIndex] * 100}%`;
+  setPlayerElapsed.textContent = formatPlaybackTime((gig.songs[setQueue[setQueueIndex].songIndex].startSeconds || 0));
+  const total = Math.max(...gig.songs.map((song) => Number(song.endSeconds || song.startSeconds || 0)), setQueue.length * 240);
+  setPlayerTotal.textContent = `~${formatPlaybackTime(total)}`;
 }
+function playbackPositions(gig) { const hasTimes = setQueue.some((entry) => Number.isFinite(Number(gig.songs[entry.songIndex].startSeconds))); const total = hasTimes ? Math.max(...gig.songs.map((song) => Number(song.endSeconds || song.startSeconds || 0)), 1) : Math.max(1, setQueue.length - 1); return setQueue.map((entry, index) => hasTimes ? Math.min(1, Number(gig.songs[entry.songIndex].startSeconds || 0) / total) : index / total); }
 setPlayerTimeline?.addEventListener('click', (event) => {
   if (event.target.closest('.set-marker')) return;
   if (!setQueue.length) return;
   const rect = setPlayerTimeline.getBoundingClientRect();
   const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-  const position = ratio * Math.max(1, setQueue.length - 1);
-  const index = Math.min(setQueue.length - 1, Math.floor(position));
-  const withinTrack = position - index;
+  const gig = gigs.find((entry) => entry.id === showDetailId); const positions = gig ? playbackPositions(gig) : [];
+  let index = positions.findIndex((position, markerIndex) => ratio < position && markerIndex > 0) - 1; if (index < 0) index = positions.length - 1;
+  index = Math.max(0, Math.min(setQueue.length - 1, index));
+  const start = positions[index] || 0; const end = positions[index + 1] ?? 1; const withinTrack = end > start ? (ratio - start) / (end - start) : 0;
   setPlayerProgress.style.width = `${ratio * 100}%`;
   if (index !== setQueueIndex) { setQueueIndex = index; playSetTrack(); }
   requestAnimationFrame(() => {
@@ -237,6 +383,15 @@ async function fetchJson(url, options) {
   return payload;
 }
 
+async function pollMediaRecognition(gigId, onMedia) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const refreshed = await fetchJson(`/api/gigs/${gigId}/media`);
+    onMedia(refreshed);
+    if (!refreshed.some((item) => ['queued', 'running'].includes(item.recognitionStatus))) break;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+}
+
 async function fileAsBase64(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = '';
@@ -244,13 +399,71 @@ async function fileAsBase64(file) {
   return btoa(binary);
 }
 
-async function uploadGigMedia(gigId, files, onProgress = () => {}) {
+const mobileUploadChains = new Map();
+async function uploadGigMediaNow(gigId, files, onProgress = () => {}) {
   if (!crypto.randomUUID) Object.defineProperty(crypto, 'randomUUID', { value: () => `${Date.now()}-${Math.random().toString(36).slice(2)}` });
   const queue = [...files];
-  const uploadChunked = async (file, jobId) => { const chunkSize = 8 * 1024 * 1024; const uploadId = crypto.randomUUID(); let offset = 0; while (offset < file.size) { const chunk = file.slice(offset, offset + chunkSize); let attempt = 0; while (true) { try { const response = await fetch(`/api/gigs/${gigId}/media/chunk`, { method: 'POST', headers: { 'Content-Type': file.type, 'X-Upload-Id': uploadId, 'X-Upload-Offset': String(offset), 'X-Upload-Total': String(file.size), 'X-Media-Filename': encodeURIComponent(file.name) }, body: chunk }); const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Chunk failed'); offset = body.offset || file.size; updateJob(jobId, { progress: offset / file.size * 100 }); onProgress(file, offset / file.size); break; } catch (error) { if (++attempt >= 3) throw error; await new Promise((resolve) => setTimeout(resolve, 1000 * attempt)); } } } };
-  const worker = async () => { while (queue.length) { const file = queue.shift(); const jobId = `${Date.now()}-${Math.random()}`; updateJob(jobId, { id: jobId, type: 'Uploading', name: file.name, status: 'running', progress: 0 }); try { if (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) await uploadChunked(file, jobId); else await new Promise((resolve, reject) => { const xhr = new XMLHttpRequest(); updateJob(jobId, { cancel: () => xhr.abort() }); xhr.open('POST', `/api/gigs/${gigId}/media`); xhr.setRequestHeader('Content-Type', file.type); xhr.setRequestHeader('X-Media-Filename', encodeURIComponent(file.name)); xhr.setRequestHeader('X-Media-Caption', encodeURIComponent(file.name)); xhr.upload.onprogress = (event) => { if (event.lengthComputable) { updateJob(jobId, { progress: (event.loaded / event.total) * 100 }); onProgress(file, event.loaded / event.total); } }; xhr.onload = () => { let body = {}; try { body = JSON.parse(xhr.responseText); } catch {} if (xhr.status >= 200 && xhr.status < 300) { updateJob(jobId, { status: 'complete', progress: 100 }); resolve(body); } else reject(new Error(body.error || 'Media upload failed.')); }; xhr.onerror = () => reject(new Error('Media upload failed.')); xhr.send(file); }); updateJob(jobId, { status: 'complete', progress: 100 }); } catch (error) { updateJob(jobId, { status: 'error' }); throw error; } } };
-  const concurrency = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ? 1 : 2;
+  const uploadChunked = async (file, jobId) => {
+    const chunkSize = 4 * 1024 * 1024;
+    const uploadId = crypto.randomUUID();
+    const controller = new AbortController();
+    updateJob(jobId, { cancel: () => controller.abort() });
+    let offset = 0;
+    while (offset < file.size) {
+      const chunk = file.slice(offset, offset + chunkSize);
+      let attempt = 0;
+      while (true) {
+        try {
+          const response = await fetch(`/api/gigs/${gigId}/media/chunk`, { method: 'POST', cache: 'no-store', signal: controller.signal, headers: { 'Content-Type': file.type, 'X-Upload-Id': uploadId, 'X-Upload-Offset': String(offset), 'X-Upload-Total': String(file.size), 'X-Media-Filename': encodeURIComponent(file.name) }, body: chunk });
+          const body = await response.json().catch(() => ({}));
+          if (response.status === 409 && Number.isFinite(Number(body.offset))) { offset = Math.max(0, Math.min(file.size, Number(body.offset))); continue; }
+          if (!response.ok) throw new Error(body.error || `Chunk failed (HTTP ${response.status})`);
+          offset = body.complete ? file.size : Math.max(offset, Number(body.offset) || 0);
+          updateJob(jobId, { progress: offset / file.size * 100 });
+          onProgress(file, offset / file.size);
+          break;
+        } catch (error) {
+          if (controller.signal.aborted) throw new Error('Upload cancelled.');
+          if (++attempt >= 6) throw new Error(`${error.message || 'Network error'} after ${attempt} attempts.`);
+          await new Promise((resolve) => setTimeout(resolve, Math.min(10000, 800 * (2 ** (attempt - 1)))));
+        }
+      }
+    }
+  };
+  const worker = async () => {
+    while (queue.length) {
+      const file = queue.shift();
+      const jobId = `${Date.now()}-${Math.random()}`;
+      updateJob(jobId, { id: jobId, type: 'Uploading', name: file.name, status: 'running', progress: 0 });
+      try {
+        if (isMobileUpload) await uploadChunked(file, jobId);
+        else await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          updateJob(jobId, { cancel: () => xhr.abort() });
+          xhr.open('POST', `/api/gigs/${gigId}/media`);
+          xhr.setRequestHeader('Content-Type', file.type);
+          xhr.setRequestHeader('X-Media-Filename', encodeURIComponent(file.name));
+          xhr.setRequestHeader('X-Media-Caption', encodeURIComponent(file.name));
+          xhr.upload.onprogress = (event) => { if (event.lengthComputable) { updateJob(jobId, { progress: (event.loaded / event.total) * 100 }); onProgress(file, event.loaded / event.total); } };
+          xhr.onload = () => { let body = {}; try { body = JSON.parse(xhr.responseText); } catch {} if (xhr.status >= 200 && xhr.status < 300) { updateJob(jobId, { status: 'complete', progress: 100 }); resolve(body); } else reject(new Error(body.error || 'Media upload failed.')); };
+          xhr.onerror = () => reject(new Error('Media upload failed.'));
+          xhr.onabort = () => reject(new Error('Upload cancelled.'));
+          xhr.send(file);
+        });
+        updateJob(jobId, { status: 'complete', progress: 100 });
+      } catch (error) { updateJob(jobId, { status: 'error', error: error.message }); throw error; }
+    }
+  };
+  const concurrency = isMobileUpload ? 1 : 2;
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
+}
+function uploadGigMedia(gigId, files, onProgress = () => {}) {
+  if (!isMobileUpload) return uploadGigMediaNow(gigId, files, onProgress);
+  const previous = mobileUploadChains.get(gigId) || Promise.resolve();
+  const next = previous.catch(() => {}).then(() => uploadGigMediaNow(gigId, files, onProgress));
+  mobileUploadChains.set(gigId, next);
+  next.finally(() => { if (mobileUploadChains.get(gigId) === next) mobileUploadChains.delete(gigId); }).catch(() => {});
+  return next;
 }
 
 async function addYouTubeMedia(gigId, input) {
@@ -281,17 +494,33 @@ function openMediaLightbox(item) {
 mediaLightboxClose.addEventListener('click', () => { mediaLightbox.hidden = true; mediaLightboxVideo.pause(); });
 mediaLightbox.addEventListener('click', (event) => { if (event.target === mediaLightbox) mediaLightboxClose.click(); });
 
+function mediaRecognitionMarkup(item, songs = []) {
+  if (item.recognitionOverride) {
+    const manualTitle = item.songIndex !== null && item.songIndex !== undefined && songs[item.songIndex] ? songs[item.songIndex].title : 'Unassigned';
+    return `<small class="media-detection media-detection-manual">Manual override: ${escapeHtml(manualTitle)}</small>`;
+  }
+  if (item.recognitionStatus === 'queued') return '<small class="media-detection">Queued for track detection…</small>';
+  if (item.recognitionStatus === 'running') return '<small class="media-detection">Detecting track…</small>';
+  if (item.recognitionStatus === 'error') return '<small class="media-detection media-detection-error">Track detection failed</small>';
+  if (!item.recognitionTitle) return '';
+  const details = [item.recognitionTitle, item.recognitionArtist].filter(Boolean).join(' — ');
+  const status = item.recognitionStatus === 'matched' ? ' · matched to setlist' : '';
+  return `<small class="media-detection">Detected: ${escapeHtml(details)}${status}</small>`;
+}
+
 function renderMediaGallery(container, media = [], { editable = false, songs = [] } = {}) {
   container.replaceChildren();
   if (!media.length) return;
-  container.innerHTML = media.map((item, index) => `<figure class="media-item${item.isCover ? ' is-cover' : ''}" data-media-id="${item.id}">${item.mimeType === 'video/youtube' ? `<iframe src="${youtubeEmbedUrl(item.url)}" title="${escapeHtml(item.caption || 'YouTube video')}" loading="lazy" allowfullscreen></iframe>` : item.mimeType.startsWith('video/') ? `<video src="${item.url}" controls preload="metadata"></video>` : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" style="transform:rotate(${item.rotation || 0}deg)" /></button>`}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${editable ? `<div class="media-actions"><button type="button" class="media-menu-toggle" aria-expanded="false">⋮ Options</button><div class="media-action-menu" hidden>${songs.length ? `<label class="media-song-label">Setlist track<select class="media-song-select"><option value="">Unassigned</option>${songs.map((song, songIndex) => `<option value="${songIndex}" ${item.songIndex === songIndex ? 'selected' : ''}>${songIndex + 1}. ${escapeHtml(song.title)}</option>`).join('')}</select></label>` : ''}<button type="button" class="media-caption">Caption</button><button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button>${item.mimeType.startsWith('video/') && item.mimeType !== 'video/youtube' ? '<button type="button" class="media-rotate media-rotate-cw">↻ Clockwise</button><button type="button" class="media-rotate media-rotate-ccw">↺ Counter-clockwise</button>' : ''}<button type="button" class="media-delete">Delete</button><button type="button" class="media-up" ${index === 0 ? 'disabled' : ''}>↑ Move earlier</button><button type="button" class="media-down" ${index === media.length - 1 ? 'disabled' : ''}>↓ Move later</button></div></div>` : ''}</figure>`).join('');
+      container.innerHTML = media.map((item, index) => `<figure class="media-item${item.isCover ? ' is-cover' : ''}" data-media-id="${item.id}">${item.mimeType === 'video/youtube' ? `<iframe src="${youtubeEmbedUrl(item.url)}" title="${escapeHtml(item.caption || 'YouTube video')}" loading="lazy" allowfullscreen></iframe>` : item.mimeType.startsWith('video/') ? `<video src="${item.url}" controls preload="${isMobileUpload ? 'none' : 'metadata'}"></video>` : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" style="transform:rotate(${item.rotation || 0}deg)" /></button>`}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${mediaRecognitionMarkup(item, songs)}${editable ? `<div class="media-actions"><button type="button" class="media-menu-toggle" aria-expanded="false">⋮ Options</button><div class="media-action-menu" hidden>${songs.length ? `<label class="media-song-label">Setlist track${item.recognitionOverride ? ' · manual override' : ''}<select class="media-song-select"><option value="">Unassigned</option>${songs.map((song, songIndex) => `<option value="${songIndex}" ${item.songIndex === songIndex ? 'selected' : ''}>${songIndex + 1}. ${escapeHtml(song.title)}</option>`).join('')}</select></label>` : ''}<button class="media-caption" type="button">Caption</button><button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button>${item.mimeType.startsWith('video/') && item.mimeType !== 'video/youtube' ? '<button type="button" class="media-trim">Trim video</button><button type="button" class="media-rotate media-rotate-cw">↻ Clockwise</button><button type="button" class="media-rotate media-rotate-ccw">↺ Counter-clockwise</button>' : ''}<button type="button" class="media-delete">Delete</button><button type="button" class="media-up" ${index === 0 ? 'disabled' : ''}>↑ Move earlier</button><button type="button" class="media-down" ${index === media.length - 1 ? 'disabled' : ''}>↓ Move later</button></div></div>` : ''}</figure>`).join('');
   container.querySelectorAll('.media-open').forEach((button, index) => button.addEventListener('click', () => openMediaLightbox(media[index])));
   if (editable) {
     container.querySelectorAll('.media-song-select').forEach((select) => select.addEventListener('change', async () => {
       const item = media.find((entry) => entry.id === select.closest('.media-item').dataset.mediaId);
       const value = select.value === '' ? null : Number(select.value);
-      await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ songIndex: value }) });
+      await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ songIndex: value, recognitionOverride: true }) });
       item.songIndex = value;
+      item.recognitionOverride = true;
+      renderMediaGallery(container, media, { editable: true, songs });
     }));
     container.querySelectorAll('.media-menu-toggle').forEach((button) => button.addEventListener('click', () => {
       const menu = button.nextElementSibling;
@@ -318,6 +547,13 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
       if (!confirm('Delete this memory?')) return;
       await fetchJson(`/api/media/${item.id}`, { method: 'DELETE' });
       media.splice(media.indexOf(item), 1); renderMediaGallery(container, media, { editable: true, songs });
+    }));
+    container.querySelectorAll('.media-trim').forEach((button) => button.addEventListener('click', async () => {
+      const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
+      const start = prompt('Trim start time in seconds', '0'); if (start === null) return;
+      const end = prompt('Trim end time in seconds', ''); if (end === null || end === '' || Number(end) <= Number(start)) return;
+      button.disabled = true; button.textContent = 'Trimming…';
+      try { const job = await fetchJson(`/api/media/${item.id}/trim?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, { method: 'POST' }); let status; do { await new Promise((resolve) => setTimeout(resolve, 1000)); status = await fetchJson(`/api/media/rotate/${job.jobId}`); button.textContent = `Trimming ${status.progress}%`; } while (status.status === 'running'); if (status.status === 'error') throw new Error(status.error || 'Video trim failed.'); renderMediaGallery(container, media, { editable: true, songs }); } catch (error) { button.textContent = error.message; } finally { button.disabled = false; }
     }));
     container.querySelectorAll('.media-rotate').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
@@ -377,7 +613,7 @@ function renderArtistShows(records) {
     ratings.innerHTML = `${gig.performanceRating ? `<span>Performance ${gig.performanceRating} / 5</span>` : ''}${gig.venueRating ? `<span>Venue ${gig.venueRating} / 5</span>` : ''}`;
     const setlist = card.querySelector('.setlist');
     if (gig.songs?.length) setlist.innerHTML = `<ol>${gig.songs.map((song) => `<li>${escapeHtml(song.title)}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>`;
-    renderMediaGallery(card.querySelector('.media-gallery'), gig.media);
+    renderMediaGallery(card.querySelector('.media-gallery'), gig.media, { songs: gig.songs || [] });
     artistShows.append(card);
   }
 }
@@ -390,7 +626,9 @@ async function renderArtistPage() {
     return;
   }
   artistHeading.textContent = artistNameFromUrl;
-  renderArtistShows(gigs.filter((gig) => gig.artist.toLowerCase() === artistNameFromUrl.toLowerCase()));
+  const artistRecords = gigs.filter((gig) => gig.artist.toLowerCase() === artistNameFromUrl.toLowerCase());
+  renderArtistShows(artistRecords);
+  artistStats.innerHTML = `<span>${artistRecords.length} show${artistRecords.length === 1 ? '' : 's'}</span><span>${new Set(artistRecords.map((gig) => `${gig.venue}|${gig.city}`)).size} venues</span><span>${artistRecords.reduce((sum, gig) => sum + (gig.songs?.length || 0), 0)} songs performed</span><span>${artistRecords.filter((gig) => gig.favorite).length} favourites</span>`;
   try {
     const info = await fetchJson(`/api/artists?name=${encodeURIComponent(artistNameFromUrl)}`);
     artistHeading.textContent = info.title || artistNameFromUrl;
@@ -406,12 +644,52 @@ async function renderArtistPage() {
   }
 }
 
+async function renderDashboardStats() {
+  if (page !== 'overview' || !dashboardStats) return;
+  const countBy = (values) => Object.entries(values.reduce((result, value) => { result[value] = (result[value] || 0) + 1; return result; }, {})).sort((a, b) => b[1] - a[1]);
+  const localStats = { shows: gigs.length, artists: new Set(gigs.map((gig) => gig.artist.toLowerCase())).size, venues: new Set(gigs.map((gig) => `${gig.venue}|${gig.city}`.toLowerCase())).size, cities: new Set(gigs.map((gig) => gig.city.toLowerCase())).size, songs: gigs.reduce((sum, gig) => sum + (gig.songs?.length || 0), 0), favourites: gigs.filter((gig) => gig.favorite).length, topArtists: countBy(gigs.map((gig) => gig.artist)).slice(0, 5), topVenues: countBy(gigs.map((gig) => gig.venue)).slice(0, 5) };
+  const render = (stats) => { dashboardStats.innerHTML = `<p class="eyebrow">Archive snapshot</p><div class="dashboard-stat-grid"><span><strong>${stats.shows}</strong> shows</span><span><strong>${stats.artists}</strong> artists</span><span><strong>${stats.venues}</strong> venues</span><span><strong>${stats.cities}</strong> cities</span><span><strong>${stats.songs}</strong> songs</span><span><strong>${stats.favourites}</strong> favourites</span></div><div class="dashboard-stat-columns"><div><b>Most seen artists</b>${stats.topArtists.map(([name, count]) => `<span>${escapeHtml(name)} · ${count}</span>`).join('') || '<span>None yet</span>'}</div><div><b>Most visited venues</b>${stats.topVenues.map(([name, count]) => `<span>${escapeHtml(name)} · ${count}</span>`).join('') || '<span>None yet</span>'}</div></div>`; };
+  render(localStats);
+  try { render(await fetchJson('/api/stats')); } catch { /* local snapshot remains visible */ }
+}
+
+function formatApiTime(value) {
+  if (!value) return 'No requests today';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+async function renderApiLimits() {
+  if (page !== 'api-limits' || !apiLimitsGrid) return;
+  try {
+    const data = await fetchJson('/api/limits');
+    apiLimitsNote.textContent = `Tracking window: ${data.day} (YouTube quota resets at midnight Pacific Time). These figures are local estimates, not provider billing data.`;
+    apiLimitsGrid.innerHTML = data.providers.map((provider) => {
+      const hasLimit = provider.limit !== null;
+      const percent = hasLimit ? Math.min(100, (provider.units / provider.limit) * 100) : 0;
+      const status = provider.configured ? 'Configured' : 'Not configured';
+      const usage = hasLimit ? `${provider.units.toLocaleString()} / ${provider.limit.toLocaleString()} ${provider.unit}` : `${provider.requests.toLocaleString()} ${provider.unit}`;
+      const remaining = hasLimit ? `<strong>${provider.remaining.toLocaleString()}</strong> ${provider.unit} estimated remaining` : `${provider.errors ? `${provider.errors} error${provider.errors === 1 ? '' : 's'} today` : 'No error responses today'}`;
+      return `<article class="api-limit-card"><div class="api-limit-card-heading"><div><p class="eyebrow">${escapeHtml(status)}</p><h2>${escapeHtml(provider.name)}</h2></div><span class="api-limit-status">${escapeHtml(provider.reset)}</span></div><div class="api-limit-usage"><strong>${escapeHtml(usage)}</strong><span>${escapeHtml(remaining)}</span></div>${hasLimit ? `<div class="api-limit-bar" aria-label="${Math.round(percent)} percent used"><i style="width:${percent}%"></i></div>` : ''}<p>${escapeHtml(provider.note)}</p><small>Last request: ${escapeHtml(formatApiTime(provider.lastRequest))}</small></article>`;
+    }).join('');
+    const trackedOperations = data.operations.filter((entry) => entry.requests > 0);
+    const operationMarkup = trackedOperations.length ? `<div><p class="eyebrow">Today by operation</p><div class="api-usage-list">${trackedOperations.map((entry) => `<span><b>${escapeHtml(entry.provider)}</b> · ${escapeHtml(entry.operation)} <em>${Number(entry.units).toLocaleString()} units · ${entry.requests} call${entry.requests === 1 ? '' : 's'}</em></span>`).join('')}</div></div>` : '';
+    const recentMarkup = data.recent.length ? `<div><p class="eyebrow">Recent tracked calls</p><div class="api-usage-list">${data.recent.map((entry) => `<span><b>${escapeHtml(entry.provider)}</b> · ${escapeHtml(entry.operation)} <em>${entry.units ? `${entry.units} units` : 'auth'} · ${formatApiTime(entry.requestedAt)}${entry.status ? ` · HTTP ${entry.status}` : ''}</em></span>`).join('')}</div></div>` : '';
+    apiUsageDetail.innerHTML = `${operationMarkup}${recentMarkup}`;
+  } catch (error) {
+    apiLimitsNote.textContent = account ? error.message : 'Sign in to view tracked API usage.';
+    apiLimitsNote.classList.add('error');
+    apiLimitsGrid.innerHTML = '';
+    apiUsageDetail.innerHTML = '';
+  }
+}
+
 async function renderVenuePage() {
   if (page !== 'venue') return;
   const records = gigs.filter((gig) => gig.venue.toLowerCase() === venueNameFromUrl.toLowerCase() && (!venueCityFromUrl || gig.city.toLowerCase() === venueCityFromUrl.toLowerCase()));
   venueHeading.textContent = venueNameFromUrl || 'Venue not found';
   venuePageCity.textContent = venueCityFromUrl;
-  venueStats.innerHTML = records.length ? `<span>${records.length} show${records.length === 1 ? '' : 's'}</span><span>${new Set(records.map((gig) => gig.artist)).size} artists</span><span>${records.filter((gig) => gig.favorite).length} favourites</span>` : '';
+  venueStats.innerHTML = records.length ? `<span>${records.length} show${records.length === 1 ? '' : 's'}</span><span>${new Set(records.map((gig) => gig.artist)).size} artists</span><span>${new Set(records.map((gig) => gig.city)).size} cities</span><span>${records.reduce((sum, gig) => sum + (gig.songs?.length || 0), 0)} songs</span><span>${records.filter((gig) => gig.favorite).length} favourites</span>` : '';
   venueEmpty.hidden = Boolean(records.length);
   venueShows.replaceChildren();
   records.forEach((gig) => {
@@ -425,7 +703,7 @@ async function renderVenuePage() {
     card.querySelector('.gig-place').textContent = `${gig.venue} · ${gig.city}`;
     card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
     card.querySelector('.song-total').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist';
-    renderMediaGallery(card.querySelector('.media-gallery'), gig.media);
+    renderMediaGallery(card.querySelector('.media-gallery'), gig.media, { songs: gig.songs || [] });
     venueShows.append(card);
   });
   if (!venueNameFromUrl) return;
@@ -470,18 +748,26 @@ function renderEditPage() {
   if (page !== 'edit') return;
   const gig = gigs.find((entry) => entry.id === editGigId);
   if (!gig) { editMessage.textContent = 'Show not found.'; editMessage.classList.add('error'); return; }
-  if (!editMediaInput.dataset.immediateUpload) { editMediaInput.dataset.immediateUpload = 'true'; editMediaInput.addEventListener('change', async () => { const files = pendingMedia.get(editMediaInput) || [...(editMediaInput.files || [])]; if (!files.length) return; editMessage.textContent = `Uploading ${files.length} file${files.length === 1 ? '' : 's'}…`; try { await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; }); pendingMedia.set(editMediaInput, []); editMediaInput.value = ''; editMessage.textContent = 'Media uploaded.'; const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`); renderMediaGallery(editGallery, refreshed, { editable: true, songs: gig.songs || [] }); } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); } }); }
+  if (!editMediaInput.dataset.immediateUpload) {
+    editMediaInput.dataset.immediateUpload = 'true';
+    if (isMobileUpload) {
+      const state = mobileUploadStateFor(editMediaInput, gig.id);
+      state.onUploaded = (item) => { editMessage.textContent = `${item.name} uploaded.`; editMessage.classList.remove('error'); };
+      state.onDrained = async () => { await pollMediaRecognition(gig.id, (refreshed) => renderMediaGallery(editGallery, refreshed, { editable: true, songs: gig.songs || [] })); };
+      startMobileUploadQueue(editMediaInput, gig.id, state.onUploaded, state.onDrained);
+    } else editMediaInput.addEventListener('change', async () => { const files = pendingMedia.get(editMediaInput) || [...(editMediaInput.files || [])]; if (!files.length) return; editMessage.textContent = `Uploading ${files.length} file${files.length === 1 ? '' : 's'}…`; try { await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; }); pendingMedia.set(editMediaInput, []); editMediaInput.value = ''; editMessage.textContent = 'Media uploaded.'; const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`); renderMediaGallery(editGallery, refreshed, { editable: true, songs: gig.songs || [] }); } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); } });
+  }
   editForm.elements.artist.value = gig.artist;
   editForm.elements.date.value = gig.date;
   editForm.elements.venue.value = gig.venue;
   editForm.elements.city.value = gig.city;
   const tracks = [...(gig.songs || [])];
   const renderTracks = () => {
-    editSetlistTracks.innerHTML = tracks.map((song, index) => `<div class="edit-track" data-track-index="${index}"><span class="edit-track-number">${index + 1}</span><input class="edit-track-title" value="${escapeHtml(song.title || '')}" placeholder="Track title" /><input class="edit-track-artist" value="${escapeHtml(song.artist || '')}" placeholder="Artist (optional)" /><button class="icon-button edit-track-remove" type="button" aria-label="Remove track">×</button></div>`).join('');
+    editSetlistTracks.innerHTML = tracks.map((song, index) => `<div class="edit-track" data-track-index="${index}"><span class="edit-track-number">${index + 1}</span><input class="edit-track-title" value="${escapeHtml(song.title || '')}" placeholder="Track title" /><input class="edit-track-artist" value="${escapeHtml(song.artist || '')}" placeholder="Artist (optional)" /><input class="edit-track-album" value="${escapeHtml(song.album || '')}" placeholder="Album (optional)" /><input class="edit-track-start" type="number" min="0" step="1" value="${song.startSeconds ?? ''}" placeholder="Start s" aria-label="Start time in seconds" /><input class="edit-track-end" type="number" min="0" step="1" value="${song.endSeconds ?? ''}" placeholder="End s" aria-label="End time in seconds" /><button class="icon-button edit-track-remove" type="button" aria-label="Remove track">×</button></div>`).join('');
     editSetlistTracks.querySelectorAll('.edit-track-remove').forEach((button) => button.addEventListener('click', () => { tracks.splice(Number(button.closest('.edit-track').dataset.trackIndex), 1); renderTracks(); }));
   };
   renderTracks();
-  addEditTrack.onclick = () => { tracks.push({ title: '', artist: gig.artist }); renderTracks(); editSetlistTracks.lastElementChild?.querySelector('.edit-track-title')?.focus(); };
+  addEditTrack.onclick = () => { tracks.push({ title: '', artist: gig.artist, album: '' }); renderTracks(); editSetlistTracks.lastElementChild?.querySelector('.edit-track-title')?.focus(); };
   renderMediaGallery(editGallery, gig.media, { editable: true, songs: gig.songs || [] });
   editForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -489,7 +775,7 @@ function renderEditPage() {
     try {
       submitButton.disabled = true;
       const update = Object.fromEntries(new FormData(editForm).entries());
-      update.songs = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row) => ({ title: row.querySelector('.edit-track-title').value, artist: row.querySelector('.edit-track-artist').value, encore: false }));
+      update.songs = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row) => ({ title: row.querySelector('.edit-track-title').value, artist: row.querySelector('.edit-track-artist').value, album: row.querySelector('.edit-track-album').value, startSeconds: row.querySelector('.edit-track-start').value === '' ? null : Number(row.querySelector('.edit-track-start').value), endSeconds: row.querySelector('.edit-track-end').value === '' ? null : Number(row.querySelector('.edit-track-end').value), encore: false }));
       const saved = await fetchJson(`/api/gigs/${gig.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
       const files = pendingMedia.get(editMediaInput) || [...(editMediaInput?.files || [])];
       if (files.length) await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; });
@@ -515,13 +801,29 @@ function renderShowPage() {
   showDetailNotes.textContent = gig.performanceNotes || gig.notes || 'No performance notes yet.';
   showDetailVenueNotes.textContent = gig.venueNotes ? `Venue: ${gig.venueNotes}` : 'No venue notes yet.';
   showDetailRatings.innerHTML = `${gig.performanceRating ? `<span>Performance ${gig.performanceRating} / 5</span>` : '<span>Performance unrated</span>'}${gig.venueRating ? `<span>Venue ${gig.venueRating} / 5</span>` : '<span>Venue unrated</span>'}`;
-  showDetailSetlist.innerHTML = gig.songs?.length ? `<ol>${gig.songs.map((song) => `<li>${escapeHtml(song.title)}${song.artist && song.artist !== gig.artist ? ` <span>— ${escapeHtml(song.artist)}</span>` : ''}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>` : '<p>No setlist attached.</p>';
+  showDetailSetlist.innerHTML = gig.songs?.length ? `<ol>${renderTrackList(gig.songs, gig.artist)}</ol>${renderAlbumStats(gig.songs)}` : '<p>No setlist attached.</p>';
+  if (gig.songs?.length) fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats`).then((data) => { gig.songs = data.songs; showDetailSetlist.innerHTML = `<ol>${renderTrackList(gig.songs, gig.artist)}</ol>${renderAlbumStats(gig.songs)}`; }).catch(() => {});
   showEditLink.href = `/edit?id=${encodeURIComponent(gig.id)}`;
   showDetailNoMedia.hidden = Boolean(gig.media?.length);
   // Keep the gallery manageable from the show page too, including YouTube videos
   // attached by the setlist search.
   renderMediaGallery(showDetailGallery, gig.media, { editable: true, songs: gig.songs || [] });
   if (page === 'playback' || new URLSearchParams(window.location.search).get('play') === '1') setTimeout(() => playWholeSet?.click(), 0);
+}
+
+function renderAlbumStats(songs) {
+  const counts = new Map();
+  songs.forEach((song) => { const album = String(song.album || 'Unknown album').trim() || 'Unknown album'; counts.set(album, (counts.get(album) || 0) + 1); });
+  const total = songs.length;
+  const entries = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  return `<div class="album-stats"><p class="eyebrow">Album breakdown</p><div class="album-stat-bar album-stat-bar-stacked">${entries.map(([album, count], index) => `<span class="album-segment album-segment-${index % 8}" style="width:${count / total * 100}%" title="${escapeHtml(album)} · ${Math.round(count / total * 100)}%"></span>`).join('')}</div><div class="album-stat-key">${entries.map(([album, count], index) => `<span><i class="album-key-swatch album-segment-${index % 8}"></i>${escapeHtml(album)} <strong>${Math.round(count / total * 100)}%</strong></span>`).join('')}</div></div>`;
+}
+
+function renderTrackList(songs, artist) {
+  const counts = new Map();
+  songs.forEach((song) => { const album = String(song.album || 'Unknown album').trim() || 'Unknown album'; counts.set(album, (counts.get(album) || 0) + 1); });
+  const colours = new Map([...counts.entries()].sort((a, b) => b[1] - a[1]).map(([album], index) => [album, index % 8]));
+  return songs.map((song) => { const album = String(song.album || 'Unknown album').trim() || 'Unknown album'; return `<li><span class="track-title">${escapeHtml(song.title)}</span>${song.artist && song.artist !== artist ? ` <span>— ${escapeHtml(song.artist)}</span>` : ''}<span class="album-tooltip">${escapeHtml(album)}</span>${song.encore ? ' <b>Encore</b>' : ''}</li>`; }).join('');
 }
 
 function playSetTrack() {
@@ -726,6 +1028,9 @@ downloadBackupButton.addEventListener('click', async () => {
     URL.revokeObjectURL(link.href);
   } catch (error) { setSharedMessage(error.message, true); } finally { downloadBackupButton.disabled = false; }
 });
+exportArchiveButton?.addEventListener('click', async () => { try { const data = await fetchJson('/api/archive/export'); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `the-master-list-export-${new Date().toISOString().slice(0, 10)}.json`; link.click(); URL.revokeObjectURL(link.href); } catch (error) { setSharedMessage(error.message, true); } });
+importArchiveInput?.addEventListener('change', async () => { const file = importArchiveInput.files?.[0]; if (!file) return; try { const data = JSON.parse(await file.text()); await fetchJson('/api/archive/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); setSharedMessage(`Imported ${data.gigs?.length || 0} shows.`); window.location.reload(); } catch (error) { setSharedMessage(error.message, true); } finally { importArchiveInput.value = ''; } });
+cleanupMediaButton?.addEventListener('click', async () => { if (!confirm('Delete media files that are no longer referenced by a show?')) return; try { const result = await fetchJson('/api/media/cleanup', { method: 'POST' }); setSharedMessage(`Removed ${result.removed} unused media file${result.removed === 1 ? '' : 's'}.`); } catch (error) { setSharedMessage(error.message, true); } });
 
 document.querySelector('#find-setlist').addEventListener('click', async () => {
   const gig = formValues();
@@ -779,15 +1084,27 @@ form.addEventListener('submit', async (event) => {
   try {
     submitButton.disabled = true;
     const saved = await fetchJson('/api/gigs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (mediaFiles.length) await uploadGigMedia(saved.id, mediaFiles, (file, fraction) => setMessage(fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`));
+    if (mediaFiles.length) {
+      if (isMobileUpload) {
+        const uploadState = mobileUploadStateFor(mediaInput, saved.id);
+        uploadState.releaseAfterDrain = true;
+        startMobileUploadQueue(mediaInput, saved.id, (item) => {
+          setMessage(`${item.name} uploaded. Continuing the queue…`);
+        }, async () => {
+          try { await pollMediaRecognition(saved.id, (refreshed) => { gigs = gigs.map((entry) => entry.id === saved.id ? { ...entry, media: refreshed } : entry); renderGigs(); }); } catch { /* the upload itself already succeeded */ }
+        });
+      } else await uploadGigMedia(saved.id, mediaFiles, (file, fraction) => setMessage(fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`));
+    }
     await addYouTubeMedia(saved.id, youtubeMediaInput);
     gigs.unshift(saved);
     form.reset();
     resetReviewForm();
     selectedSetlist = null;
     results.hidden = true;
-    setMessage('Show saved to The Master List.');
+    setMessage(isMobileUpload && mediaFiles.length ? 'Show saved. Uploads are continuing in the queue.' : 'Show saved to The Master List.');
     renderGigs();
+    await loadPersistentJobs();
+    await renderDashboardStats();
   } catch (error) {
     setMessage(error.message, true);
   } finally { submitButton.disabled = false; }
@@ -859,11 +1176,12 @@ function renderGigs() {
     const setlist = card.querySelector('.setlist');
     const exports = card.querySelector('.exports');
     if (gig.songs?.length) {
-      setlist.innerHTML = `<ol>${gig.songs.map((song) => `<li>${escapeHtml(song.title)}${song.artist && song.artist !== gig.artist ? ` <span>— ${escapeHtml(song.artist)}</span>` : ''}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>${gig.setlistFmUrl ? `<a href="${escapeHtml(gig.setlistFmUrl)}" target="_blank" rel="noreferrer">View source on setlist.fm ↗</a>` : ''}`;
+      const tracks = `<ol>${gig.songs.map((song) => `<li>${escapeHtml(song.title)}${song.artist && song.artist !== gig.artist ? ` <span>— ${escapeHtml(song.artist)}</span>` : ''}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>${gig.setlistFmUrl ? `<a href="${escapeHtml(gig.setlistFmUrl)}" target="_blank" rel="noreferrer">View source on setlist.fm ↗</a>` : ''}`;
+      setlist.innerHTML = `<details class="setlist-accordion"><summary>Setlist <span>${gig.songs.length} tracks</span></summary><div class="setlist-accordion-content">${tracks}</div></details>`;
       exports.hidden = false;
       setupExportButtons(exports, gig);
     }
-    renderMediaGallery(card.querySelector('.media-gallery'), gig.media);
+    renderMediaGallery(card.querySelector('.media-gallery'), gig.media, { songs: gig.songs || [] });
     card.querySelector('.delete-gig').addEventListener('click', async () => {
       if (!confirm(`Remove ${gig.artist} at ${gig.venue}?`)) return;
       await fetchJson(`/api/gigs/${gig.id}`, { method: 'DELETE' });
@@ -927,7 +1245,7 @@ function drawMap(locations) {
   mapMessage.textContent = `${locations.length} venue${locations.length === 1 ? '' : 's'} placed. Select a marker to revisit a show.`;
   mapElement.hidden = false;
   if (!venueMap) {
-    venueMap = L.map(mapElement, { scrollWheelZoom: false });
+    venueMap = L.map(mapElement, { scrollWheelZoom: true });
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
       maxZoom: 19,
       subdomains: 'abcd',
@@ -1056,6 +1374,8 @@ async function initializeApp() {
     populateYearFilter();
     populateShowAutofill();
     renderGigs();
+    await renderDashboardStats();
+    await renderApiLimits();
     renderProfiles();
     renderSharedShows();
     await renderArtistPage();
