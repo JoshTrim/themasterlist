@@ -278,6 +278,12 @@ body[data-page="login"] .shared-section > .shared-list { display: none; }
 .peer-manual { max-width: 620px; margin-top: 14px; color: #ff82c8; font-size: 13px; }
 .peer-manual summary { cursor: pointer; }
 .peer-manual .peer-form { margin-top: 14px; }
+.attendee-picker { display: grid; gap: 8px; grid-column: 1 / -1; padding: 12px; border: 1px solid #5e2a78; background: rgba(18, 7, 31, .5); }
+.attendee-picker legend { padding: 0 5px; color: #ff82c8; font: 11px "Press Start 2P", monospace; text-transform: uppercase; }
+.attendee-options { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.attendee-option { display: inline-flex; align-items: center; gap: 6px; color: #efd7f6; font-size: 15px; cursor: pointer; }
+.attendee-option input { accent-color: #ff2d9b; }
+.attendee-picker small { color: #caa5d8; font-size: 12px; }
 .peer-form .form-message { min-height: 18px; margin: 0; }
 .peer-list { display: grid; gap: 8px; margin-top: 24px; }
 .peer-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border: 1px solid #5e2a78; background: #12071f; }

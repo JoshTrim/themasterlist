@@ -158,6 +158,7 @@ database.exec(`
 database.pragma('foreign_keys = ON');
 addColumnIfMissing('profiles', 'password_hash', 'TEXT');
 addColumnIfMissing('profiles', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('gigs', 'attendees', "TEXT NOT NULL DEFAULT '[]'");
 database.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
@@ -318,6 +319,7 @@ async function readGigs() {
     setlistFmId: row.setlist_fm_id,
     setlistFmUrl: row.setlist_fm_url,
     songs: JSON.parse(row.songs || '[]'),
+    attendees: JSON.parse(row.attendees || '[]'),
     media: database.prepare('SELECT id, filename, playback_filename AS playbackFilename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt, recognition_status AS recognitionStatus, recognition_title AS recognitionTitle, recognition_artist AS recognitionArtist, recognition_album AS recognitionAlbum, recognition_error AS recognitionError, recognition_override AS recognitionOverride FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id).map((media) => ({ ...media, isCover: Boolean(media.isCover), recognitionOverride: Boolean(media.recognitionOverride), rotation: Number(media.rotation || 0), songIndex: media.songIndex === null ? null : Number(media.songIndex), url: media.externalUrl || `/api/media/${media.id}` })),
     createdAt: row.created_at
   }));
@@ -326,14 +328,14 @@ async function readGigs() {
 async function writeGigs(gigs) {
   const insert = database.prepare(`
     INSERT INTO gigs (id, artist, venue, city, date, notes, performance_notes, venue_notes,
-      performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, created_at)
+      performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, attendees, created_at)
     VALUES (@id, @artist, @venue, @city, @date, @notes, @performanceNotes, @venueNotes,
-      @performanceRating, @venueRating, @favorite, @setlistFmId, @setlistFmUrl, @songs, @createdAt)
+      @performanceRating, @venueRating, @favorite, @setlistFmId, @setlistFmUrl, @songs, @attendees, @createdAt)
     ON CONFLICT(id) DO UPDATE SET
       artist = excluded.artist, venue = excluded.venue, city = excluded.city, date = excluded.date,
       notes = excluded.notes, performance_notes = excluded.performance_notes, venue_notes = excluded.venue_notes,
       performance_rating = excluded.performance_rating, venue_rating = excluded.venue_rating, favorite = excluded.favorite,
-      setlist_fm_id = excluded.setlist_fm_id, setlist_fm_url = excluded.setlist_fm_url, songs = excluded.songs
+      setlist_fm_id = excluded.setlist_fm_id, setlist_fm_url = excluded.setlist_fm_url, songs = excluded.songs, attendees = excluded.attendees
   `);
   const replace = database.transaction((records) => {
     for (const gig of records) insert.run({
@@ -347,6 +349,7 @@ async function writeGigs(gigs) {
       setlistFmId: gig.setlistFmId || null,
       setlistFmUrl: gig.setlistFmUrl || null,
       songs: JSON.stringify(gig.songs || []),
+      attendees: JSON.stringify(gig.attendees || []),
       createdAt: gig.createdAt || new Date().toISOString()
     });
   });
@@ -602,6 +605,19 @@ function peerRows() {
   return database.prepare('SELECT id, peer_id AS peerId, name, base_url AS baseUrl, public_key AS publicKey, status, created_at AS createdAt, last_seen_at AS lastSeenAt FROM peer_instances ORDER BY name COLLATE NOCASE').all();
 }
 
+function normaliseGigAttendees(value, account) {
+  const owner = account ? { id: account.id, type: 'owner', name: account.name } : null;
+  const peers = new Map(peerRows().map((peer) => [peer.peerId, { id: peer.peerId, type: 'peer', name: peer.name }]));
+  const selected = Array.isArray(value) ? value : [];
+  const attendees = [];
+  if (owner) attendees.push(owner);
+  for (const entry of selected) {
+    const peerId = String(entry?.id || '').trim();
+    if (peers.has(peerId) && !attendees.some((attendee) => attendee.id === peerId)) attendees.push(peers.get(peerId));
+  }
+  return attendees;
+}
+
 function peerInviteToken(request) {
   const identity = database.prepare('SELECT instance_id, name, public_key, private_key FROM instance_identity WHERE id = 1').get();
   const payload = {
@@ -703,6 +719,7 @@ function findGigSync(id) {
   return {
     id: row.id, artist: row.artist, venue: row.venue, city: row.city, date: row.date,
     setlistFmId: row.setlist_fm_id, setlistFmUrl: row.setlist_fm_url, songs: JSON.parse(row.songs || '[]'),
+    attendees: JSON.parse(row.attendees || '[]'),
     notes: row.notes, performanceNotes: row.performance_notes, venueNotes: row.venue_notes,
     performanceRating: row.performance_rating, venueRating: row.venue_rating, favorite: Boolean(row.favorite),
     media: database.prepare('SELECT id, filename, mime_type AS mimeType, caption, size, external_url AS externalUrl FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id)
@@ -1343,9 +1360,9 @@ async function handleApi(request, response, url) {
     requireAccount(request);
     const body = await readBody(request);
     if (!Array.isArray(body.gigs)) return sendError(response, 400, 'Import must contain a gigs array.');
-    const imported = body.gigs.map((gig) => ({ ...gig, id: gig.id || randomUUID(), artist: String(gig.artist || '').trim(), venue: String(gig.venue || '').trim(), city: String(gig.city || '').trim(), date: String(gig.date || '').trim(), songs: Array.isArray(gig.songs) ? gig.songs : [], createdAt: gig.createdAt || new Date().toISOString() }));
+    const imported = body.gigs.map((gig) => ({ ...gig, id: gig.id || randomUUID(), artist: String(gig.artist || '').trim(), venue: String(gig.venue || '').trim(), city: String(gig.city || '').trim(), date: String(gig.date || '').trim(), songs: Array.isArray(gig.songs) ? gig.songs : [], attendees: normaliseGigAttendees(gig.attendees, request.account), createdAt: gig.createdAt || new Date().toISOString() }));
     imported.forEach(validateGig);
-    const importGigs = database.transaction((records) => { const statement = database.prepare(`INSERT INTO gigs (id, artist, venue, city, date, notes, performance_notes, venue_notes, performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET artist=excluded.artist, venue=excluded.venue, city=excluded.city, date=excluded.date, notes=excluded.notes, performance_notes=excluded.performance_notes, venue_notes=excluded.venue_notes, performance_rating=excluded.performance_rating, venue_rating=excluded.venue_rating, favorite=excluded.favorite, setlist_fm_id=excluded.setlist_fm_id, setlist_fm_url=excluded.setlist_fm_url, songs=excluded.songs`); records.forEach((gig) => statement.run(gig.id, gig.artist, gig.venue, gig.city, gig.date, gig.notes || '', gig.performanceNotes || gig.notes || '', gig.venueNotes || '', gig.performanceRating ?? null, gig.venueRating ?? null, gig.favorite ? 1 : 0, gig.setlistFmId || null, gig.setlistFmUrl || null, JSON.stringify(gig.songs || []), gig.createdAt)); });
+    const importGigs = database.transaction((records) => { const statement = database.prepare(`INSERT INTO gigs (id, artist, venue, city, date, notes, performance_notes, venue_notes, performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, attendees, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET artist=excluded.artist, venue=excluded.venue, city=excluded.city, date=excluded.date, notes=excluded.notes, performance_notes=excluded.performance_notes, venue_notes=excluded.venue_notes, performance_rating=excluded.performance_rating, venue_rating=excluded.venue_rating, favorite=excluded.favorite, setlist_fm_id=excluded.setlist_fm_id, setlist_fm_url=excluded.setlist_fm_url, songs=excluded.songs, attendees=excluded.attendees`); records.forEach((gig) => statement.run(gig.id, gig.artist, gig.venue, gig.city, gig.date, gig.notes || '', gig.performanceNotes || gig.notes || '', gig.venueNotes || '', gig.performanceRating ?? null, gig.venueRating ?? null, gig.favorite ? 1 : 0, gig.setlistFmId || null, gig.setlistFmUrl || null, JSON.stringify(gig.songs || []), JSON.stringify(gig.attendees || []), gig.createdAt)); });
     importGigs(imported);
     return sendJson(response, 200, { imported: imported.length });
   }
@@ -1441,7 +1458,6 @@ async function handleApi(request, response, url) {
   if (request.method === 'POST' && url.pathname === '/api/gigs') {
     const gig = await readBody(request);
     validateGig(gig);
-    const gigs = await readGigs();
     const record = {
       id: randomUUID(),
       artist: gig.artist.trim(),
@@ -1457,13 +1473,14 @@ async function handleApi(request, response, url) {
       setlistFmId: gig.setlistFmId || null,
       setlistFmUrl: gig.setlistFmUrl || null,
       songs: Array.isArray(gig.songs) ? gig.songs : [],
+      attendees: normaliseGigAttendees(gig.attendees, request.account),
       createdAt: new Date().toISOString()
     };
     database.prepare(`
       INSERT INTO gigs (id, artist, venue, city, date, notes, performance_notes, venue_notes,
-        performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, created_at)
+        performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, attendees, created_at)
       VALUES (@id, @artist, @venue, @city, @date, @notes, @performanceNotes, @venueNotes,
-        @performanceRating, @venueRating, @favorite, @setlistFmId, @setlistFmUrl, @songs, @createdAt)
+        @performanceRating, @venueRating, @favorite, @setlistFmId, @setlistFmUrl, @songs, @attendees, @createdAt)
     `).run({
       ...record,
       performanceRating: record.performanceRating ?? null,
@@ -1471,7 +1488,8 @@ async function handleApi(request, response, url) {
       favorite: record.favorite ? 1 : 0,
       setlistFmId: record.setlistFmId || null,
       setlistFmUrl: record.setlistFmUrl || null,
-      songs: JSON.stringify(record.songs || [])
+      songs: JSON.stringify(record.songs || []),
+      attendees: JSON.stringify(record.attendees || [])
     });
     return sendJson(response, 201, record);
   }
@@ -1623,15 +1641,16 @@ async function handleApi(request, response, url) {
     if ('venue' in update) gig.venue = String(update.venue || '').trim();
     if ('city' in update) gig.city = String(update.city || '').trim();
     if ('date' in update) gig.date = String(update.date || '').trim();
+    if ('attendees' in update) gig.attendees = normaliseGigAttendees(update.attendees, request.account);
     if ('songs' in update && Array.isArray(update.songs)) gig.songs = update.songs.map((song, index) => ({ title: String(song.title || '').trim(), artist: String(song.artist || '').trim(), encore: Boolean(song.encore), position: index + 1, info: String(song.info || '').trim() })).filter((song) => song.title);
     if ('favorite' in update) gig.favorite = update.favorite === true;
     if ('performanceRating' in update) gig.performanceRating = normaliseRating(update.performanceRating);
     if ('venueRating' in update) gig.venueRating = normaliseRating(update.venueRating);
     if ('performanceNotes' in update) gig.performanceNotes = String(update.performanceNotes || '').trim();
     if ('venueNotes' in update) gig.venueNotes = String(update.venueNotes || '').trim();
-    database.prepare(`UPDATE gigs SET artist = ?, venue = ?, city = ?, date = ?, songs = ?, favorite = ?,
+    database.prepare(`UPDATE gigs SET artist = ?, venue = ?, city = ?, date = ?, songs = ?, attendees = ?, favorite = ?,
       performance_rating = ?, venue_rating = ?, performance_notes = ?, venue_notes = ?, notes = ? WHERE id = ?`).run(
-      gig.artist, gig.venue, gig.city, gig.date, JSON.stringify(gig.songs || []), gig.favorite ? 1 : 0,
+      gig.artist, gig.venue, gig.city, gig.date, JSON.stringify(gig.songs || []), JSON.stringify(gig.attendees || []), gig.favorite ? 1 : 0,
       gig.performanceRating ?? null, gig.venueRating ?? null, gig.performanceNotes || '', gig.venueNotes || '', gig.notes || '', gig.id
     );
     return sendJson(response, 200, gig);

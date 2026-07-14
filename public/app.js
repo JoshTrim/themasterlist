@@ -80,6 +80,7 @@ let selectedSetlist = null;
 let gigs = [];
 let integrations = {};
 let profiles = [];
+let peers = [];
 let sharedShows = [];
 let activeProfileId = '';
 let account = null;
@@ -125,6 +126,8 @@ const artistStats = document.querySelector('#artist-stats');
 const editForm = document.querySelector('#edit-form');
 const editMessage = document.querySelector('#edit-message');
 const editMediaInput = document.querySelector('#edit-media-input');
+const addAttendeePicker = document.querySelector('#add-attendee-picker');
+let editAttendeePicker = document.querySelector('#edit-attendee-picker');
 const pendingMedia = new WeakMap();
 const selectedMediaIds = new Set();
 const mobileUploadStates = new WeakMap();
@@ -379,6 +382,31 @@ favoriteChoice.addEventListener('click', () => setFavoriteChoice(favoriteChoice.
 function formValues() {
   const data = new FormData(form);
   return Object.fromEntries(data.entries());
+}
+
+function renderAttendeePicker(container, selected = []) {
+  if (!container) return;
+  const owner = account ? { id: account.id, type: 'owner', name: account.name } : null;
+  const selectedIds = new Set((Array.isArray(selected) ? selected : []).map((entry) => entry.id));
+  if (owner) selectedIds.add(owner.id);
+  const options = [owner, ...peers.map((peer) => ({ id: peer.peerId, type: 'peer', name: peer.name }))].filter(Boolean);
+  container.querySelector('.attendee-options').innerHTML = options.length ? options.map((entry) => `<label class="attendee-option"><input type="checkbox" value="${escapeHtml(entry.id)}" data-attendee-type="${entry.type}" ${selectedIds.has(entry.id) ? 'checked' : ''} ${entry.type === 'owner' ? 'disabled' : ''} /><span>${escapeHtml(entry.name)}${entry.type === 'owner' ? ' (you)' : ''}</span></label>`).join('') : '<small>Pair an instance from the Account page to add other attendees.</small>';
+}
+
+function readAttendees(container) {
+  if (!container) return [];
+  return [...container.querySelectorAll('input[type="checkbox"]:checked')].map((input) => ({ id: input.value, type: input.dataset.attendeeType }));
+}
+
+function ensureEditAttendeePicker() {
+  if (editAttendeePicker || !editForm) return editAttendeePicker;
+  const picker = document.createElement('fieldset');
+  picker.className = 'attendee-picker';
+  picker.id = 'edit-attendee-picker';
+  picker.innerHTML = '<legend>Who was there?</legend><div class="attendee-options"></div><small>You are included automatically. Select any paired peers who attended with you.</small>';
+  editForm.querySelector('.edit-setlist')?.before(picker);
+  editAttendeePicker = picker;
+  return picker;
 }
 
 function setMessage(text, isError = false) {
@@ -813,12 +841,14 @@ function renderEditPage() {
   renderTracks();
   addEditTrack.onclick = () => { tracks.push({ title: '', artist: gig.artist, album: '' }); renderTracks(); editSetlistTracks.lastElementChild?.querySelector('.edit-track-title')?.focus(); };
   renderMediaGallery(editGallery, gig.media, { editable: true, songs: gig.songs || [] });
+  renderAttendeePicker(ensureEditAttendeePicker(), gig.attendees || []);
   editForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const submitButton = editForm.querySelector('button[type="submit"]');
     try {
       submitButton.disabled = true;
       const update = Object.fromEntries(new FormData(editForm).entries());
+      update.attendees = readAttendees(ensureEditAttendeePicker());
       update.songs = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row) => ({ title: row.querySelector('.edit-track-title').value, artist: row.querySelector('.edit-track-artist').value, album: row.querySelector('.edit-track-album').value, startSeconds: row.querySelector('.edit-track-start').value === '' ? null : Number(row.querySelector('.edit-track-start').value), endSeconds: row.querySelector('.edit-track-end').value === '' ? null : Number(row.querySelector('.edit-track-end').value), encore: false }));
       const saved = await fetchJson(`/api/gigs/${gig.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
       const files = pendingMedia.get(editMediaInput) || [...(editMediaInput?.files || [])];
@@ -1158,7 +1188,7 @@ form.addEventListener('submit', async (event) => {
   const gig = formValues();
   const mediaFiles = pendingMedia.get(mediaInput) || [...(mediaInput?.files || [])];
   delete gig.media;
-  const payload = { ...gig, songs: selectedSetlist?.songs || [], setlistFmId: selectedSetlist?.id || null, setlistFmUrl: selectedSetlist?.url || null };
+  const payload = { ...gig, attendees: readAttendees(addAttendeePicker), songs: selectedSetlist?.songs || [], setlistFmId: selectedSetlist?.id || null, setlistFmUrl: selectedSetlist?.url || null };
   const submitButton = form.querySelector('button[type="submit"]');
   try {
     submitButton.disabled = true;
@@ -1442,11 +1472,13 @@ async function initializeApp() {
     inviteButton.hidden = !account.isAdmin;
     activeProfileId = account.id;
   }
-  const [gigData, integrationData, profileData, showData] = await Promise.all([fetchJson('/api/gigs'), fetchJson('/api/integrations'), fetchJson('/api/profiles'), fetchJson('/api/shared/shows')]);
+  const [gigData, integrationData, profileData, showData, peerData] = await Promise.all([fetchJson('/api/gigs'), fetchJson('/api/integrations'), fetchJson('/api/profiles'), fetchJson('/api/shared/shows'), account ? fetchJson('/api/peers') : Promise.resolve([])]);
     gigs = gigData;
     integrations = integrationData;
     profiles = profileData;
     sharedShows = showData;
+    peers = peerData;
+    renderAttendeePicker(addAttendeePicker, []);
     const params = new URLSearchParams(window.location.search);
     if (params.get('connected')) setMessage(`${providerName(params.get('connected'))} connected. Choose a show to export.`);
     if (params.get('integrationError')) setMessage('Could not connect that music service. Check its configuration and try again.', true);
