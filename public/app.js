@@ -661,6 +661,19 @@ function activeProfile() {
   return profiles.find((profile) => profile.id === activeProfileId);
 }
 
+function attendeeNames(gig) {
+  return (Array.isArray(gig?.attendees) ? gig.attendees : []).map((person) => person?.name).filter(Boolean);
+}
+
+function renderAttendeeSummary(container, gig, prefix = 'With') {
+  const names = attendeeNames(gig);
+  if (names.length < 2) return;
+  const summary = document.createElement('p');
+  summary.className = 'gig-attendees-summary';
+  summary.textContent = `${prefix} ${names.join(', ')}`;
+  container.append(summary);
+}
+
 function renderArtistShows(records) {
   artistShows.replaceChildren();
   artistEmpty.hidden = records.length > 0;
@@ -680,6 +693,7 @@ function renderArtistShows(records) {
     card.querySelector('.gig-place').textContent = `${gig.venue} · ${gig.city}`;
     card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
     card.querySelector('.venue-notes').textContent = gig.venueNotes || '';
+    renderAttendeeSummary(card.querySelector('.gig-summary'), gig);
     card.querySelector('.song-total').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist';
     const ratings = card.querySelector('.gig-ratings');
     ratings.innerHTML = `${gig.performanceRating ? `<span>Performance ${gig.performanceRating} / 5</span>` : ''}${gig.venueRating ? `<span>Venue ${gig.venueRating} / 5</span>` : ''}`;
@@ -774,6 +788,7 @@ async function renderVenuePage() {
     card.querySelector('.gig-summary h3').innerHTML = `<a class="artist-link" href="/artist?name=${encodeURIComponent(gig.artist)}">${escapeHtml(gig.artist)}</a>`;
     card.querySelector('.gig-place').textContent = `${gig.venue} · ${gig.city}`;
     card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
+    renderAttendeeSummary(card.querySelector('.gig-summary'), gig);
     card.querySelector('.song-total').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist';
     renderMediaGallery(card.querySelector('.media-gallery'), gig.media, { songs: gig.songs || [] });
     venueShows.append(card);
@@ -874,6 +889,15 @@ function renderShowPage() {
   showDetailDate.textContent = formatGigDate(gig.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   showDetailNotes.textContent = gig.performanceNotes || gig.notes || 'No performance notes yet.';
   showDetailVenueNotes.textContent = gig.venueNotes ? `Venue: ${gig.venueNotes}` : 'No venue notes yet.';
+  const attendeesLine = document.querySelector('#show-detail-attendees') || (() => {
+    const line = document.createElement('p');
+    line.id = 'show-detail-attendees';
+    line.className = 'show-detail-attendees';
+    showDetailNotes.parentElement.append(line);
+    return line;
+  })();
+  const names = attendeeNames(gig);
+  attendeesLine.textContent = names.length > 1 ? `Attended with ${names.slice(1).join(', ')}` : 'Solo show';
   showDetailRatings.innerHTML = `${gig.performanceRating ? `<span>Performance ${gig.performanceRating} / 5</span>` : '<span>Performance unrated</span>'}${gig.venueRating ? `<span>Venue ${gig.venueRating} / 5</span>` : '<span>Venue unrated</span>'}`;
   showDetailSetlist.innerHTML = gig.songs?.length ? `<ol>${renderTrackList(gig.songs, gig.artist)}</ol>${renderAlbumStats(gig.songs)}` : '<p>No setlist attached.</p>';
   if (gig.songs?.length) fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats`).then((data) => { gig.songs = data.songs; showDetailSetlist.innerHTML = `<ol>${renderTrackList(gig.songs, gig.artist)}</ol>${renderAlbumStats(gig.songs)}`; }).catch(() => {});
@@ -986,17 +1010,45 @@ function renderProfiles() {
 
 function renderSharedShows() {
   sharedList.replaceChildren();
+  const localShared = gigs.filter((gig) => attendeeNames(gig).length > 1);
+  const legacyShows = sharedShows.filter((show) => !localShared.some((gig) => gig.id === show.sourceGigId));
+  const totalShared = localShared.length + legacyShows.length;
+  setSharedMessage(totalShared ? `${totalShared} shared show${totalShared === 1 ? '' : 's'} in this instance.` : 'Add attendees to a show to start a collaborative record.');
+  if (localShared.length) {
+    const heading = document.createElement('p');
+    heading.className = 'eyebrow shared-list-heading';
+    heading.textContent = 'Shared from this archive';
+    sharedList.append(heading);
+    for (const gig of localShared) {
+      const card = document.createElement('article');
+      card.className = 'shared-card local-shared-card';
+      const names = attendeeNames(gig);
+      card.innerHTML = `<div class="shared-card-header"><div><p class="shared-date"></p><h3></h3><p class="shared-place"></p></div><span class="shared-song-count"></span></div><div class="shared-people"></div><div class="local-shared-attendees"></div><div class="local-shared-meta"></div><div class="local-shared-actions"><a class="button button-secondary" href="/show?id=${encodeURIComponent(gig.id)}">Open show</a><a class="button button-secondary" href="/edit?id=${encodeURIComponent(gig.id)}">Edit attendees</a></div>`;
+      card.querySelector('.shared-date').textContent = formatGigDate(gig.date);
+      card.querySelector('h3').textContent = gig.artist;
+      card.querySelector('.shared-place').textContent = `${gig.venue} · ${gig.city}`;
+      card.querySelector('.shared-song-count').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist yet';
+      card.querySelector('.shared-people').innerHTML = `<span>Attendees</span>${names.map((name) => `<b>${escapeHtml(name)}</b>`).join('')}`;
+      card.querySelector('.local-shared-attendees').innerHTML = (gig.attendees || []).map((person) => {
+        const isLocal = person.id === account?.id;
+        const detail = isLocal
+          ? `${gig.performanceRating ? `Performance ${gig.performanceRating}/5` : 'Performance unrated'} · ${gig.venueRating ? `Venue ${gig.venueRating}/5` : 'Venue unrated'}${gig.favorite ? ' · Favourite' : ''}`
+          : 'Peer contribution will appear after sync';
+        return `<div><strong>${escapeHtml(person.name || 'Attendee')}</strong><span>${escapeHtml(detail)}</span></div>`;
+      }).join('');
+      const rating = gig.performanceRating ? `Your performance rating: ${gig.performanceRating} / 5` : 'Your performance rating: unrated';
+      const venueRating = gig.venueRating ? `Venue: ${gig.venueRating} / 5` : 'Venue: unrated';
+      card.querySelector('.local-shared-meta').textContent = `${rating} · ${venueRating} · ${gig.media?.length || 0} media item${gig.media?.length === 1 ? '' : 's'} available here`;
+      sharedList.append(card);
+    }
+  }
   const profile = activeProfile();
-  if (!profiles.length) {
-    setSharedMessage('Add yourself, then add friends who use this shared instance.');
+  if (!profiles.length || !profile) {
+    if (legacyShows.length) setSharedMessage('Choose your profile to create or review shared shows.', true);
     return;
   }
-  if (!profile) {
-    setSharedMessage('Choose your profile to create or review shared shows.');
-    return;
-  }
-  setSharedMessage(sharedShows.length ? `${sharedShows.length} shared show${sharedShows.length === 1 ? '' : 's'} in this instance.` : 'Share a gig from your archive to start a collaborative record.');
-  for (const show of sharedShows) {
+  if (!legacyShows.length) return;
+  for (const show of legacyShows) {
     const card = document.querySelector('#shared-template').content.cloneNode(true);
     const date = formatGigDate(show.date);
     card.querySelector('.shared-date').textContent = date;
@@ -1244,6 +1296,7 @@ function renderGigs() {
     card.querySelector('.gig-place').innerHTML = `<a class="venue-link" href="/venue?name=${encodeURIComponent(gig.venue)}&city=${encodeURIComponent(gig.city)}">${escapeHtml(gig.venue)}</a> · <a class="venue-link" href="/city?name=${encodeURIComponent(gig.city)}">${escapeHtml(gig.city)}</a>`;
     card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
     card.querySelector('.venue-notes').textContent = gig.venueNotes ? `Venue: ${gig.venueNotes}` : '';
+    renderAttendeeSummary(card.querySelector('.gig-summary'), gig);
     card.querySelector('.song-total').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist';
     const ratings = card.querySelector('.gig-ratings');
     ratings.innerHTML = quickRating('performanceRating', 'Performance', gig.performanceRating) + quickRating('venueRating', 'Venue', gig.venueRating);

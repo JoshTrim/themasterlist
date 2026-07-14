@@ -261,6 +261,18 @@ body[data-page="login"] .shared-section > .section-heading,
 body[data-page="login"] .shared-section > .profile-bar,
 body[data-page="login"] .shared-section > .shared-message:not(#auth-message),
 body[data-page="login"] .shared-section > .shared-list { display: none; }
+.gig-attendees-summary { margin: 9px 0 0; color: #ff82c8; font: 11px "Press Start 2P", monospace; line-height: 1.5; }
+.show-detail-attendees { margin: 14px 0 0; color: #ff82c8; font: 12px "Press Start 2P", monospace; line-height: 1.5; }
+.shared-list-heading { margin: 24px 0 0; color: #ff82c8; }
+.local-shared-card { border-color: #7422a0; background: linear-gradient(135deg, rgba(41, 15, 64, .92), rgba(16, 7, 29, .9)); }
+.local-shared-card .shared-card-header h3 { color: #efd7f6; }
+.local-shared-card .shared-people b { background: #210b35; color: #ff82c8; }
+.local-shared-meta { margin-top: 18px; color: #d6a9e2; font-size: 13px; line-height: 1.6; }
+.local-shared-attendees { display: grid; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid #5e2a78; }
+.local-shared-attendees div { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
+.local-shared-attendees strong { color: #efd7f6; font: 11px "Press Start 2P", monospace; }
+.local-shared-attendees span { color: #d6a9e2; font-size: 13px; }
+.local-shared-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .instance-settings { margin-top: 42px; padding-top: 28px; border-top: 1px solid #7422a0; }
 .instance-settings h2 { margin: 0; font-size: 20px; }
 .instance-description { color: #d6a9e2; font-size: 15px; }
