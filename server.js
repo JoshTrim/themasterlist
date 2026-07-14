@@ -426,8 +426,26 @@ function cookieValue(request, name) {
 
 function tokenHash(token) { return createHash('sha256').update(token).digest('hex'); }
 
+function sessionCookieName() {
+  const instanceId = database.prepare('SELECT instance_id FROM instance_identity WHERE id = 1').get()?.instance_id || 'local';
+  return `master_list_session_${instanceId.replace(/[^a-z0-9]/gi, '').slice(0, 12)}`;
+}
+
+function sessionCookieSecure() {
+  if (process.env.SESSION_COOKIE_SECURE) return process.env.SESSION_COOKIE_SECURE === 'true';
+  return String(process.env.INSTANCE_URL || process.env.APP_ORIGIN || '').startsWith('https://');
+}
+
+function expiredSessionCookies() {
+  const attributes = `HttpOnly; SameSite=Lax; Path=/; Max-Age=0${sessionCookieSecure() ? '; Secure' : ''}`;
+  return [`${sessionCookieName()}=; ${attributes}`, `master_list_session=; ${attributes}`];
+}
+
 function currentAccount(request) {
-  const token = cookieValue(request, 'master_list_session');
+  // The legacy cookie fallback keeps existing users signed in through this
+  // migration. New cookies are instance-specific so two servers on different
+  // ports of the same hostname cannot overwrite one another.
+  const token = cookieValue(request, sessionCookieName()) || cookieValue(request, 'master_list_session');
   if (!token) return null;
   const row = database.prepare(`SELECT p.id, p.name, p.is_admin AS isAdmin FROM sessions s JOIN profiles p ON p.id = s.profile_id WHERE s.token_hash = ? AND s.expires_at > ?`).get(tokenHash(token), new Date().toISOString());
   return row || null;
@@ -451,7 +469,11 @@ function sessionHeaders(profileId) {
   const token = randomBytes(32).toString('base64url');
   const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   database.prepare('INSERT INTO sessions (token_hash, profile_id, expires_at) VALUES (?, ?, ?)').run(tokenHash(token), profileId, expires);
-  return { 'Set-Cookie': `master_list_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${process.env.NODE_ENV === 'production' ? '; Secure' : ''}` };
+  const secure = sessionCookieSecure() ? '; Secure' : '';
+  return { 'Set-Cookie': [
+    `${sessionCookieName()}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${secure}`,
+    'master_list_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'
+  ] };
 }
 
 function validateAccount(body) {
@@ -1394,9 +1416,9 @@ async function handleApi(request, response, url) {
   }
 
   if (request.method === 'POST' && url.pathname === '/api/auth/logout') {
-    const token = cookieValue(request, 'master_list_session');
+    const token = cookieValue(request, sessionCookieName()) || cookieValue(request, 'master_list_session');
     if (token) database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash(token));
-    return sendJson(response, 200, { ok: true }, { 'Set-Cookie': 'master_list_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0' });
+    return sendJson(response, 200, { ok: true }, { 'Set-Cookie': expiredSessionCookies() });
   }
 
   if (request.method === 'POST' && url.pathname === '/api/auth/invites') {
