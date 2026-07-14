@@ -261,6 +261,23 @@ body[data-page="login"] .shared-section > .section-heading,
 body[data-page="login"] .shared-section > .profile-bar,
 body[data-page="login"] .shared-section > .shared-message:not(#auth-message),
 body[data-page="login"] .shared-section > .shared-list { display: none; }
+.instance-settings { margin-top: 42px; padding-top: 28px; border-top: 1px solid #7422a0; }
+.instance-settings h2 { margin: 0; font-size: 20px; }
+.instance-description { color: #d6a9e2; font-size: 15px; }
+.instance-details { display: grid; gap: 10px; margin: 20px 0 28px; }
+.instance-details div { display: grid; grid-template-columns: 130px 1fr; gap: 12px; padding: 8px 0; border-bottom: 1px solid #3d1d52; }
+.instance-details dt { color: #ff82c8; font-size: 12px; text-transform: uppercase; }
+.instance-details dd { min-width: 0; margin: 0; color: #efd7f6; word-break: break-all; font-size: 13px; }
+.instance-details code { color: #c9b2ff; font: 11px "VT323", monospace; }
+.peer-form { display: grid; gap: 12px; max-width: 620px; }
+.peer-form textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.peer-form .form-message { min-height: 18px; margin: 0; }
+.peer-list { display: grid; gap: 8px; margin-top: 24px; }
+.peer-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border: 1px solid #5e2a78; background: #12071f; }
+.peer-card strong { display: block; color: #fff0fb; }
+.peer-card small { color: #caa5d8; }
+.peer-card button { flex: 0 0 auto; padding: 5px 8px; border: 1px solid #ff5ab6; background: transparent; color: #ff82c8; font: 12px "VT323", monospace; cursor: pointer; }
+@media (max-width: 640px) { .instance-details div { grid-template-columns: 1fr; gap: 3px; }.peer-card { align-items: flex-start; flex-direction: column; } }
 body[data-page="login"] .auth-panel { max-width: 460px; margin: 12vh auto; padding: 28px; border: 1px solid #7422a0; background: rgba(29, 18, 48, .8); box-shadow: 0 0 24px rgba(255, 45, 155, .25); }
 @media (max-width: 640px) { body[data-page="playback"] .show-detail-header > div { display: block; } body[data-page="playback"] .show-detail-header .show-detail-place, body[data-page="playback"] .show-detail-header .show-detail-date { margin-top: 6px; } }
 @media (max-width: 640px) { .artist-profile { grid-template-columns: 1fr; padding: 20px; gap: 24px; }.artist-image { max-height: 300px; } }

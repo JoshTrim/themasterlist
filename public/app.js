@@ -60,6 +60,11 @@ const loginForm = document.querySelector('#login-form');
 const registerForm = document.querySelector('#register-form');
 const accountForm = document.querySelector('#account-form');
 const accountMessage = document.querySelector('#account-message');
+const instanceId = document.querySelector('#instance-id');
+const instancePublicKey = document.querySelector('#instance-public-key');
+const peerForm = document.querySelector('#peer-form');
+const peerMessage = document.querySelector('#peer-message');
+const peerList = document.querySelector('#peer-list');
 const profileBar = document.querySelector('#profile-bar');
 const inviteButton = document.querySelector('#create-invite');
 const downloadBackupButton = document.querySelector('#download-backup');
@@ -382,6 +387,22 @@ async function fetchJson(url, options) {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'Something went wrong.');
   return payload;
+}
+
+async function renderInstanceSettings() {
+  if (!account || !instanceId || !peerList) return;
+  try {
+    const instance = await fetchJson('/api/instance');
+    instanceId.textContent = instance.instanceId;
+    instancePublicKey.textContent = instance.publicKey;
+    peerList.innerHTML = instance.peers?.length ? instance.peers.map((peer) => `<article class="peer-card" data-peer-id="${escapeHtml(peer.id)}"><div><strong>${escapeHtml(peer.name)}</strong><small>${escapeHtml(peer.baseUrl || 'Direct relay/VPN connection not configured')}</small></div><button type="button" class="peer-remove">Remove</button></article>`).join('') : '<p class="shared-message">No paired instances yet.</p>';
+    peerList.querySelectorAll('.peer-remove').forEach((button) => button.addEventListener('click', async () => {
+      const card = button.closest('.peer-card');
+      if (!confirm(`Remove ${card.querySelector('strong').textContent} as a paired instance?`)) return;
+      await fetchJson(`/api/peers/${encodeURIComponent(card.dataset.peerId)}`, { method: 'DELETE' });
+      renderInstanceSettings();
+    }));
+  } catch (error) { if (peerMessage) { peerMessage.textContent = error.message; peerMessage.classList.add('error'); } }
 }
 
 async function pollMediaRecognition(gigId, onMedia) {
@@ -1024,6 +1045,15 @@ loginForm.addEventListener('submit', (event) => { event.preventDefault(); submit
 registerForm.addEventListener('submit', (event) => { event.preventDefault(); submitAuth(registerForm, '/api/auth/register', { inviteToken: new URLSearchParams(window.location.search).get('invite') }); });
 logoutButton.addEventListener('click', async () => { await fetchJson('/api/auth/logout', { method: 'POST' }); account = null; activeProfileId = ''; showAuth({ configured: true }); });
 accountForm?.addEventListener('submit', async (event) => { event.preventDefault(); const body = Object.fromEntries(new FormData(accountForm)); accountMessage.textContent = 'Updating…'; try { account = await fetchJson('/api/auth/account', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); accountMessage.textContent = 'Account updated.'; accountForm.reset(); accountForm.elements.name.value = account.name; } catch (error) { accountMessage.textContent = error.message; accountMessage.classList.add('error'); } });
+peerForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!peerMessage) return;
+  peerMessage.textContent = 'Pairing…'; peerMessage.classList.remove('error');
+  try {
+    await fetchJson('/api/peers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(peerForm).entries())) });
+    peerForm.reset(); peerMessage.textContent = 'Paired instance saved.'; await renderInstanceSettings();
+  } catch (error) { peerMessage.textContent = error.message; peerMessage.classList.add('error'); }
+});
 inviteButton.addEventListener('click', async () => {
   try {
     const invite = await fetchJson('/api/auth/invites', { method: 'POST' });
@@ -1392,6 +1422,7 @@ async function initializeApp() {
     await renderApiLimits();
     renderProfiles();
     renderSharedShows();
+    await renderInstanceSettings();
     await renderArtistPage();
     renderShowPage();
     renderCityPage();

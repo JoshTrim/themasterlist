@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const legacyFs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash } = require('node:crypto');
+const { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash, generateKeyPairSync } = require('node:crypto');
 
 loadEnvFile();
 
@@ -173,6 +173,64 @@ database.exec(`
     FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE CASCADE
   );
 `);
+database.exec(`
+  CREATE TABLE IF NOT EXISTS instance_identity (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    instance_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL DEFAULT 'The Master List instance',
+    public_key TEXT NOT NULL,
+    private_key TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS peer_instances (
+    id TEXT PRIMARY KEY,
+    peer_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL DEFAULT '',
+    public_key TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'paired',
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT
+  );
+  CREATE TABLE IF NOT EXISTS shared_gig_contributions (
+    shared_gig_id TEXT NOT NULL,
+    instance_id TEXT NOT NULL,
+    local_gig_id TEXT,
+    participant_name TEXT NOT NULL DEFAULT '',
+    performance_rating REAL,
+    venue_rating REAL,
+    favorite INTEGER NOT NULL DEFAULT 0,
+    performance_notes TEXT NOT NULL DEFAULT '',
+    venue_notes TEXT NOT NULL DEFAULT '',
+    media_manifest TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (shared_gig_id, instance_id),
+    FOREIGN KEY (shared_gig_id) REFERENCES shared_shows(id) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS sync_events (
+    event_id TEXT PRIMARY KEY,
+    origin_instance_id TEXT NOT NULL,
+    shared_gig_id TEXT,
+    event_type TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+  );
+`);
+
+function ensureInstanceIdentity() {
+  const existing = database.prepare('SELECT * FROM instance_identity WHERE id = 1').get();
+  if (existing) return existing;
+  const keys = generateKeyPairSync('ed25519', {
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+  });
+  const identity = { instanceId: randomUUID(), name: String(process.env.INSTANCE_NAME || 'The Master List instance').trim(), publicKey: keys.publicKey, privateKey: keys.privateKey, createdAt: new Date().toISOString() };
+  database.prepare('INSERT INTO instance_identity (id, instance_id, name, public_key, private_key, created_at) VALUES (1, ?, ?, ?, ?, ?)').run(identity.instanceId, identity.name, identity.publicKey, identity.privateKey, identity.createdAt);
+  return { id: 1, instance_id: identity.instanceId, name: identity.name, public_key: identity.publicKey, private_key: identity.privateKey, created_at: identity.createdAt };
+}
+
+ensureInstanceIdentity();
 
 function addColumnIfMissing(table, column, definition) {
   const columns = database.prepare(`PRAGMA table_info(${table})`).all();
@@ -535,6 +593,26 @@ function profileRows() {
   return database.prepare('SELECT id, name, created_at AS createdAt FROM profiles ORDER BY name COLLATE NOCASE').all();
 }
 
+function instanceRow() {
+  const row = database.prepare('SELECT instance_id AS instanceId, name, public_key AS publicKey, created_at AS createdAt FROM instance_identity WHERE id = 1').get();
+  return row || ensureInstanceIdentity();
+}
+
+function peerRows() {
+  return database.prepare('SELECT id, peer_id AS peerId, name, base_url AS baseUrl, public_key AS publicKey, status, created_at AS createdAt, last_seen_at AS lastSeenAt FROM peer_instances ORDER BY name COLLATE NOCASE').all();
+}
+
+function sharedContributionRows(sharedGigId) {
+  return database.prepare(`SELECT shared_gig_id AS sharedGigId, instance_id AS instanceId, local_gig_id AS localGigId,
+    participant_name AS participantName, performance_rating AS performanceRating, venue_rating AS venueRating,
+    favorite, performance_notes AS performanceNotes, venue_notes AS venueNotes, media_manifest AS mediaManifest, updated_at AS updatedAt
+    FROM shared_gig_contributions WHERE shared_gig_id = ? ORDER BY updated_at`).all(sharedGigId).map((entry) => ({
+    ...entry,
+    favorite: Boolean(entry.favorite),
+    media: JSON.parse(entry.mediaManifest || '[]')
+  }));
+}
+
 function sharedShowRows() {
   const shows = database.prepare('SELECT * FROM shared_shows ORDER BY date DESC').all();
   const attendees = database.prepare(`
@@ -561,6 +639,7 @@ function sharedShowRows() {
     createdAt: show.created_at,
     attendees: attendees.filter((person) => person.showId === show.id),
     reviews: reviews.filter((review) => review.showId === show.id).map((review) => ({ ...review, favorite: Boolean(review.favorite) }))
+    , contributions: sharedContributionRows(show.id)
   }));
 }
 
@@ -583,6 +662,12 @@ function createSharedShow(sourceGigId, profileId) {
     id, sourceGigId, gig.artist, gig.venue, gig.city, gig.date, gig.setlistFmId, gig.setlistFmUrl, JSON.stringify(gig.songs || []), now
   );
   database.prepare('INSERT INTO shared_attendees (show_id, profile_id, joined_at) VALUES (?, ?, ?)').run(id, profile.id, now);
+  database.prepare(`INSERT INTO shared_gig_contributions
+    (shared_gig_id, instance_id, local_gig_id, participant_name, performance_rating, venue_rating, favorite, performance_notes, venue_notes, media_manifest, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    id, instanceRow().instanceId, gig.id, profile.name, gig.performanceRating ?? null, gig.venueRating ?? null,
+    gig.favorite ? 1 : 0, gig.performanceNotes || gig.notes || '', gig.venueNotes || '', JSON.stringify(gig.media || []), now
+  );
   return id;
 }
 
@@ -591,7 +676,10 @@ function findGigSync(id) {
   if (!row) throw new Error('Gig not found.');
   return {
     id: row.id, artist: row.artist, venue: row.venue, city: row.city, date: row.date,
-    setlistFmId: row.setlist_fm_id, setlistFmUrl: row.setlist_fm_url, songs: JSON.parse(row.songs || '[]')
+    setlistFmId: row.setlist_fm_id, setlistFmUrl: row.setlist_fm_url, songs: JSON.parse(row.songs || '[]'),
+    notes: row.notes, performanceNotes: row.performance_notes, venueNotes: row.venue_notes,
+    performanceRating: row.performance_rating, venueRating: row.venue_rating, favorite: Boolean(row.favorite),
+    media: database.prepare('SELECT id, filename, mime_type AS mimeType, caption, size, external_url AS externalUrl FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id)
   };
 }
 
@@ -1064,6 +1152,42 @@ async function handleApi(request, response, url) {
   }
 
   request.account = accountsConfigured() ? requireAccount(request) : null;
+
+  if (request.method === 'GET' && url.pathname === '/api/instance') {
+    requireAccount(request);
+    return sendJson(response, 200, { ...instanceRow(), peers: peerRows() });
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/peers') {
+    requireAccount(request);
+    return sendJson(response, 200, peerRows());
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/peers') {
+    requireAccount(request);
+    const body = await readBody(request);
+    const peerId = String(body.peerId || '').trim();
+    const name = String(body.name || '').trim();
+    const publicKey = String(body.publicKey || '').trim();
+    const baseUrl = String(body.baseUrl || '').trim().replace(/\/$/, '');
+    if (!peerId || !name || !publicKey) return sendError(response, 400, 'Peer ID, name, and public key are required.');
+    if (baseUrl) {
+      try { const parsed = new URL(baseUrl); if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error(); } catch { return sendError(response, 400, 'Peer URL must be a valid HTTP or HTTPS URL.'); }
+    }
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    database.prepare(`INSERT INTO peer_instances (id, peer_id, name, base_url, public_key, status, created_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, 'paired', ?, ?)
+      ON CONFLICT(peer_id) DO UPDATE SET name=excluded.name, base_url=excluded.base_url, public_key=excluded.public_key, status='paired', last_seen_at=excluded.last_seen_at`).run(id, peerId, name, baseUrl, publicKey, now, now);
+    return sendJson(response, 201, peerRows().find((peer) => peer.peerId === peerId));
+  }
+
+  const peerMatch = url.pathname.match(/^\/api\/peers\/([\w-]+)$/);
+  if (request.method === 'DELETE' && peerMatch) {
+    requireAccount(request);
+    database.prepare('DELETE FROM peer_instances WHERE id = ?').run(peerMatch[1]);
+    return sendJson(response, 200, { ok: true });
+  }
 
   const mediaFileMatch = url.pathname.match(/^\/api\/media\/([\w-]+)$/);
   if (request.method === 'GET' && mediaFileMatch) {
