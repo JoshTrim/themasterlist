@@ -220,7 +220,18 @@ database.exec(`
     created_at TEXT NOT NULL,
     applied_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    peer_id TEXT,
+    shared_gig_id TEXT,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    read_at TEXT
+  );
 `);
+database.exec('CREATE INDEX IF NOT EXISTS notifications_unread ON notifications (read_at, created_at)');
 
 function ensureInstanceIdentity() {
   const existing = database.prepare('SELECT * FROM instance_identity WHERE id = 1').get();
@@ -753,6 +764,23 @@ async function postPeerEnvelope(peer, pathname, payload) {
   } finally { clearTimeout(timeout); }
 }
 
+async function syncWithPeer(peer) {
+  if (!peer?.base_url) throw new Error('Add a peer URL before syncing this instance.');
+  try {
+    const snapshots = localSyncSnapshots(peer.peer_id);
+    const reply = await postPeerEnvelope(peer, '/api/sync/exchange', { type: 'sync-exchange', snapshots });
+    if (reply.type !== 'sync-response' || !Array.isArray(reply.snapshots)) throw new Error('Peer returned an invalid sync response.');
+    let applied = 0;
+    for (const snapshot of reply.snapshots.slice(0, 500)) if (applySyncSnapshot(snapshot, peer)) applied += 1;
+    const now = new Date().toISOString();
+    database.prepare("UPDATE peer_instances SET status = 'connected', last_seen_at = ? WHERE id = ?").run(now, peer.id);
+    return { ok: true, peerId: peer.id, peerName: peer.name, sent: snapshots.length, received: reply.snapshots.length, applied, remoteApplied: Number(reply.applied || 0), lastSeenAt: now };
+  } catch (error) {
+    database.prepare("UPDATE peer_instances SET status = 'unreachable' WHERE id = ?").run(peer.id);
+    throw error;
+  }
+}
+
 function localParticipantName() {
   return database.prepare('SELECT name FROM profiles WHERE is_admin = 1 ORDER BY created_at LIMIT 1').get()?.name || instanceRow().name;
 }
@@ -811,11 +839,14 @@ function localSyncSnapshots(peerId) {
     const attendees = (gig.attendees || []).map((attendee) => attendee.type === 'owner'
       ? { id: identity.instanceId, type: 'instance', name: localParticipantName() }
       : { id: attendee.id, type: 'instance', name: attendee.name });
-    const eventPayload = { sharedGigId, instanceId: identity.instanceId, updatedAt, contribution };
+    const show = { artist: gig.artist, venue: gig.venue, city: gig.city, date: gig.date, setlistFmId: gig.setlistFmId, setlistFmUrl: gig.setlistFmUrl, songs: gig.songs || [] };
+    const contributionContent = { ...contribution };
+    delete contributionContent.updatedAt;
+    const eventPayload = { sharedGigId, instanceId: identity.instanceId, show, attendees, contribution: contributionContent };
     return {
       eventId: createHash('sha256').update(JSON.stringify(eventPayload)).digest('hex'),
       sharedGigId,
-      show: { artist: gig.artist, venue: gig.venue, city: gig.city, date: gig.date, setlistFmId: gig.setlistFmId, setlistFmUrl: gig.setlistFmUrl, songs: gig.songs || [] },
+      show,
       attendees,
       contribution
     };
@@ -831,6 +862,7 @@ function applySyncSnapshot(snapshot, originPeer) {
   if (!snapshot?.eventId || !snapshot?.sharedGigId || !snapshot?.show || !snapshot?.contribution) return false;
   if (snapshot.contribution.instanceId !== originPeer.peer_id) throw new Error('Peer contribution identity does not match its signature.');
   if (database.prepare('SELECT 1 FROM sync_events WHERE event_id = ?').get(snapshot.eventId)) return false;
+  const isNewPeerContribution = !database.prepare('SELECT 1 FROM shared_gig_contributions WHERE shared_gig_id = ? AND instance_id = ?').get(snapshot.sharedGigId, originPeer.peer_id);
   const show = snapshot.show;
   if (![show.artist, show.venue, show.city].every((value) => typeof value === 'string') || typeof show.date !== 'string') throw new Error('Peer sent an invalid shared show.');
   let local = database.prepare('SELECT id, shared_id FROM gigs WHERE shared_id = ?').get(snapshot.sharedGigId);
@@ -873,6 +905,15 @@ function applySyncSnapshot(snapshot, originPeer) {
     database.prepare('INSERT INTO sync_events (event_id, origin_instance_id, shared_gig_id, event_type, payload, created_at, applied_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
       snapshot.eventId, originPeer.peer_id, snapshot.sharedGigId, 'shared-gig.snapshot', JSON.stringify(snapshot), contribution.updatedAt || now, now
     );
+    if (isNewPeerContribution) {
+      const notificationId = createHash('sha256').update(`peer-show:${originPeer.peer_id}:${snapshot.sharedGigId}`).digest('hex');
+      database.prepare(`INSERT OR IGNORE INTO notifications
+        (id, type, peer_id, shared_gig_id, title, body, created_at)
+        VALUES (?, 'peer-show-shared', ?, ?, ?, ?, ?)`).run(
+        notificationId, originPeer.peer_id, snapshot.sharedGigId, `${originPeer.name} shared a show`,
+        `${show.artist} at ${show.venue}${show.city ? `, ${show.city}` : ''}`, now
+      );
+    }
   })();
   return true;
 }
@@ -1487,6 +1528,20 @@ async function handleApi(request, response, url) {
     return sendJson(response, 200, peerRows());
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/notifications') {
+    requireAccount(request);
+    const notifications = database.prepare(`SELECT id, type, peer_id AS peerId, shared_gig_id AS sharedGigId,
+      title, body, created_at AS createdAt FROM notifications WHERE read_at IS NULL ORDER BY created_at DESC LIMIT 50`).all();
+    return sendJson(response, 200, notifications);
+  }
+
+  const notificationMatch = url.pathname.match(/^\/api\/notifications\/([a-f0-9]+)$/);
+  if (request.method === 'PATCH' && notificationMatch) {
+    requireAccount(request);
+    database.prepare('UPDATE notifications SET read_at = ? WHERE id = ?').run(new Date().toISOString(), notificationMatch[1]);
+    return sendJson(response, 200, { ok: true });
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/peers/invite') {
     requireAccount(request);
     const token = peerInviteToken(request);
@@ -1530,6 +1585,14 @@ async function handleApi(request, response, url) {
     return sendJson(response, 201, peerRows().find((peer) => peer.peerId === peerId));
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/peers/sync-all') {
+    requireAccount(request);
+    const connectedPeers = database.prepare("SELECT * FROM peer_instances WHERE status = 'connected' AND base_url <> '' ORDER BY name COLLATE NOCASE").all();
+    const settled = await Promise.allSettled(connectedPeers.map((peer) => syncWithPeer(peer)));
+    const results = settled.map((result, index) => result.status === 'fulfilled' ? result.value : { ok: false, peerId: connectedPeers[index].id, peerName: connectedPeers[index].name, error: result.reason?.message || 'Sync failed.' });
+    return sendJson(response, 200, { peers: connectedPeers.length, results, applied: results.reduce((sum, result) => sum + Number(result.applied || 0), 0) });
+  }
+
   const peerActionMatch = url.pathname.match(/^\/api\/peers\/([\w-]+)\/(test|sync)$/);
   if (request.method === 'POST' && peerActionMatch) {
     requireAccount(request);
@@ -1543,14 +1606,7 @@ async function handleApi(request, response, url) {
         database.prepare("UPDATE peer_instances SET status = 'connected', last_seen_at = ? WHERE id = ?").run(now, peer.id);
         return sendJson(response, 200, { ok: true, name: reply.name || peer.name, status: 'connected', lastSeenAt: now });
       }
-      const snapshots = localSyncSnapshots(peer.peer_id);
-      const reply = await postPeerEnvelope(peer, '/api/sync/exchange', { type: 'sync-exchange', snapshots });
-      if (reply.type !== 'sync-response' || !Array.isArray(reply.snapshots)) throw new Error('Peer returned an invalid sync response.');
-      let applied = 0;
-      for (const snapshot of reply.snapshots.slice(0, 500)) if (applySyncSnapshot(snapshot, peer)) applied += 1;
-      const now = new Date().toISOString();
-      database.prepare("UPDATE peer_instances SET status = 'connected', last_seen_at = ? WHERE id = ?").run(now, peer.id);
-      return sendJson(response, 200, { ok: true, sent: snapshots.length, received: reply.snapshots.length, applied, remoteApplied: Number(reply.applied || 0), lastSeenAt: now });
+      return sendJson(response, 200, await syncWithPeer(peer));
     } catch (error) {
       database.prepare("UPDATE peer_instances SET status = 'unreachable' WHERE id = ?").run(peer.id);
       return sendError(response, 502, error.message);

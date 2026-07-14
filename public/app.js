@@ -4,6 +4,9 @@ const siteNav = document.querySelector('#site-nav');
 mobileMenuToggle?.addEventListener('click', () => { const open = siteNav.classList.toggle('is-open'); mobileMenuToggle.setAttribute('aria-expanded', String(open)); });
 const jobQueue = new Map();
 const jobPanel = document.createElement('aside'); jobPanel.className = 'job-queue'; jobPanel.hidden = true; jobPanel.innerHTML = '<p class="eyebrow">Background jobs</p><div class="job-queue-list"></div>'; document.body.append(jobPanel);
+const notificationPanel = document.createElement('aside'); notificationPanel.className = 'peer-notifications'; notificationPanel.hidden = true; notificationPanel.innerHTML = '<p class="eyebrow">From your peers</p><div class="peer-notification-list"></div>'; document.body.append(notificationPanel);
+let peerPollRunning = false;
+let peerPollTimer;
 function updateJob(id, patch) {
   jobQueue.set(id, { ...jobQueue.get(id), ...patch });
   // Mobile uploads have their own queue directly beneath the file picker. Keep
@@ -96,7 +99,7 @@ const routeSections = {
   'api-limits': ['api-limits-page'],
   add: ['add-page'],
   shows: ['shows-archive'],
-  shared: ['shows-shared'],
+  shared: ['shows-archive'],
   login: ['shows-shared'],
   artist: ['artist-page'],
   show: ['show-page'],
@@ -421,6 +424,47 @@ async function fetchJson(url, options) {
   return payload;
 }
 
+function renderPeerNotifications(notifications) {
+  const list = notificationPanel.querySelector('.peer-notification-list');
+  notificationPanel.hidden = !notifications.length;
+  list.innerHTML = notifications.map((notification) => `<article class="peer-notification" data-notification-id="${escapeHtml(notification.id)}"><a href="/shows#shared-${encodeURIComponent(notification.sharedGigId || '')}"><strong>${escapeHtml(notification.title)}</strong><span>${escapeHtml(notification.body || '')}</span></a><button type="button" aria-label="Dismiss notification">×</button></article>`).join('');
+  list.querySelectorAll('.peer-notification').forEach((item) => {
+    const markRead = () => fetchJson(`/api/notifications/${encodeURIComponent(item.dataset.notificationId)}`, { method: 'PATCH' }).catch(() => {});
+    item.querySelector('a').addEventListener('click', async (event) => { event.preventDefault(); await markRead(); window.location.assign(event.currentTarget.href); });
+    item.querySelector('button').addEventListener('click', async () => { await markRead(); item.remove(); notificationPanel.hidden = !list.children.length; });
+  });
+}
+
+async function loadPeerNotifications() {
+  if (!account) return [];
+  try {
+    const notifications = await fetchJson('/api/notifications');
+    renderPeerNotifications(notifications);
+    return notifications;
+  } catch { return []; /* Authentication state is handled by the next page load. */ }
+}
+
+async function pollConnectedPeers() {
+  if (!account || peerPollRunning) return;
+  peerPollRunning = true;
+  try {
+    const result = await fetchJson('/api/peers/sync-all', { method: 'POST' });
+    const notifications = await loadPeerNotifications();
+    if (result.applied > 0 || notifications.length) {
+      const [gigData, showData] = await Promise.all([fetchJson('/api/gigs'), fetchJson('/api/shared/shows')]);
+      gigs = gigData;
+      sharedShows = showData;
+      populateYearFilter();
+      renderGigs();
+    }
+  } catch { /* A disconnected peer should not interrupt normal app use. */ }
+  finally {
+    peerPollRunning = false;
+    clearTimeout(peerPollTimer);
+    peerPollTimer = setTimeout(pollConnectedPeers, 30_000);
+  }
+}
+
 async function renderInstanceSettings() {
   if (!account || !instanceId || !peerList) return;
   try {
@@ -449,6 +493,7 @@ async function renderInstanceSettings() {
           populateYearFilter();
           renderGigs();
           await refreshCollaboration();
+          await loadPeerNotifications();
         }
         await renderInstanceSettings();
       } catch (error) { peerMessage.textContent = error.message; peerMessage.classList.add('error'); await renderInstanceSettings(); }
@@ -1320,20 +1365,64 @@ form.addEventListener('submit', async (event) => {
   } finally { submitButton.disabled = false; }
 });
 
+function remoteSharedArchiveShows() {
+  const localIds = new Set(gigs.flatMap((gig) => [gig.id, gig.sharedId].filter(Boolean)));
+  return sharedShows.filter((show) => show.contributions?.length && !localIds.has(show.id) && !localIds.has(show.sourceGigId));
+}
+
+function renderRemoteSharedGig(show) {
+  const card = document.querySelector('#gig-template').content.cloneNode(true);
+  const article = card.querySelector('.gig-card');
+  article.id = `shared-${show.id}`;
+  article.classList.add('remote-shared-gig');
+  article.dataset.showDate = show.date || '';
+  article.dataset.showRating = String(Math.max(0, ...show.contributions.map((entry) => Number(entry.performanceRating || 0))));
+  article.dataset.showFavorite = show.contributions.some((entry) => entry.favorite) ? '1' : '0';
+  card.querySelector('.gig-date').textContent = formatGigDate(show.date);
+  card.querySelector('h3').innerHTML = `<a class="artist-link" href="/artist?name=${encodeURIComponent(show.artist)}">${escapeHtml(show.artist)}</a>`;
+  card.querySelector('.gig-place').innerHTML = `<a class="venue-link" href="/venue?name=${encodeURIComponent(show.venue)}&city=${encodeURIComponent(show.city)}">${escapeHtml(show.venue)}</a> · <a class="venue-link" href="/city?name=${encodeURIComponent(show.city)}">${escapeHtml(show.city)}</a>`;
+  const participants = show.contributions.map((entry) => entry.participantName || 'Peer');
+  card.querySelector('.gig-notes').textContent = `Shared by ${participants.join(', ')}`;
+  const mediaTotal = show.contributions.reduce((sum, entry) => sum + (entry.media?.length || 0), 0);
+  card.querySelector('.venue-notes').textContent = `${mediaTotal} media item${mediaTotal === 1 ? '' : 's'} listed on peer instances`;
+  card.querySelector('.song-total').textContent = show.songs?.length ? `${show.songs.length} songs` : 'No setlist';
+  const ratings = card.querySelector('.gig-ratings');
+  ratings.innerHTML = show.contributions.map((entry) => `<span class="remote-rating"><b>${escapeHtml(entry.participantName || 'Peer')}</b> · ${entry.performanceRating ? `Performance ${entry.performanceRating}/5` : 'Performance unrated'} · ${entry.venueRating ? `Venue ${entry.venueRating}/5` : 'Venue unrated'}${entry.favorite ? ' · ♥ Favourite' : ''}</span>`).join('');
+  const heart = card.querySelector('.heart-toggle');
+  heart.textContent = show.contributions.some((entry) => entry.favorite) ? '♥' : '♡';
+  heart.disabled = true;
+  heart.title = 'Favourite status belongs to the contributing peer';
+  card.querySelectorAll('.show-detail-link, .play-gig, .share-gig, .edit-gig, .delete-gig').forEach((control) => control.remove());
+  if (show.songs?.length) {
+    const tracks = `<ol>${show.songs.map((song) => `<li>${escapeHtml(song.title)}${song.artist && song.artist !== show.artist ? ` <span>— ${escapeHtml(song.artist)}</span>` : ''}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>`;
+    card.querySelector('.setlist').innerHTML = `<details class="setlist-accordion"><summary>Setlist <span>${show.songs.length} tracks</span></summary><div class="setlist-accordion-content">${tracks}</div></details>`;
+  }
+  const contributions = card.querySelector('.media-gallery');
+  contributions.className = 'remote-contributions local-shared-attendees';
+  contributions.innerHTML = show.contributions.map((entry) => `<div><strong>${escapeHtml(entry.participantName || 'Peer')}</strong><span>${entry.media?.length || 0} media · synced ${escapeHtml(new Date(entry.updatedAt).toLocaleString())}</span>${entry.performanceNotes || entry.venueNotes ? `<small>${escapeHtml(entry.performanceNotes || entry.venueNotes)}</small>` : ''}</div>`).join('');
+  return card;
+}
+
 function renderGigs() {
-  count.textContent = `${gigs.length} show${gigs.length === 1 ? '' : 's'}`;
-  archiveStats.innerHTML = `<span>${gigs.length} shows</span><span>${new Set(gigs.map((gig) => gig.artist.toLowerCase())).size} artists</span><span>${new Set(gigs.map((gig) => `${gig.venue}|${gig.city}`.toLowerCase())).size} venues</span><span>${gigs.filter((gig) => gig.favorite).length} favourites</span><span>${gigs.reduce((total, gig) => total + (gig.songs?.length || 0), 0)} songs</span>`;
+  const remoteShows = remoteSharedArchiveShows();
+  const allShows = [...gigs, ...remoteShows];
+  count.textContent = `${allShows.length} show${allShows.length === 1 ? '' : 's'}`;
+  archiveStats.innerHTML = `<span>${allShows.length} shows</span><span>${new Set(allShows.map((gig) => gig.artist.toLowerCase())).size} artists</span><span>${new Set(allShows.map((gig) => `${gig.venue}|${gig.city}`.toLowerCase())).size} venues</span><span>${gigs.filter((gig) => gig.favorite).length + remoteShows.filter((show) => show.contributions.some((entry) => entry.favorite)).length} favourites</span><span>${allShows.reduce((total, gig) => total + (gig.songs?.length || 0), 0)} songs</span>`;
   const query = showFilter?.value.trim().toLowerCase() || '';
   const year = yearFilter?.value || '';
   const sort = sortFilter?.value || 'newest';
   const filtered = gigs.filter((gig) => (!query || [gig.artist, gig.venue, gig.city].some((value) => value.toLowerCase().includes(query))) && (!year || gig.date.startsWith(year)) && (!favouriteFilter?.checked || gig.favorite));
-  emptyState.hidden = Boolean(filtered.length);
+  const remoteFiltered = remoteShows.filter((show) => (!query || [show.artist, show.venue, show.city, ...show.contributions.map((entry) => entry.participantName || '')].some((value) => value.toLowerCase().includes(query))) && (!year || show.date.startsWith(year)) && (!favouriteFilter?.checked || show.contributions.some((entry) => entry.favorite)));
+  emptyState.hidden = Boolean(filtered.length || remoteFiltered.length);
   copyPlaylist.hidden = !gigs.some((gig) => gig.songs?.length);
   gigList.replaceChildren();
   const orderedGigs = [...filtered].sort((a, b) => sort === 'oldest' ? a.date.localeCompare(b.date) : sort === 'rating' ? (Number(b.performanceRating || 0) - Number(a.performanceRating || 0)) || b.date.localeCompare(a.date) : Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || b.date.localeCompare(a.date));
   for (const gig of orderedGigs) {
     const card = document.querySelector('#gig-template').content.cloneNode(true);
     card.querySelector('.gig-card').id = `gig-${gig.id}`;
+    card.querySelector('.gig-card').dataset.showDate = gig.date || '';
+    card.querySelector('.gig-card').dataset.showRating = String(Number(gig.performanceRating || 0));
+    card.querySelector('.gig-card').dataset.showFavorite = gig.favorite ? '1' : '0';
     card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
     card.querySelector('.show-detail-link').href = `/show?id=${encodeURIComponent(gig.id)}`;
     card.querySelector('.play-gig').href = `/playback?id=${encodeURIComponent(gig.id)}`;
@@ -1346,6 +1435,14 @@ function renderGigs() {
     card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
     card.querySelector('.venue-notes').textContent = gig.venueNotes ? `Venue: ${gig.venueNotes}` : '';
     renderAttendeeSummary(card.querySelector('.gig-summary'), gig);
+    const syncedShow = sharedShows.find((show) => show.id === gig.sharedId || show.sourceGigId === gig.id);
+    const peerContributions = (syncedShow?.contributions || []).filter((entry) => entry.localGigId !== gig.id);
+    if (peerContributions.length) {
+      const details = document.createElement('details');
+      details.className = 'peer-contribution-summary';
+      details.innerHTML = `<summary>${peerContributions.length} peer contribution${peerContributions.length === 1 ? '' : 's'}</summary>${peerContributions.map((entry) => `<div><strong>${escapeHtml(entry.participantName || 'Peer')}</strong><span>${entry.performanceRating ? `Performance ${entry.performanceRating}/5` : 'Performance unrated'} · ${entry.venueRating ? `Venue ${entry.venueRating}/5` : 'Venue unrated'} · ${entry.media?.length || 0} media</span>${entry.performanceNotes || entry.venueNotes ? `<small>${escapeHtml(entry.performanceNotes || entry.venueNotes)}</small>` : ''}</div>`).join('')}`;
+      card.querySelector('.gig-summary').append(details);
+    }
     card.querySelector('.song-total').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist';
     const ratings = card.querySelector('.gig-ratings');
     ratings.innerHTML = quickRating('performanceRating', 'Performance', gig.performanceRating) + quickRating('venueRating', 'Venue', gig.venueRating);
@@ -1373,17 +1470,9 @@ function renderGigs() {
         setMessage(error.message, true);
       }
     });
-    card.querySelector('.share-gig').addEventListener('click', async () => {
-      const profile = activeProfile();
-      if (!profile) {
-        window.location.assign('/shared');
-        return;
-      }
-      try {
-        await fetchJson('/api/shared/shows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceGigId: gig.id, profileId: profile.id }) });
-        window.location.assign('/shared');
-      } catch (error) { setSharedMessage(error.message, true); }
-    });
+    const shareButton = card.querySelector('.share-gig');
+    shareButton.textContent = attendeeNames(gig).length > 1 ? 'Shared' : 'Add attendees';
+    shareButton.addEventListener('click', () => window.location.assign(`/edit?id=${encodeURIComponent(gig.id)}`));
     const setlist = card.querySelector('.setlist');
     const exports = card.querySelector('.exports');
     if (gig.songs?.length) {
@@ -1401,6 +1490,15 @@ function renderGigs() {
     });
     gigList.append(card);
   }
+  const orderedRemoteShows = [...remoteFiltered].sort((a, b) => sort === 'oldest' ? a.date.localeCompare(b.date) : sort === 'rating' ? Math.max(...b.contributions.map((entry) => Number(entry.performanceRating || 0))) - Math.max(...a.contributions.map((entry) => Number(entry.performanceRating || 0))) : b.date.localeCompare(a.date));
+  for (const show of orderedRemoteShows) gigList.append(renderRemoteSharedGig(show));
+  const cards = [...gigList.children].sort((a, b) => sort === 'oldest'
+    ? a.dataset.showDate.localeCompare(b.dataset.showDate)
+    : sort === 'rating'
+      ? Number(b.dataset.showRating || 0) - Number(a.dataset.showRating || 0) || b.dataset.showDate.localeCompare(a.dataset.showDate)
+      : Number(b.dataset.showFavorite || 0) - Number(a.dataset.showFavorite || 0) || b.dataset.showDate.localeCompare(a.dataset.showDate));
+  gigList.append(...cards);
+  if (window.location.hash.startsWith('#shared-')) requestAnimationFrame(() => document.querySelector(window.location.hash)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
 }
 
 function renderCityPage() {
@@ -1416,7 +1514,7 @@ function populateYearFilter() {
   if (!yearFilter) return;
   const selected = yearFilter.value;
   yearFilter.replaceChildren(new Option('All years', ''));
-  [...new Set(gigs.map((gig) => gig.date.slice(0, 4)))].sort().reverse().forEach((year) => yearFilter.add(new Option(year, year)));
+  [...new Set([...gigs, ...remoteSharedArchiveShows()].map((gig) => gig.date.slice(0, 4)).filter(Boolean))].sort().reverse().forEach((year) => yearFilter.add(new Option(year, year)));
   yearFilter.value = selected;
 }
 
@@ -1562,6 +1660,7 @@ copyPlaylist.addEventListener('click', async () => {
 });
 
 async function initializeApp() {
+  if (page === 'shared') { window.location.replace('/shows'); return; }
   const auth = await fetchJson('/api/auth/status');
   account = auth.account;
   if (accountForm && account) accountForm.elements.name.value = account.name;
@@ -1599,6 +1698,10 @@ async function initializeApp() {
     await renderVenueEditPage();
     renderEditPage();
     if (page === 'map' && loadMapButton) loadMapButton.click();
+    if (account) {
+      await loadPeerNotifications();
+      peerPollTimer = setTimeout(pollConnectedPeers, 5_000);
+    }
 }
 
 initializeApp().catch((error) => setMessage(error.message, true));

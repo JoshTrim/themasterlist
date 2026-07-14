@@ -212,6 +212,27 @@ body[data-page="shows"] h1, body[data-page="shows"] h2, body[data-page="shows"] 
 .job-queue { position: fixed; z-index: 2000; right: 16px; bottom: 16px; width: min(340px, calc(100vw - 32px)); padding: 12px; border: 1px solid #ff2d9b; background: #12071f; box-shadow: 0 0 20px rgba(255,45,155,.4); }
 .job-queue[hidden] { display: none; }
 .job-queue .eyebrow { margin: 0 0 8px; }
+.peer-notifications { position: fixed; z-index: 2100; top: 88px; right: 16px; width: min(360px, calc(100vw - 32px)); padding: 12px; border: 2px solid #ff2d9b; background: #12071f; box-shadow: 6px 6px 0 #42105d, 0 0 24px rgba(255,45,155,.45); }
+.peer-notifications[hidden] { display: none; }
+.peer-notifications > .eyebrow { margin: 0 0 9px; color: #ff82c8; }
+.peer-notification-list { display: grid; gap: 8px; }
+.peer-notification { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; padding: 9px; border: 1px solid #7422a0; background: #210b35; }
+.peer-notification a { min-width: 0; color: #efd7f6; text-decoration: none; }
+.peer-notification strong, .peer-notification span { display: block; }
+.peer-notification strong { color: #ff82c8; font: 9px/1.5 "Press Start 2P", monospace; }
+.peer-notification span { margin-top: 5px; color: #d6a9e2; font-size: 15px; }
+.peer-notification button { cursor: pointer; padding: 0 4px; border: 0; background: transparent; color: #ff82c8; font: 22px/1 "VT323", monospace; }
+.remote-shared-gig { position: relative; border-color: #8d4cff; background: linear-gradient(135deg, rgba(40, 12, 64, .38), rgba(13, 7, 24, .2)); }
+.remote-shared-gig::before { content: "Peer shared"; position: absolute; top: 7px; right: 7px; padding: 4px 6px; border: 1px solid #ff2d9b; background: #210b35; color: #ff82c8; font: 7px "Press Start 2P", monospace; }
+.remote-shared-gig .heart-toggle:disabled { color: #ff82c8; opacity: .8; }
+.remote-rating { color: #d6a9e2; font-size: 15px; }
+.remote-rating b { color: #ff82c8; }
+.remote-contributions { grid-column: 2 / -1; }
+.peer-contribution-summary { margin-top: 12px; color: #d6a9e2; }
+.peer-contribution-summary summary { cursor: pointer; width: max-content; color: #ff82c8; font: 9px "Press Start 2P", monospace; }
+.peer-contribution-summary div { display: grid; gap: 3px; margin-top: 9px; padding-left: 10px; border-left: 2px solid #7422a0; }
+.peer-contribution-summary strong { color: #efd7f6; font-size: 15px; }
+.peer-contribution-summary span, .peer-contribution-summary small { color: #d6a9e2; font-size: 14px; }
 .job-entry { padding: 7px 0; border-top: 1px solid #3b1953; color: #efd7f6; font: 14px "VT323", monospace; }
 .job-entry div:first-child { display: flex; justify-content: space-between; gap: 8px; }
 .job-entry strong { color: #ff82c8; font-size: 12px; }
@@ -310,6 +331,7 @@ body[data-page="login"] .shared-section > .shared-list { display: none; }
 .peer-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .peer-card button:disabled { cursor: not-allowed; opacity: .45; }
 @media (max-width: 640px) { .instance-details div { grid-template-columns: 1fr; gap: 3px; }.peer-card { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 640px) { .remote-contributions { grid-column: 1 / -1; }.remote-shared-gig::before { position: static; width: max-content; grid-column: 1 / -1; grid-row: 1; }.peer-notifications { top: 76px; } }
 body[data-page="login"] .auth-panel { max-width: 460px; margin: 12vh auto; padding: 28px; border: 1px solid #7422a0; background: rgba(29, 18, 48, .8); box-shadow: 0 0 24px rgba(255, 45, 155, .25); }
 @media (max-width: 640px) { body[data-page="playback"] .show-detail-header > div { display: block; } body[data-page="playback"] .show-detail-header .show-detail-place, body[data-page="playback"] .show-detail-header .show-detail-date { margin-top: 6px; } }
 @media (max-width: 640px) { .artist-profile { grid-template-columns: 1fr; padding: 20px; gap: 24px; }.artist-image { max-height: 300px; } }
