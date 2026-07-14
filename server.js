@@ -271,9 +271,13 @@ async function writeGigs(gigs) {
       performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, created_at)
     VALUES (@id, @artist, @venue, @city, @date, @notes, @performanceNotes, @venueNotes,
       @performanceRating, @venueRating, @favorite, @setlistFmId, @setlistFmUrl, @songs, @createdAt)
+    ON CONFLICT(id) DO UPDATE SET
+      artist = excluded.artist, venue = excluded.venue, city = excluded.city, date = excluded.date,
+      notes = excluded.notes, performance_notes = excluded.performance_notes, venue_notes = excluded.venue_notes,
+      performance_rating = excluded.performance_rating, venue_rating = excluded.venue_rating, favorite = excluded.favorite,
+      setlist_fm_id = excluded.setlist_fm_id, setlist_fm_url = excluded.setlist_fm_url, songs = excluded.songs
   `);
   const replace = database.transaction((records) => {
-    database.exec('DELETE FROM gigs');
     for (const gig of records) insert.run({
       ...gig,
       notes: gig.notes || '',
@@ -887,7 +891,9 @@ async function searchYouTubeForGig(gig) {
     }
   }
   for (const [index, song] of gig.songs.entries()) {
-    const cacheKey = `${gig.id}:${index}:${gig.artist}:${gig.venue}:${gig.date || ''}`;
+    // Include the embed check in the cache version so older cached results
+    // cannot reintroduce videos that YouTube reports as non-embeddable.
+    const cacheKey = `${gig.id}:${index}:${gig.artist}:${gig.venue}:${gig.date || ''}:embed-v2`;
     const cached = database.prepare('SELECT results, created_at AS createdAt FROM youtube_search_cache WHERE cache_key = ?').get(cacheKey);
     if (cached && Date.now() - Date.parse(cached.createdAt) < 24 * 60 * 60 * 1000) {
       matches.push({ index, title: song.title, results: JSON.parse(cached.results) });
@@ -900,7 +906,14 @@ async function searchYouTubeForGig(gig) {
       const text = `${item.snippet?.title || ''} ${item.snippet?.description || ''}`.toLowerCase();
       return (venueNeedle && text.includes(venueNeedle)) || dateNeedles.some((needle) => text.includes(needle));
     });
-    const results = filtered.slice(0, 3).map((item) => ({ id: item.id.videoId, title: item.snippet?.title || '', channel: item.snippet?.channelTitle || '', thumbnail: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url || '' }));
+    const candidateIds = filtered.map((item) => item.id.videoId).slice(0, 50);
+    let embeddableIds = new Set();
+    if (candidateIds.length) {
+      const statusQuery = new URLSearchParams({ part: 'status', id: candidateIds.join(',') });
+      const statusResult = await providerResponse(`https://www.googleapis.com/youtube/v3/videos?${statusQuery}`, { headers }, 'YouTube video status');
+      embeddableIds = new Set((statusResult.items || []).filter((item) => item.status?.embeddable === true).map((item) => item.id));
+    }
+    const results = filtered.filter((item) => embeddableIds.has(item.id.videoId)).slice(0, 3).map((item) => ({ id: item.id.videoId, title: item.snippet?.title || '', channel: item.snippet?.channelTitle || '', thumbnail: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url || '' }));
     database.prepare('INSERT INTO youtube_search_cache (cache_key, results, created_at) VALUES (?, ?, ?) ON CONFLICT(cache_key) DO UPDATE SET results = excluded.results, created_at = excluded.created_at').run(cacheKey, JSON.stringify(results), new Date().toISOString());
     matches.push({ index, title: song.title, results });
   }
@@ -1277,8 +1290,20 @@ async function handleApi(request, response, url) {
       songs: Array.isArray(gig.songs) ? gig.songs : [],
       createdAt: new Date().toISOString()
     };
-    gigs.push(record);
-    await writeGigs(gigs);
+    database.prepare(`
+      INSERT INTO gigs (id, artist, venue, city, date, notes, performance_notes, venue_notes,
+        performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, created_at)
+      VALUES (@id, @artist, @venue, @city, @date, @notes, @performanceNotes, @venueNotes,
+        @performanceRating, @venueRating, @favorite, @setlistFmId, @setlistFmUrl, @songs, @createdAt)
+    `).run({
+      ...record,
+      performanceRating: record.performanceRating ?? null,
+      venueRating: record.venueRating ?? null,
+      favorite: record.favorite ? 1 : 0,
+      setlistFmId: record.setlistFmId || null,
+      setlistFmUrl: record.setlistFmUrl || null,
+      songs: JSON.stringify(record.songs || [])
+    });
     return sendJson(response, 201, record);
   }
 
@@ -1435,7 +1460,11 @@ async function handleApi(request, response, url) {
     if ('venueRating' in update) gig.venueRating = normaliseRating(update.venueRating);
     if ('performanceNotes' in update) gig.performanceNotes = String(update.performanceNotes || '').trim();
     if ('venueNotes' in update) gig.venueNotes = String(update.venueNotes || '').trim();
-    await writeGigs(gigs);
+    database.prepare(`UPDATE gigs SET artist = ?, venue = ?, city = ?, date = ?, songs = ?, favorite = ?,
+      performance_rating = ?, venue_rating = ?, performance_notes = ?, venue_notes = ?, notes = ? WHERE id = ?`).run(
+      gig.artist, gig.venue, gig.city, gig.date, JSON.stringify(gig.songs || []), gig.favorite ? 1 : 0,
+      gig.performanceRating ?? null, gig.venueRating ?? null, gig.performanceNotes || '', gig.venueNotes || '', gig.notes || '', gig.id
+    );
     return sendJson(response, 200, gig);
   }
 
@@ -1443,7 +1472,7 @@ async function handleApi(request, response, url) {
     const gigs = await readGigs();
     const remaining = gigs.filter((gig) => gig.id !== gigMatch[1]);
     if (remaining.length === gigs.length) return sendError(response, 404, 'Gig not found');
-    await writeGigs(remaining);
+    database.prepare('DELETE FROM gigs WHERE id = ?').run(gigMatch[1]);
     return sendJson(response, 200, { ok: true });
   }
 

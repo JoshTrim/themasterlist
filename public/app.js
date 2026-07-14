@@ -117,6 +117,7 @@ const editForm = document.querySelector('#edit-form');
 const editMessage = document.querySelector('#edit-message');
 const editMediaInput = document.querySelector('#edit-media-input');
 const pendingMedia = new WeakMap();
+const selectedMediaIds = new Set();
 const mobileUploadStates = new WeakMap();
 const mobileUploadRenderTimers = new WeakMap();
 const isMobileUpload = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
@@ -511,9 +512,28 @@ function mediaRecognitionMarkup(item, songs = []) {
 function renderMediaGallery(container, media = [], { editable = false, songs = [] } = {}) {
   container.replaceChildren();
   if (!media.length) return;
-      container.innerHTML = media.map((item, index) => `<figure class="media-item${item.isCover ? ' is-cover' : ''}" data-media-id="${item.id}">${item.mimeType === 'video/youtube' ? `<iframe src="${youtubeEmbedUrl(item.url)}" title="${escapeHtml(item.caption || 'YouTube video')}" loading="lazy" allowfullscreen></iframe>` : item.mimeType.startsWith('video/') ? `<video src="${item.url}" controls preload="${isMobileUpload ? 'none' : 'metadata'}"></video>` : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" style="transform:rotate(${item.rotation || 0}deg)" /></button>`}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${mediaRecognitionMarkup(item, songs)}${editable ? `<div class="media-actions"><button type="button" class="media-menu-toggle" aria-expanded="false">⋮ Options</button><div class="media-action-menu" hidden>${songs.length ? `<label class="media-song-label">Setlist track${item.recognitionOverride ? ' · manual override' : ''}<select class="media-song-select"><option value="">Unassigned</option>${songs.map((song, songIndex) => `<option value="${songIndex}" ${item.songIndex === songIndex ? 'selected' : ''}>${songIndex + 1}. ${escapeHtml(song.title)}</option>`).join('')}</select></label>` : ''}<button class="media-caption" type="button">Caption</button><button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button>${item.mimeType.startsWith('video/') && item.mimeType !== 'video/youtube' ? '<button type="button" class="media-trim">Trim video</button><button type="button" class="media-rotate media-rotate-cw">↻ Clockwise</button><button type="button" class="media-rotate media-rotate-ccw">↺ Counter-clockwise</button>' : ''}<button type="button" class="media-delete">Delete</button><button type="button" class="media-up" ${index === 0 ? 'disabled' : ''}>↑ Move earlier</button><button type="button" class="media-down" ${index === media.length - 1 ? 'disabled' : ''}>↓ Move later</button></div></div>` : ''}</figure>`).join('');
+      for (const id of [...selectedMediaIds]) if (!media.some((item) => item.id === id)) selectedMediaIds.delete(id);
+      const selectedCount = media.filter((item) => selectedMediaIds.has(item.id)).length;
+      container.innerHTML = `${editable && selectedCount ? `<div class="media-bulk-actions"><span>${selectedCount} selected</span><button type="button" class="media-bulk-delete">Remove selected</button><button type="button" class="media-bulk-clear">Clear</button></div>` : ''}${media.map((item, index) => `<figure class="media-item${item.isCover ? ' is-cover' : ''}${selectedMediaIds.has(item.id) ? ' is-selected' : ''}" data-media-id="${item.id}">${editable ? `<button type="button" class="media-delete-corner" aria-label="${selectedMediaIds.has(item.id) ? 'Deselect media' : 'Select media for removal'}" title="${selectedMediaIds.has(item.id) ? 'Deselect media' : 'Select media for removal'}" aria-pressed="${selectedMediaIds.has(item.id)}">×</button>` : ''}${item.mimeType === 'video/youtube' ? `<iframe src="${youtubeEmbedUrl(item.url)}" title="${escapeHtml(item.caption || 'YouTube video')}" loading="lazy" allowfullscreen></iframe>` : item.mimeType.startsWith('video/') ? `<video src="${item.url}" controls preload="${isMobileUpload ? 'none' : 'metadata'}"></video>` : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" style="transform:rotate(${item.rotation || 0}deg)" /></button>`}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${mediaRecognitionMarkup(item, songs)}${editable ? `<div class="media-actions"><button type="button" class="media-menu-toggle" aria-expanded="false">⋮ Options</button><div class="media-action-menu" hidden>${songs.length ? `<label class="media-song-label">Setlist track${item.recognitionOverride ? ' · manual override' : ''}<select class="media-song-select"><option value="">Unassigned</option>${songs.map((song, songIndex) => `<option value="${songIndex}" ${item.songIndex === songIndex ? 'selected' : ''}>${songIndex + 1}. ${escapeHtml(song.title)}</option>`).join('')}</select></label>` : ''}<button class="media-caption" type="button">Caption</button><button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button>${item.mimeType.startsWith('video/') && item.mimeType !== 'video/youtube' ? '<button type="button" class="media-trim">Trim video</button><button type="button" class="media-rotate media-rotate-cw">↻ Clockwise</button><button type="button" class="media-rotate media-rotate-ccw">↺ Counter-clockwise</button>' : ''}<button type="button" class="media-up" ${index === 0 ? 'disabled' : ''}>↑ Move earlier</button><button type="button" class="media-down" ${index === media.length - 1 ? 'disabled' : ''}>↓ Move later</button></div></div>` : ''}</figure>`).join('')}`;
   container.querySelectorAll('.media-open').forEach((button, index) => button.addEventListener('click', () => openMediaLightbox(media[index])));
   if (editable) {
+    container.querySelectorAll('.media-delete-corner').forEach((button) => button.addEventListener('click', async () => {
+      const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
+      if (!item) return;
+      if (selectedMediaIds.has(item.id)) selectedMediaIds.delete(item.id); else selectedMediaIds.add(item.id);
+      renderMediaGallery(container, media, { editable: true, songs });
+    }));
+    container.querySelector('.media-bulk-clear')?.addEventListener('click', () => { selectedMediaIds.clear(); renderMediaGallery(container, media, { editable: true, songs }); });
+    container.querySelector('.media-bulk-delete')?.addEventListener('click', async (event) => {
+      const selected = media.filter((item) => selectedMediaIds.has(item.id));
+      if (!selected.length || !confirm(`Remove ${selected.length} selected media item${selected.length === 1 ? '' : 's'}?`)) return;
+      event.currentTarget.disabled = true;
+      try {
+        await Promise.all(selected.map((item) => fetchJson(`/api/media/${item.id}`, { method: 'DELETE' })));
+        selected.forEach((item) => { selectedMediaIds.delete(item.id); media.splice(media.indexOf(item), 1); });
+        renderMediaGallery(container, media, { editable: true, songs });
+      } catch (error) { event.currentTarget.disabled = false; event.currentTarget.textContent = error.message; }
+    });
     container.querySelectorAll('.media-song-select').forEach((select) => select.addEventListener('change', async () => {
       const item = media.find((entry) => entry.id === select.closest('.media-item').dataset.mediaId);
       const value = select.value === '' ? null : Number(select.value);
@@ -541,12 +561,6 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
       await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isCover: true }) });
       media.forEach((entry) => { entry.isCover = entry.id === item.id; }); renderMediaGallery(container, media, { editable: true, songs });
-    }));
-    container.querySelectorAll('.media-delete').forEach((button) => button.addEventListener('click', async () => {
-      const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
-      if (!confirm('Delete this memory?')) return;
-      await fetchJson(`/api/media/${item.id}`, { method: 'DELETE' });
-      media.splice(media.indexOf(item), 1); renderMediaGallery(container, media, { editable: true, songs });
     }));
     container.querySelectorAll('.media-trim').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
