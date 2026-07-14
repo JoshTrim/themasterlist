@@ -432,7 +432,28 @@ async function renderInstanceSettings() {
       peerInviteToken.value = inviteFromUrl;
       if (peerInviteMessage) peerInviteMessage.textContent = 'Pairing invite loaded. Accept it to add this peer.';
     }
-    peerList.innerHTML = instance.peers?.length ? instance.peers.map((peer) => `<article class="peer-card" data-peer-id="${escapeHtml(peer.id)}"><div><strong>${escapeHtml(peer.name)}</strong><small>${escapeHtml(peer.baseUrl || 'Direct relay/VPN connection not configured')}</small></div><button type="button" class="peer-remove">Remove</button></article>`).join('') : '<p class="shared-message">No paired instances yet.</p>';
+    peers = instance.peers || [];
+    peerList.innerHTML = peers.length ? peers.map((peer) => `<article class="peer-card" data-peer-id="${escapeHtml(peer.id)}"><div class="peer-card-copy"><strong>${escapeHtml(peer.name)}</strong><small>${escapeHtml(peer.baseUrl || 'Direct relay/VPN connection not configured')}</small><span class="peer-status peer-status-${escapeHtml(peer.status || 'paired')}">${escapeHtml(peer.status || 'paired')}${peer.lastSeenAt ? ` · seen ${escapeHtml(new Date(peer.lastSeenAt).toLocaleString())}` : ''}</span></div><div class="peer-actions"><button type="button" class="peer-test" ${peer.baseUrl ? '' : 'disabled'}>Test</button><button type="button" class="peer-sync" ${peer.baseUrl ? '' : 'disabled'}>Sync now</button><button type="button" class="peer-remove">Remove</button></div></article>`).join('') : '<p class="shared-message">No paired instances yet.</p>';
+    peerList.querySelectorAll('.peer-test, .peer-sync').forEach((button) => button.addEventListener('click', async () => {
+      const card = button.closest('.peer-card');
+      const action = button.classList.contains('peer-sync') ? 'sync' : 'test';
+      button.disabled = true;
+      const original = button.textContent;
+      button.textContent = action === 'sync' ? 'Syncing…' : 'Testing…';
+      try {
+        const result = await fetchJson(`/api/peers/${encodeURIComponent(card.dataset.peerId)}/${action}`, { method: 'POST' });
+        peerMessage.textContent = action === 'sync' ? `Sync complete · sent ${result.sent}, received ${result.received}, applied ${result.applied}.` : `Connected to ${result.name}.`;
+        peerMessage.classList.remove('error');
+        if (action === 'sync') {
+          gigs = await fetchJson('/api/gigs');
+          populateYearFilter();
+          renderGigs();
+          await refreshCollaboration();
+        }
+        await renderInstanceSettings();
+      } catch (error) { peerMessage.textContent = error.message; peerMessage.classList.add('error'); await renderInstanceSettings(); }
+      finally { button.disabled = false; button.textContent = original; }
+    }));
     peerList.querySelectorAll('.peer-remove').forEach((button) => button.addEventListener('click', async () => {
       const card = button.closest('.peer-card');
       if (!confirm(`Remove ${card.querySelector('strong').textContent} as a paired instance?`)) return;
@@ -1011,8 +1032,10 @@ function renderProfiles() {
 function renderSharedShows() {
   sharedList.replaceChildren();
   const localShared = gigs.filter((gig) => attendeeNames(gig).length > 1);
-  const legacyShows = sharedShows.filter((show) => !localShared.some((gig) => gig.id === show.sourceGigId));
-  const totalShared = localShared.length + legacyShows.length;
+  const localSharedIds = new Set(localShared.flatMap((gig) => [gig.id, gig.sharedId].filter(Boolean)));
+  const syncedRemoteShows = sharedShows.filter((show) => show.contributions?.length && !localSharedIds.has(show.id) && !localSharedIds.has(show.sourceGigId));
+  const legacyShows = sharedShows.filter((show) => !show.contributions?.length && !localSharedIds.has(show.id) && !localSharedIds.has(show.sourceGigId));
+  const totalShared = localShared.length + syncedRemoteShows.length + legacyShows.length;
   setSharedMessage(totalShared ? `${totalShared} shared show${totalShared === 1 ? '' : 's'} in this instance.` : 'Add attendees to a show to start a collaborative record.');
   if (localShared.length) {
     const heading = document.createElement('p');
@@ -1023,6 +1046,8 @@ function renderSharedShows() {
       const card = document.createElement('article');
       card.className = 'shared-card local-shared-card';
       const names = attendeeNames(gig);
+      const syncedShow = sharedShows.find((show) => show.id === gig.sharedId || show.sourceGigId === gig.id);
+      const contributions = syncedShow?.contributions || [];
       card.innerHTML = `<div class="shared-card-header"><div><p class="shared-date"></p><h3></h3><p class="shared-place"></p></div><span class="shared-song-count"></span></div><div class="shared-people"></div><div class="local-shared-attendees"></div><div class="local-shared-meta"></div><div class="local-shared-actions"><a class="button button-secondary" href="/show?id=${encodeURIComponent(gig.id)}">Open show</a><a class="button button-secondary" href="/edit?id=${encodeURIComponent(gig.id)}">Edit attendees</a></div>`;
       card.querySelector('.shared-date').textContent = formatGigDate(gig.date);
       card.querySelector('h3').textContent = gig.artist;
@@ -1031,14 +1056,38 @@ function renderSharedShows() {
       card.querySelector('.shared-people').innerHTML = `<span>Attendees</span>${names.map((name) => `<b>${escapeHtml(name)}</b>`).join('')}`;
       card.querySelector('.local-shared-attendees').innerHTML = (gig.attendees || []).map((person) => {
         const isLocal = person.id === account?.id;
-        const detail = isLocal
-          ? `${gig.performanceRating ? `Performance ${gig.performanceRating}/5` : 'Performance unrated'} · ${gig.venueRating ? `Venue ${gig.venueRating}/5` : 'Venue unrated'}${gig.favorite ? ' · Favourite' : ''}`
-          : 'Peer contribution will appear after sync';
-        return `<div><strong>${escapeHtml(person.name || 'Attendee')}</strong><span>${escapeHtml(detail)}</span></div>`;
+        const contribution = contributions.find((entry) => isLocal ? entry.localGigId === gig.id : entry.instanceId === person.id);
+        const detail = contribution
+          ? `${contribution.performanceRating ? `Performance ${contribution.performanceRating}/5` : 'Performance unrated'} · ${contribution.venueRating ? `Venue ${contribution.venueRating}/5` : 'Venue unrated'}${contribution.favorite ? ' · Favourite' : ''} · ${contribution.media?.length || 0} media`
+          : isLocal ? `${gig.performanceRating ? `Performance ${gig.performanceRating}/5` : 'Performance unrated'} · ${gig.venueRating ? `Venue ${gig.venueRating}/5` : 'Venue unrated'}${gig.favorite ? ' · Favourite' : ''}` : 'Peer contribution will appear after sync';
+        const notes = contribution?.performanceNotes || contribution?.venueNotes;
+        return `<div><strong>${escapeHtml(contribution?.participantName || person.name || 'Attendee')}</strong><span>${escapeHtml(detail)}</span>${notes ? `<small>${escapeHtml(notes)}</small>` : ''}</div>`;
       }).join('');
-      const rating = gig.performanceRating ? `Your performance rating: ${gig.performanceRating} / 5` : 'Your performance rating: unrated';
-      const venueRating = gig.venueRating ? `Venue: ${gig.venueRating} / 5` : 'Venue: unrated';
-      card.querySelector('.local-shared-meta').textContent = `${rating} · ${venueRating} · ${gig.media?.length || 0} media item${gig.media?.length === 1 ? '' : 's'} available here`;
+      const performanceRatings = contributions.map((entry) => Number(entry.performanceRating)).filter(Boolean);
+      const venueRatings = contributions.map((entry) => Number(entry.venueRating)).filter(Boolean);
+      const mediaTotal = contributions.length ? contributions.reduce((sum, entry) => sum + (entry.media?.length || 0), 0) : gig.media?.length || 0;
+      const performanceAverage = performanceRatings.length ? `Performance average ${(performanceRatings.reduce((sum, value) => sum + value, 0) / performanceRatings.length).toFixed(1)} / 5` : 'Performance unrated';
+      const venueAverage = venueRatings.length ? `Venue average ${(venueRatings.reduce((sum, value) => sum + value, 0) / venueRatings.length).toFixed(1)} / 5` : 'Venue unrated';
+      card.querySelector('.local-shared-meta').textContent = `${performanceAverage} · ${venueAverage} · ${mediaTotal} media item${mediaTotal === 1 ? '' : 's'} across attendees`;
+      sharedList.append(card);
+    }
+  }
+  if (syncedRemoteShows.length) {
+    const heading = document.createElement('p');
+    heading.className = 'eyebrow shared-list-heading';
+    heading.textContent = 'Received from peers';
+    sharedList.append(heading);
+    for (const show of syncedRemoteShows) {
+      const card = document.createElement('article');
+      card.className = 'shared-card local-shared-card';
+      const mediaTotal = show.contributions.reduce((sum, entry) => sum + (entry.media?.length || 0), 0);
+      card.innerHTML = `<div class="shared-card-header"><div><p class="shared-date"></p><h3></h3><p class="shared-place"></p></div><span class="shared-song-count"></span></div><div class="local-shared-attendees"></div><div class="local-shared-meta"></div>`;
+      card.querySelector('.shared-date').textContent = formatGigDate(show.date);
+      card.querySelector('h3').textContent = show.artist;
+      card.querySelector('.shared-place').textContent = `${show.venue} · ${show.city}`;
+      card.querySelector('.shared-song-count').textContent = show.songs?.length ? `${show.songs.length} songs` : 'No setlist yet';
+      card.querySelector('.local-shared-attendees').innerHTML = show.contributions.map((entry) => `<div><strong>${escapeHtml(entry.participantName || 'Peer')}</strong><span>${entry.performanceRating ? `Performance ${entry.performanceRating}/5` : 'Performance unrated'} · ${entry.venueRating ? `Venue ${entry.venueRating}/5` : 'Venue unrated'}${entry.favorite ? ' · Favourite' : ''} · ${entry.media?.length || 0} media</span>${entry.performanceNotes || entry.venueNotes ? `<small>${escapeHtml(entry.performanceNotes || entry.venueNotes)}</small>` : ''}</div>`).join('');
+      card.querySelector('.local-shared-meta').textContent = `${mediaTotal} media item${mediaTotal === 1 ? '' : 's'} listed across synced instances`;
       sharedList.append(card);
     }
   }
@@ -1163,9 +1212,9 @@ importPeerInvite?.addEventListener('click', async () => {
   try {
     let token = value;
     try { const parsed = new URL(value); token = parsed.searchParams.get('peerInvite') || value; } catch {}
-    await fetchJson('/api/peers/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+    const result = await fetchJson('/api/peers/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
     peerInviteToken.value = '';
-    peerInviteMessage.textContent = 'Peer paired successfully.';
+    peerInviteMessage.textContent = result.message || 'Peer paired successfully.';
     peerInviteMessage.classList.remove('error');
     await renderInstanceSettings();
   } catch (error) { peerInviteMessage.textContent = error.message; peerInviteMessage.classList.add('error'); }

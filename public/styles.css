@@ -272,6 +272,7 @@ body[data-page="login"] .shared-section > .shared-list { display: none; }
 .local-shared-attendees div { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
 .local-shared-attendees strong { color: #efd7f6; font: 11px "Press Start 2P", monospace; }
 .local-shared-attendees span { color: #d6a9e2; font-size: 13px; }
+.local-shared-attendees small { flex-basis: 100%; margin-left: 0; color: #b992c8; font-size: 14px; }
 .local-shared-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .instance-settings { margin-top: 42px; padding-top: 28px; border-top: 1px solid #7422a0; }
 .instance-settings h2 { margin: 0; font-size: 20px; }
@@ -302,6 +303,12 @@ body[data-page="login"] .shared-section > .shared-list { display: none; }
 .peer-card strong { display: block; color: #fff0fb; }
 .peer-card small { color: #caa5d8; }
 .peer-card button { flex: 0 0 auto; padding: 5px 8px; border: 1px solid #ff5ab6; background: transparent; color: #ff82c8; font: 12px "VT323", monospace; cursor: pointer; }
+.peer-card-copy { min-width: 0; }
+.peer-status { display: block; margin-top: 5px; color: #caa5d8; font-size: 13px; text-transform: uppercase; }
+.peer-status-connected { color: #7fffb2; }
+.peer-status-unreachable { color: #ff8fbf; }
+.peer-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.peer-card button:disabled { cursor: not-allowed; opacity: .45; }
 @media (max-width: 640px) { .instance-details div { grid-template-columns: 1fr; gap: 3px; }.peer-card { align-items: flex-start; flex-direction: column; } }
 body[data-page="login"] .auth-panel { max-width: 460px; margin: 12vh auto; padding: 28px; border: 1px solid #7422a0; background: rgba(29, 18, 48, .8); box-shadow: 0 0 24px rgba(255, 45, 155, .25); }
 @media (max-width: 640px) { body[data-page="playback"] .show-detail-header > div { display: block; } body[data-page="playback"] .show-detail-header .show-detail-place, body[data-page="playback"] .show-detail-header .show-detail-date { margin-top: 6px; } }

@@ -159,6 +159,9 @@ database.pragma('foreign_keys = ON');
 addColumnIfMissing('profiles', 'password_hash', 'TEXT');
 addColumnIfMissing('profiles', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('gigs', 'attendees', "TEXT NOT NULL DEFAULT '[]'");
+addColumnIfMissing('gigs', 'shared_id', 'TEXT');
+database.prepare('UPDATE gigs SET shared_id = id WHERE shared_id IS NULL OR shared_id = ?').run('');
+database.exec('CREATE UNIQUE INDEX IF NOT EXISTS gigs_shared_id ON gigs (shared_id)');
 database.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
@@ -306,6 +309,7 @@ const contentTypes = {
 async function readGigs() {
   return database.prepare('SELECT * FROM gigs ORDER BY favorite DESC, date DESC').all().map((row) => ({
     id: row.id,
+    sharedId: row.shared_id || row.id,
     artist: row.artist,
     venue: row.venue,
     city: row.city,
@@ -327,12 +331,12 @@ async function readGigs() {
 
 async function writeGigs(gigs) {
   const insert = database.prepare(`
-    INSERT INTO gigs (id, artist, venue, city, date, notes, performance_notes, venue_notes,
+    INSERT INTO gigs (id, shared_id, artist, venue, city, date, notes, performance_notes, venue_notes,
       performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, attendees, created_at)
-    VALUES (@id, @artist, @venue, @city, @date, @notes, @performanceNotes, @venueNotes,
+    VALUES (@id, @sharedId, @artist, @venue, @city, @date, @notes, @performanceNotes, @venueNotes,
       @performanceRating, @venueRating, @favorite, @setlistFmId, @setlistFmUrl, @songs, @attendees, @createdAt)
     ON CONFLICT(id) DO UPDATE SET
-      artist = excluded.artist, venue = excluded.venue, city = excluded.city, date = excluded.date,
+      shared_id = excluded.shared_id, artist = excluded.artist, venue = excluded.venue, city = excluded.city, date = excluded.date,
       notes = excluded.notes, performance_notes = excluded.performance_notes, venue_notes = excluded.venue_notes,
       performance_rating = excluded.performance_rating, venue_rating = excluded.venue_rating, favorite = excluded.favorite,
       setlist_fm_id = excluded.setlist_fm_id, setlist_fm_url = excluded.setlist_fm_url, songs = excluded.songs, attendees = excluded.attendees
@@ -340,6 +344,7 @@ async function writeGigs(gigs) {
   const replace = database.transaction((records) => {
     for (const gig of records) insert.run({
       ...gig,
+      sharedId: gig.sharedId || gig.id,
       notes: gig.notes || '',
       performanceNotes: gig.performanceNotes || gig.notes || '',
       venueNotes: gig.venueNotes || '',
@@ -644,6 +649,212 @@ function parsePeerInvite(token) {
   return payload;
 }
 
+function signInstanceEnvelope(payload) {
+  const identity = database.prepare('SELECT instance_id, private_key FROM instance_identity WHERE id = 1').get();
+  const signedPayload = {
+    ...payload,
+    originInstanceId: identity.instance_id,
+    issuedAt: new Date().toISOString(),
+    nonce: randomBytes(18).toString('base64url')
+  };
+  const encoded = JSON.stringify(signedPayload);
+  return { payload: signedPayload, signature: signPayload(null, Buffer.from(encoded), identity.private_key).toString('base64url') };
+}
+
+function verifyPeerEnvelope(envelope, expectedPeerId = null) {
+  const payload = envelope?.payload;
+  const originInstanceId = String(payload?.originInstanceId || '').trim();
+  if (!originInstanceId || !envelope?.signature) throw new Error('Signed peer request is incomplete.');
+  if (expectedPeerId && originInstanceId !== expectedPeerId) throw new Error('Peer response came from an unexpected instance.');
+  const peer = database.prepare('SELECT * FROM peer_instances WHERE peer_id = ?').get(originInstanceId);
+  if (!peer) throw new Error('This instance is not paired.');
+  const issuedAt = Date.parse(payload.issuedAt);
+  if (!Number.isFinite(issuedAt) || Math.abs(Date.now() - issuedAt) > 10 * 60 * 1000) throw new Error('Signed peer request has expired.');
+  const valid = verifyPayload(null, Buffer.from(JSON.stringify(payload)), peer.public_key, Buffer.from(envelope.signature, 'base64url'));
+  if (!valid) throw new Error('Peer signature could not be verified.');
+  return { payload, peer };
+}
+
+function verifySelfSignedPairEnvelope(envelope) {
+  const payload = envelope?.payload;
+  if (payload?.type !== 'pair' || !payload.originInstanceId || !payload.publicKey || !payload.name || !envelope?.signature) throw new Error('Pair confirmation is incomplete.');
+  const issuedAt = Date.parse(payload.issuedAt);
+  if (!Number.isFinite(issuedAt) || Math.abs(Date.now() - issuedAt) > 10 * 60 * 1000) throw new Error('Pair confirmation has expired.');
+  if (!verifyPayload(null, Buffer.from(JSON.stringify(payload)), payload.publicKey, Buffer.from(envelope.signature, 'base64url'))) throw new Error('Pair confirmation signature could not be verified.');
+  return payload;
+}
+
+async function confirmPairWithRemote(peer, inviteToken, request) {
+  if (!peer?.base_url) return false;
+  const identity = database.prepare('SELECT instance_id, name, public_key FROM instance_identity WHERE id = 1').get();
+  const envelope = signInstanceEnvelope({
+    type: 'pair',
+    name: identity.name,
+    publicKey: identity.public_key,
+    baseUrl: String(process.env.INSTANCE_URL || appOrigin(request)).replace(/\/$/, '')
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const response = await fetch(`${peer.base_url.replace(/\/$/, '')}/api/sync/pair`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inviteToken, envelope }), signal: controller.signal
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `Peer returned HTTP ${response.status}.`);
+    const verified = verifyPeerEnvelope(body, peer.peer_id).payload;
+    if (verified.requestNonce !== envelope.payload.nonce) throw new Error('Pair confirmation did not match this request.');
+    return true;
+  } finally { clearTimeout(timeout); }
+}
+
+async function postPeerEnvelope(peer, pathname, payload) {
+  if (!peer?.base_url) throw new Error('This peer does not have a connection URL.');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const envelope = signInstanceEnvelope(payload);
+    const response = await fetch(`${peer.base_url.replace(/\/$/, '')}${pathname}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(envelope),
+      signal: controller.signal
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `Peer returned HTTP ${response.status}.`);
+    const verified = verifyPeerEnvelope(body, peer.peer_id).payload;
+    if (verified.requestNonce !== envelope.payload.nonce) throw new Error('Peer response did not match this request.');
+    return verified;
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('Peer connection timed out.');
+    throw error;
+  } finally { clearTimeout(timeout); }
+}
+
+function localParticipantName() {
+  return database.prepare('SELECT name FROM profiles WHERE is_admin = 1 ORDER BY created_at LIMIT 1').get()?.name || instanceRow().name;
+}
+
+function syncMediaManifest(gig) {
+  return (gig.media || []).map((item) => ({
+    id: item.id,
+    filename: item.filename,
+    mimeType: item.mimeType,
+    caption: item.caption || '',
+    size: Number(item.size || 0),
+    checksum: item.checksum || null,
+    externalUrl: item.externalUrl || null,
+    songIndex: item.songIndex ?? null
+  }));
+}
+
+function ensureSharedShowForGig(gig) {
+  const sharedGigId = gig.sharedId || gig.id;
+  database.prepare(`INSERT INTO shared_shows
+    (id, source_gig_id, artist, venue, city, date, setlist_fm_id, setlist_fm_url, songs, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET source_gig_id=COALESCE(shared_shows.source_gig_id, excluded.source_gig_id),
+      artist=excluded.artist, venue=excluded.venue, city=excluded.city, date=excluded.date,
+      setlist_fm_id=excluded.setlist_fm_id, setlist_fm_url=excluded.setlist_fm_url, songs=excluded.songs`).run(
+    sharedGigId, gig.id, gig.artist, gig.venue, gig.city, gig.date, gig.setlistFmId || null, gig.setlistFmUrl || null,
+    JSON.stringify(gig.songs || []), gig.createdAt || new Date().toISOString()
+  );
+  return sharedGigId;
+}
+
+function upsertLocalContribution(gig, updatedAt = new Date().toISOString()) {
+  const sharedGigId = ensureSharedShowForGig(gig);
+  const identity = instanceRow();
+  const media = syncMediaManifest(gig);
+  database.prepare(`INSERT INTO shared_gig_contributions
+    (shared_gig_id, instance_id, local_gig_id, participant_name, performance_rating, venue_rating, favorite, performance_notes, venue_notes, media_manifest, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(shared_gig_id, instance_id) DO UPDATE SET local_gig_id=excluded.local_gig_id,
+      participant_name=excluded.participant_name, performance_rating=excluded.performance_rating,
+      venue_rating=excluded.venue_rating, favorite=excluded.favorite, performance_notes=excluded.performance_notes,
+      venue_notes=excluded.venue_notes, media_manifest=excluded.media_manifest, updated_at=excluded.updated_at`).run(
+    sharedGigId, identity.instanceId, gig.id, localParticipantName(), gig.performanceRating ?? null, gig.venueRating ?? null,
+    gig.favorite ? 1 : 0, gig.performanceNotes || gig.notes || '', gig.venueNotes || '', JSON.stringify(media), updatedAt
+  );
+  return { sharedGigId, contribution: sharedContributionRows(sharedGigId).find((entry) => entry.instanceId === identity.instanceId) };
+}
+
+function localSyncSnapshots(peerId) {
+  const identity = instanceRow();
+  return database.prepare('SELECT id FROM gigs ORDER BY created_at').all().map((row) => findGigSync(row.id)).filter((gig) =>
+    (gig.attendees || []).some((attendee) => attendee.id === peerId)
+  ).map((gig) => {
+    const updatedAt = new Date().toISOString();
+    const { sharedGigId, contribution } = upsertLocalContribution(gig, updatedAt);
+    const attendees = (gig.attendees || []).map((attendee) => attendee.type === 'owner'
+      ? { id: identity.instanceId, type: 'instance', name: localParticipantName() }
+      : { id: attendee.id, type: 'instance', name: attendee.name });
+    const eventPayload = { sharedGigId, instanceId: identity.instanceId, updatedAt, contribution };
+    return {
+      eventId: createHash('sha256').update(JSON.stringify(eventPayload)).digest('hex'),
+      sharedGigId,
+      show: { artist: gig.artist, venue: gig.venue, city: gig.city, date: gig.date, setlistFmId: gig.setlistFmId, setlistFmUrl: gig.setlistFmUrl, songs: gig.songs || [] },
+      attendees,
+      contribution
+    };
+  });
+}
+
+function matchingLocalGig(show) {
+  return database.prepare(`SELECT id, shared_id FROM gigs WHERE lower(artist) = lower(?) AND lower(venue) = lower(?)
+    AND lower(city) = lower(?) AND date = ? ORDER BY created_at LIMIT 1`).get(show.artist, show.venue, show.city, show.date);
+}
+
+function applySyncSnapshot(snapshot, originPeer) {
+  if (!snapshot?.eventId || !snapshot?.sharedGigId || !snapshot?.show || !snapshot?.contribution) return false;
+  if (snapshot.contribution.instanceId !== originPeer.peer_id) throw new Error('Peer contribution identity does not match its signature.');
+  if (database.prepare('SELECT 1 FROM sync_events WHERE event_id = ?').get(snapshot.eventId)) return false;
+  const show = snapshot.show;
+  if (![show.artist, show.venue, show.city].every((value) => typeof value === 'string') || typeof show.date !== 'string') throw new Error('Peer sent an invalid shared show.');
+  let local = database.prepare('SELECT id, shared_id FROM gigs WHERE shared_id = ?').get(snapshot.sharedGigId);
+  if (!local) local = matchingLocalGig(show);
+  if (local && local.shared_id !== snapshot.sharedGigId && !database.prepare('SELECT 1 FROM gigs WHERE shared_id = ?').get(snapshot.sharedGigId)) {
+    database.prepare('UPDATE gigs SET shared_id = ? WHERE id = ?').run(snapshot.sharedGigId, local.id);
+  }
+  const now = new Date().toISOString();
+  database.transaction(() => {
+    database.prepare(`INSERT INTO shared_shows
+      (id, source_gig_id, artist, venue, city, date, setlist_fm_id, setlist_fm_url, songs, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET source_gig_id=COALESCE(shared_shows.source_gig_id, excluded.source_gig_id),
+        artist=excluded.artist, venue=excluded.venue, city=excluded.city, date=excluded.date,
+        setlist_fm_id=excluded.setlist_fm_id, setlist_fm_url=excluded.setlist_fm_url, songs=excluded.songs`).run(
+      snapshot.sharedGigId, local?.id || null, show.artist, show.venue, show.city, show.date,
+      show.setlistFmId || null, show.setlistFmUrl || null, JSON.stringify(Array.isArray(show.songs) ? show.songs : []), now
+    );
+    const contribution = snapshot.contribution;
+    database.prepare(`INSERT INTO shared_gig_contributions
+      (shared_gig_id, instance_id, local_gig_id, participant_name, performance_rating, venue_rating, favorite, performance_notes, venue_notes, media_manifest, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(shared_gig_id, instance_id) DO UPDATE SET participant_name=excluded.participant_name,
+        performance_rating=excluded.performance_rating, venue_rating=excluded.venue_rating, favorite=excluded.favorite,
+        performance_notes=excluded.performance_notes, venue_notes=excluded.venue_notes,
+        media_manifest=excluded.media_manifest, updated_at=excluded.updated_at
+      WHERE excluded.updated_at >= shared_gig_contributions.updated_at`).run(
+      snapshot.sharedGigId, originPeer.peer_id, null, String(contribution.participantName || originPeer.name).slice(0, 100),
+      normaliseRating(contribution.performanceRating), normaliseRating(contribution.venueRating), contribution.favorite ? 1 : 0,
+      String(contribution.performanceNotes || '').slice(0, 20_000), String(contribution.venueNotes || '').slice(0, 20_000), JSON.stringify(Array.isArray(contribution.media) ? contribution.media.slice(0, 500) : []),
+      contribution.updatedAt || now
+    );
+    if (local) {
+      const gigRow = database.prepare('SELECT attendees FROM gigs WHERE id = ?').get(local.id);
+      const attendees = JSON.parse(gigRow?.attendees || '[]');
+      if (!attendees.some((attendee) => attendee.id === originPeer.peer_id)) attendees.push({ id: originPeer.peer_id, type: 'peer', name: originPeer.name });
+      database.prepare('UPDATE gigs SET attendees = ? WHERE id = ?').run(JSON.stringify(attendees), local.id);
+      upsertLocalContribution(findGigSync(local.id), now);
+    }
+    database.prepare('INSERT INTO sync_events (event_id, origin_instance_id, shared_gig_id, event_type, payload, created_at, applied_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      snapshot.eventId, originPeer.peer_id, snapshot.sharedGigId, 'shared-gig.snapshot', JSON.stringify(snapshot), contribution.updatedAt || now, now
+    );
+  })();
+  return true;
+}
+
 function sharedContributionRows(sharedGigId) {
   return database.prepare(`SELECT shared_gig_id AS sharedGigId, instance_id AS instanceId, local_gig_id AS localGigId,
     participant_name AS participantName, performance_rating AS performanceRating, venue_rating AS venueRating,
@@ -696,11 +907,14 @@ function createSharedShow(sourceGigId, profileId) {
   const gig = findGigSync(sourceGigId);
   const existing = database.prepare('SELECT id FROM shared_shows WHERE source_gig_id = ?').get(sourceGigId);
   if (existing) return existing.id;
-  const id = randomUUID();
+  const id = gig.sharedId || gig.id;
   const now = new Date().toISOString();
   database.prepare(`INSERT INTO shared_shows
     (id, source_gig_id, artist, venue, city, date, setlist_fm_id, setlist_fm_url, songs, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET source_gig_id=excluded.source_gig_id, artist=excluded.artist,
+      venue=excluded.venue, city=excluded.city, date=excluded.date, setlist_fm_id=excluded.setlist_fm_id,
+      setlist_fm_url=excluded.setlist_fm_url, songs=excluded.songs`).run(
     id, sourceGigId, gig.artist, gig.venue, gig.city, gig.date, gig.setlistFmId, gig.setlistFmUrl, JSON.stringify(gig.songs || []), now
   );
   database.prepare('INSERT INTO shared_attendees (show_id, profile_id, joined_at) VALUES (?, ?, ?)').run(id, profile.id, now);
@@ -717,12 +931,12 @@ function findGigSync(id) {
   const row = database.prepare('SELECT * FROM gigs WHERE id = ?').get(id);
   if (!row) throw new Error('Gig not found.');
   return {
-    id: row.id, artist: row.artist, venue: row.venue, city: row.city, date: row.date,
+    id: row.id, sharedId: row.shared_id || row.id, artist: row.artist, venue: row.venue, city: row.city, date: row.date,
     setlistFmId: row.setlist_fm_id, setlistFmUrl: row.setlist_fm_url, songs: JSON.parse(row.songs || '[]'),
     attendees: JSON.parse(row.attendees || '[]'),
     notes: row.notes, performanceNotes: row.performance_notes, venueNotes: row.venue_notes,
     performanceRating: row.performance_rating, venueRating: row.venue_rating, favorite: Boolean(row.favorite),
-    media: database.prepare('SELECT id, filename, mime_type AS mimeType, caption, size, external_url AS externalUrl FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id)
+    media: database.prepare('SELECT id, filename, mime_type AS mimeType, caption, size, checksum, external_url AS externalUrl, song_index AS songIndex FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id)
   };
 }
 
@@ -1194,6 +1408,51 @@ async function handleApi(request, response, url) {
     return sendJson(response, 201, { inviteUrl: `${appOrigin(request)}/?invite=${encodeURIComponent(token)}`, expiresAt: expires });
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/sync/pair') {
+    try {
+      const body = await readBody(request);
+      const invite = parsePeerInvite(body.inviteToken);
+      if (invite.peerId !== instanceRow().instanceId) return sendError(response, 400, 'This pairing invite belongs to another instance.');
+      const peer = verifySelfSignedPairEnvelope(body.envelope);
+      if (peer.originInstanceId === instanceRow().instanceId) return sendError(response, 400, 'You cannot pair an instance with itself.');
+      const baseUrl = String(peer.baseUrl || '').trim().replace(/\/$/, '');
+      if (baseUrl) { const parsed = new URL(baseUrl); if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Peer URL is invalid.'); }
+      const now = new Date().toISOString();
+      database.prepare(`INSERT INTO peer_instances (id, peer_id, name, base_url, public_key, status, created_at, last_seen_at)
+        VALUES (?, ?, ?, ?, ?, 'connected', ?, ?)
+        ON CONFLICT(peer_id) DO UPDATE SET name=excluded.name, base_url=excluded.base_url, public_key=excluded.public_key,
+          status='connected', last_seen_at=excluded.last_seen_at`).run(randomUUID(), peer.originInstanceId, peer.name, baseUrl, peer.publicKey, now, now);
+      return sendJson(response, 200, signInstanceEnvelope({ type: 'pair-response', requestNonce: peer.nonce }));
+    } catch (error) { return sendError(response, 400, error.message); }
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/sync/hello') {
+    try {
+      const { payload, peer } = verifyPeerEnvelope(await readBody(request));
+      if (payload.type !== 'hello') return sendError(response, 400, 'Invalid peer health request.');
+      const now = new Date().toISOString();
+      database.prepare("UPDATE peer_instances SET status = 'connected', last_seen_at = ? WHERE peer_id = ?").run(now, peer.peer_id);
+      return sendJson(response, 200, signInstanceEnvelope({ type: 'hello-response', requestNonce: payload.nonce, name: instanceRow().name }));
+    } catch (error) { return sendError(response, 401, error.message); }
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/sync/exchange') {
+    try {
+      const { payload, peer } = verifyPeerEnvelope(await readBody(request));
+      if (payload.type !== 'sync-exchange' || !Array.isArray(payload.snapshots)) return sendError(response, 400, 'Invalid sync exchange.');
+      let applied = 0;
+      for (const snapshot of payload.snapshots.slice(0, 500)) if (applySyncSnapshot(snapshot, peer)) applied += 1;
+      const now = new Date().toISOString();
+      database.prepare("UPDATE peer_instances SET status = 'connected', last_seen_at = ? WHERE peer_id = ?").run(now, peer.peer_id);
+      return sendJson(response, 200, signInstanceEnvelope({
+        type: 'sync-response',
+        requestNonce: payload.nonce,
+        applied,
+        snapshots: localSyncSnapshots(peer.peer_id)
+      }));
+    } catch (error) { return sendError(response, 400, error.message); }
+  }
+
   request.account = accountsConfigured() ? requireAccount(request) : null;
 
   if (request.method === 'GET' && url.pathname === '/api/instance') {
@@ -1220,9 +1479,14 @@ async function handleApi(request, response, url) {
     const now = new Date().toISOString();
     const id = randomUUID();
     database.prepare(`INSERT INTO peer_instances (id, peer_id, name, base_url, public_key, status, created_at, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, 'paired', ?, ?)
-      ON CONFLICT(peer_id) DO UPDATE SET name=excluded.name, base_url=excluded.base_url, public_key=excluded.public_key, status='paired', last_seen_at=excluded.last_seen_at`).run(id, peer.peerId, peer.name, peer.baseUrl || '', peer.publicKey, now, now);
-    return sendJson(response, 201, { peer: peerRows().find((entry) => entry.peerId === peer.peerId), message: 'Peer invite accepted.' });
+      VALUES (?, ?, ?, ?, ?, 'paired', ?, NULL)
+      ON CONFLICT(peer_id) DO UPDATE SET name=excluded.name, base_url=excluded.base_url, public_key=excluded.public_key, status='paired'`).run(id, peer.peerId, peer.name, peer.baseUrl || '', peer.publicKey, now);
+    let confirmed = false;
+    try {
+      confirmed = await confirmPairWithRemote(database.prepare('SELECT * FROM peer_instances WHERE peer_id = ?').get(peer.peerId), body.token, request);
+      if (confirmed) database.prepare("UPDATE peer_instances SET status = 'connected', last_seen_at = ? WHERE peer_id = ?").run(new Date().toISOString(), peer.peerId);
+    } catch { /* The peer may be offline; a later test will report connection state. */ }
+    return sendJson(response, 201, { peer: peerRows().find((entry) => entry.peerId === peer.peerId), message: confirmed ? 'Peer paired on both instances.' : 'Peer saved locally. The remote instance could not be confirmed yet.' });
   }
 
   if (request.method === 'POST' && url.pathname === '/api/peers') {
@@ -1239,9 +1503,36 @@ async function handleApi(request, response, url) {
     const now = new Date().toISOString();
     const id = randomUUID();
     database.prepare(`INSERT INTO peer_instances (id, peer_id, name, base_url, public_key, status, created_at, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, 'paired', ?, ?)
-      ON CONFLICT(peer_id) DO UPDATE SET name=excluded.name, base_url=excluded.base_url, public_key=excluded.public_key, status='paired', last_seen_at=excluded.last_seen_at`).run(id, peerId, name, baseUrl, publicKey, now, now);
+      VALUES (?, ?, ?, ?, ?, 'paired', ?, NULL)
+      ON CONFLICT(peer_id) DO UPDATE SET name=excluded.name, base_url=excluded.base_url, public_key=excluded.public_key, status='paired'`).run(id, peerId, name, baseUrl, publicKey, now);
     return sendJson(response, 201, peerRows().find((peer) => peer.peerId === peerId));
+  }
+
+  const peerActionMatch = url.pathname.match(/^\/api\/peers\/([\w-]+)\/(test|sync)$/);
+  if (request.method === 'POST' && peerActionMatch) {
+    requireAccount(request);
+    const peer = database.prepare('SELECT * FROM peer_instances WHERE id = ?').get(peerActionMatch[1]);
+    if (!peer) return sendError(response, 404, 'Paired instance not found.');
+    if (!peer.base_url) return sendError(response, 400, 'Add a peer URL before testing or syncing this instance.');
+    try {
+      if (peerActionMatch[2] === 'test') {
+        const reply = await postPeerEnvelope(peer, '/api/sync/hello', { type: 'hello' });
+        const now = new Date().toISOString();
+        database.prepare("UPDATE peer_instances SET status = 'connected', last_seen_at = ? WHERE id = ?").run(now, peer.id);
+        return sendJson(response, 200, { ok: true, name: reply.name || peer.name, status: 'connected', lastSeenAt: now });
+      }
+      const snapshots = localSyncSnapshots(peer.peer_id);
+      const reply = await postPeerEnvelope(peer, '/api/sync/exchange', { type: 'sync-exchange', snapshots });
+      if (reply.type !== 'sync-response' || !Array.isArray(reply.snapshots)) throw new Error('Peer returned an invalid sync response.');
+      let applied = 0;
+      for (const snapshot of reply.snapshots.slice(0, 500)) if (applySyncSnapshot(snapshot, peer)) applied += 1;
+      const now = new Date().toISOString();
+      database.prepare("UPDATE peer_instances SET status = 'connected', last_seen_at = ? WHERE id = ?").run(now, peer.id);
+      return sendJson(response, 200, { ok: true, sent: snapshots.length, received: reply.snapshots.length, applied, remoteApplied: Number(reply.applied || 0), lastSeenAt: now });
+    } catch (error) {
+      database.prepare("UPDATE peer_instances SET status = 'unreachable' WHERE id = ?").run(peer.id);
+      return sendError(response, 502, error.message);
+    }
   }
 
   const peerMatch = url.pathname.match(/^\/api\/peers\/([\w-]+)$/);
@@ -1360,9 +1651,9 @@ async function handleApi(request, response, url) {
     requireAccount(request);
     const body = await readBody(request);
     if (!Array.isArray(body.gigs)) return sendError(response, 400, 'Import must contain a gigs array.');
-    const imported = body.gigs.map((gig) => ({ ...gig, id: gig.id || randomUUID(), artist: String(gig.artist || '').trim(), venue: String(gig.venue || '').trim(), city: String(gig.city || '').trim(), date: String(gig.date || '').trim(), songs: Array.isArray(gig.songs) ? gig.songs : [], attendees: normaliseGigAttendees(gig.attendees, request.account), createdAt: gig.createdAt || new Date().toISOString() }));
+    const imported = body.gigs.map((gig) => { const id = gig.id || randomUUID(); return { ...gig, id, sharedId: gig.sharedId || id, artist: String(gig.artist || '').trim(), venue: String(gig.venue || '').trim(), city: String(gig.city || '').trim(), date: String(gig.date || '').trim(), songs: Array.isArray(gig.songs) ? gig.songs : [], attendees: normaliseGigAttendees(gig.attendees, request.account), createdAt: gig.createdAt || new Date().toISOString() }; });
     imported.forEach(validateGig);
-    const importGigs = database.transaction((records) => { const statement = database.prepare(`INSERT INTO gigs (id, artist, venue, city, date, notes, performance_notes, venue_notes, performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, attendees, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET artist=excluded.artist, venue=excluded.venue, city=excluded.city, date=excluded.date, notes=excluded.notes, performance_notes=excluded.performance_notes, venue_notes=excluded.venue_notes, performance_rating=excluded.performance_rating, venue_rating=excluded.venue_rating, favorite=excluded.favorite, setlist_fm_id=excluded.setlist_fm_id, setlist_fm_url=excluded.setlist_fm_url, songs=excluded.songs, attendees=excluded.attendees`); records.forEach((gig) => statement.run(gig.id, gig.artist, gig.venue, gig.city, gig.date, gig.notes || '', gig.performanceNotes || gig.notes || '', gig.venueNotes || '', gig.performanceRating ?? null, gig.venueRating ?? null, gig.favorite ? 1 : 0, gig.setlistFmId || null, gig.setlistFmUrl || null, JSON.stringify(gig.songs || []), JSON.stringify(gig.attendees || []), gig.createdAt)); });
+    const importGigs = database.transaction((records) => { const statement = database.prepare(`INSERT INTO gigs (id, shared_id, artist, venue, city, date, notes, performance_notes, venue_notes, performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, attendees, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET shared_id=excluded.shared_id, artist=excluded.artist, venue=excluded.venue, city=excluded.city, date=excluded.date, notes=excluded.notes, performance_notes=excluded.performance_notes, venue_notes=excluded.venue_notes, performance_rating=excluded.performance_rating, venue_rating=excluded.venue_rating, favorite=excluded.favorite, setlist_fm_id=excluded.setlist_fm_id, setlist_fm_url=excluded.setlist_fm_url, songs=excluded.songs, attendees=excluded.attendees`); records.forEach((gig) => statement.run(gig.id, gig.sharedId, gig.artist, gig.venue, gig.city, gig.date, gig.notes || '', gig.performanceNotes || gig.notes || '', gig.venueNotes || '', gig.performanceRating ?? null, gig.venueRating ?? null, gig.favorite ? 1 : 0, gig.setlistFmId || null, gig.setlistFmUrl || null, JSON.stringify(gig.songs || []), JSON.stringify(gig.attendees || []), gig.createdAt)); });
     importGigs(imported);
     return sendJson(response, 200, { imported: imported.length });
   }
@@ -1460,6 +1751,7 @@ async function handleApi(request, response, url) {
     validateGig(gig);
     const record = {
       id: randomUUID(),
+      sharedId: randomUUID(),
       artist: gig.artist.trim(),
       venue: gig.venue.trim(),
       city: gig.city.trim(),
@@ -1477,9 +1769,9 @@ async function handleApi(request, response, url) {
       createdAt: new Date().toISOString()
     };
     database.prepare(`
-      INSERT INTO gigs (id, artist, venue, city, date, notes, performance_notes, venue_notes,
+      INSERT INTO gigs (id, shared_id, artist, venue, city, date, notes, performance_notes, venue_notes,
         performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, attendees, created_at)
-      VALUES (@id, @artist, @venue, @city, @date, @notes, @performanceNotes, @venueNotes,
+      VALUES (@id, @sharedId, @artist, @venue, @city, @date, @notes, @performanceNotes, @venueNotes,
         @performanceRating, @venueRating, @favorite, @setlistFmId, @setlistFmUrl, @songs, @attendees, @createdAt)
     `).run({
       ...record,
