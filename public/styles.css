@@ -271,6 +271,13 @@ body[data-page="login"] .shared-section > .shared-list { display: none; }
 .instance-details code { color: #c9b2ff; font: 11px "VT323", monospace; }
 .peer-form { display: grid; gap: 12px; max-width: 620px; }
 .peer-form textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.peer-invite-tools { display: grid; gap: 10px; max-width: 620px; padding: 16px; border: 1px solid #5e2a78; background: rgba(18, 7, 31, .7); }
+.peer-invite-tools label { display: grid; gap: 5px; color: #d6a9e2; font-size: 12px; }
+.peer-invite-tools input { width: 100%; box-sizing: border-box; }
+.peer-invite-tools .form-message { min-height: 18px; margin: 0; }
+.peer-manual { max-width: 620px; margin-top: 14px; color: #ff82c8; font-size: 13px; }
+.peer-manual summary { cursor: pointer; }
+.peer-manual .peer-form { margin-top: 14px; }
 .peer-form .form-message { min-height: 18px; margin: 0; }
 .peer-list { display: grid; gap: 8px; margin-top: 24px; }
 .peer-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border: 1px solid #5e2a78; background: #12071f; }

@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const legacyFs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash, generateKeyPairSync } = require('node:crypto');
+const { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash, generateKeyPairSync, sign: signPayload, verify: verifyPayload } = require('node:crypto');
 
 loadEnvFile();
 
@@ -602,6 +602,32 @@ function peerRows() {
   return database.prepare('SELECT id, peer_id AS peerId, name, base_url AS baseUrl, public_key AS publicKey, status, created_at AS createdAt, last_seen_at AS lastSeenAt FROM peer_instances ORDER BY name COLLATE NOCASE').all();
 }
 
+function peerInviteToken(request) {
+  const identity = database.prepare('SELECT instance_id, name, public_key, private_key FROM instance_identity WHERE id = 1').get();
+  const payload = {
+    version: 1,
+    peerId: identity.instance_id,
+    name: identity.name,
+    publicKey: identity.public_key,
+    baseUrl: String(process.env.INSTANCE_URL || appOrigin(request)).replace(/\/$/, ''),
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    nonce: randomBytes(18).toString('base64url')
+  };
+  const encodedPayload = JSON.stringify(payload);
+  const signature = signPayload(null, Buffer.from(encodedPayload), identity.private_key).toString('base64url');
+  return Buffer.from(JSON.stringify({ payload, signature })).toString('base64url');
+}
+
+function parsePeerInvite(token) {
+  let envelope;
+  try { envelope = JSON.parse(Buffer.from(String(token || ''), 'base64url').toString('utf8')); } catch { throw new Error('That pairing invite is not valid.'); }
+  const payload = envelope?.payload;
+  if (!payload?.peerId || !payload?.publicKey || !payload?.name || !payload?.expiresAt || !envelope.signature) throw new Error('That pairing invite is incomplete.');
+  if (Date.parse(payload.expiresAt) <= Date.now()) throw new Error('That pairing invite has expired.');
+  if (!verifyPayload(null, Buffer.from(JSON.stringify(payload)), payload.publicKey, Buffer.from(envelope.signature, 'base64url'))) throw new Error('That pairing invite signature could not be verified.');
+  return payload;
+}
+
 function sharedContributionRows(sharedGigId) {
   return database.prepare(`SELECT shared_gig_id AS sharedGigId, instance_id AS instanceId, local_gig_id AS localGigId,
     participant_name AS participantName, performance_rating AS performanceRating, venue_rating AS venueRating,
@@ -1161,6 +1187,25 @@ async function handleApi(request, response, url) {
   if (request.method === 'GET' && url.pathname === '/api/peers') {
     requireAccount(request);
     return sendJson(response, 200, peerRows());
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/peers/invite') {
+    requireAccount(request);
+    const token = peerInviteToken(request);
+    return sendJson(response, 201, { token, inviteUrl: `${appOrigin(request)}/account?peerInvite=${encodeURIComponent(token)}`, expiresAt: JSON.parse(Buffer.from(token, 'base64url').toString('utf8')).payload.expiresAt });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/peers/import') {
+    requireAccount(request);
+    const body = await readBody(request);
+    const peer = parsePeerInvite(body.token);
+    if (peer.peerId === instanceRow().instanceId) return sendError(response, 400, 'You cannot pair an instance with itself.');
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    database.prepare(`INSERT INTO peer_instances (id, peer_id, name, base_url, public_key, status, created_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, 'paired', ?, ?)
+      ON CONFLICT(peer_id) DO UPDATE SET name=excluded.name, base_url=excluded.base_url, public_key=excluded.public_key, status='paired', last_seen_at=excluded.last_seen_at`).run(id, peer.peerId, peer.name, peer.baseUrl || '', peer.publicKey, now, now);
+    return sendJson(response, 201, { peer: peerRows().find((entry) => entry.peerId === peer.peerId), message: 'Peer invite accepted.' });
   }
 
   if (request.method === 'POST' && url.pathname === '/api/peers') {

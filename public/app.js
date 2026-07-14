@@ -65,6 +65,10 @@ const instancePublicKey = document.querySelector('#instance-public-key');
 const peerForm = document.querySelector('#peer-form');
 const peerMessage = document.querySelector('#peer-message');
 const peerList = document.querySelector('#peer-list');
+const createPeerInvite = document.querySelector('#create-peer-invite');
+const peerInviteMessage = document.querySelector('#peer-invite-message');
+const peerInviteToken = document.querySelector('#peer-invite-token');
+const importPeerInvite = document.querySelector('#import-peer-invite');
 const profileBar = document.querySelector('#profile-bar');
 const inviteButton = document.querySelector('#create-invite');
 const downloadBackupButton = document.querySelector('#download-backup');
@@ -395,6 +399,11 @@ async function renderInstanceSettings() {
     const instance = await fetchJson('/api/instance');
     instanceId.textContent = instance.instanceId;
     instancePublicKey.textContent = instance.publicKey;
+    const inviteFromUrl = new URLSearchParams(window.location.search).get('peerInvite');
+    if (inviteFromUrl && peerInviteToken && !peerInviteToken.value) {
+      peerInviteToken.value = inviteFromUrl;
+      if (peerInviteMessage) peerInviteMessage.textContent = 'Pairing invite loaded. Accept it to add this peer.';
+    }
     peerList.innerHTML = instance.peers?.length ? instance.peers.map((peer) => `<article class="peer-card" data-peer-id="${escapeHtml(peer.id)}"><div><strong>${escapeHtml(peer.name)}</strong><small>${escapeHtml(peer.baseUrl || 'Direct relay/VPN connection not configured')}</small></div><button type="button" class="peer-remove">Remove</button></article>`).join('') : '<p class="shared-message">No paired instances yet.</p>';
     peerList.querySelectorAll('.peer-remove').forEach((button) => button.addEventListener('click', async () => {
       const card = button.closest('.peer-card');
@@ -1053,6 +1062,32 @@ peerForm?.addEventListener('submit', async (event) => {
     await fetchJson('/api/peers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(peerForm).entries())) });
     peerForm.reset(); peerMessage.textContent = 'Paired instance saved.'; await renderInstanceSettings();
   } catch (error) { peerMessage.textContent = error.message; peerMessage.classList.add('error'); }
+});
+createPeerInvite?.addEventListener('click', async () => {
+  createPeerInvite.disabled = true;
+  try {
+    const invite = await fetchJson('/api/peers/invite', { method: 'POST' });
+    let copied = false;
+    try { await navigator.clipboard.writeText(invite.inviteUrl); copied = true; } catch {}
+    peerInviteMessage.textContent = copied ? 'Pairing invite copied. It expires in seven days.' : `Copy this invite URL: ${invite.inviteUrl}`;
+    peerInviteMessage.classList.remove('error');
+  } catch (error) { peerInviteMessage.textContent = error.message; peerInviteMessage.classList.add('error'); }
+  finally { createPeerInvite.disabled = false; }
+});
+importPeerInvite?.addEventListener('click', async () => {
+  const value = peerInviteToken.value.trim();
+  if (!value) return;
+  importPeerInvite.disabled = true;
+  try {
+    let token = value;
+    try { const parsed = new URL(value); token = parsed.searchParams.get('peerInvite') || value; } catch {}
+    await fetchJson('/api/peers/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+    peerInviteToken.value = '';
+    peerInviteMessage.textContent = 'Peer paired successfully.';
+    peerInviteMessage.classList.remove('error');
+    await renderInstanceSettings();
+  } catch (error) { peerInviteMessage.textContent = error.message; peerInviteMessage.classList.add('error'); }
+  finally { importPeerInvite.disabled = false; }
 });
 inviteButton.addEventListener('click', async () => {
   try {
