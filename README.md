@@ -16,6 +16,17 @@ Open [http://localhost:3000](http://localhost:3000).
 
 Shows are stored locally in `data/master-list.sqlite`. On first startup, the app automatically imports an existing `data/gigs.json` archive into SQLite. The legacy JSON file is left untouched as a backup and both local data files are ignored by Git.
 
+### Artifact background removal
+
+Artifact photos can be converted into transparent cutouts while retaining the original image. Install the optional CPU worker once, then restart the app:
+
+```sh
+npm run setup:background-removal
+npm start
+```
+
+The first background-removal job downloads its selected model and can take longer than subsequent jobs. Set `REMBG_MODEL` to choose another rembg model, or `REMBG_COMMAND` if the executable lives outside the project `.venv`.
+
 ## setlist.fm
 
 The app calls setlist.fm from the server, so your key is never sent to the browser. Create a free account, apply for a key, then add `SETLIST_FM_API_KEY` to `.env`. The search needs the artist, city, and date; select the correct match before saving.

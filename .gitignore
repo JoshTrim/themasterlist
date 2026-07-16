@@ -5,4 +5,5 @@ data/geocodes.json
 data/master-list.sqlite*
 data/media/
 node_modules/
+.venv/
 .DS_Store

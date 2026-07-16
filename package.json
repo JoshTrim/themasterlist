@@ -5,7 +5,8 @@
   "description": "A personal archive of live music events and their setlists.",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "setup:background-removal": "python3 -m venv .venv && .venv/bin/python -m pip install -r requirements-background-removal.txt"
   },
   "engines": {
     "node": ">=20"

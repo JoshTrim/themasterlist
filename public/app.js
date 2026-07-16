@@ -141,10 +141,11 @@ let activeWakeLockUsers = 0;
 async function retainUploadWakeLock() { if (!isMobileUpload || !navigator.wakeLock) return; activeWakeLockUsers += 1; if (uploadWakeLock) return; try { uploadWakeLock = await navigator.wakeLock.request('screen'); uploadWakeLock.addEventListener?.('release', () => { uploadWakeLock = null; }); } catch { uploadWakeLock = null; } }
 function releaseUploadWakeLock() { if (!isMobileUpload) return; activeWakeLockUsers = Math.max(0, activeWakeLockUsers - 1); if (!activeWakeLockUsers && uploadWakeLock) { uploadWakeLock.release().catch(() => {}); uploadWakeLock = null; } }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && activeWakeLockUsers && !uploadWakeLock) retainUploadWakeLock(); });
-function mobileUploadStateFor(input, gigId = '') {
+function mobileUploadStateFor(input, gigId = '', category = 'show') {
   let state = mobileUploadStates.get(input);
-  if (!state) { state = { gigId: '', items: [], processing: false, startTimer: null, onUploaded: null, onDrained: null, completedSinceDrain: 0, releaseAfterDrain: false }; mobileUploadStates.set(input, state); }
+  if (!state) { state = { gigId: '', category, items: [], processing: false, startTimer: null, onUploaded: null, onDrained: null, completedSinceDrain: 0, releaseAfterDrain: false }; mobileUploadStates.set(input, state); }
   if (gigId) state.gigId = gigId;
+  if (category) state.category = category;
   return state;
 }
 function uploadStatusContainer(input) { return input?.closest('.media-upload')?.querySelector('.media-upload-status'); }
@@ -203,7 +204,7 @@ async function processMobileUploadQueue(input, state = mobileUploadStates.get(in
       if (!item) break;
       item.status = 'uploading'; item.progress = 0; renderMobileUploadState(input, state);
       try {
-        await uploadGigMedia(state.gigId, [item.file], (file, fraction) => { item.progress = fraction * 100; scheduleMobileUploadStateRender(input, state); });
+        await uploadGigMedia(state.gigId, [item.file], (file, fraction) => { item.progress = fraction * 100; scheduleMobileUploadStateRender(input, state); }, state.category);
         item.status = 'complete'; item.progress = 100; item.file = null; renderMobileUploadState(input, state);
         state.completedSinceDrain += 1;
         if (state.onUploaded) { try { await state.onUploaded(item); } catch { /* keep the upload marked successful if a gallery refresh fails */ } }
@@ -225,8 +226,8 @@ async function processMobileUploadQueue(input, state = mobileUploadStates.get(in
   });
   return state.runningPromise;
 }
-function startMobileUploadQueue(input, gigId, onUploaded, onDrained) {
-  const state = mobileUploadStateFor(input, gigId);
+function startMobileUploadQueue(input, gigId, onUploaded, onDrained, category = 'show') {
+  const state = mobileUploadStateFor(input, gigId, category);
   state.onUploaded = onUploaded || state.onUploaded;
   state.onDrained = onDrained || state.onDrained;
   state.items.filter((item) => item.status === 'waiting').forEach((item) => { item.status = 'queued'; });
@@ -234,10 +235,10 @@ function startMobileUploadQueue(input, gigId, onUploaded, onDrained) {
   renderMobileUploadState(input, state);
   return processMobileUploadQueue(input, state);
 }
-function setupMobileFileQueue(input) {
+function setupMobileFileQueue(input, category = 'show') {
   if (!input || !isMobileUpload) return;
   pendingMedia.set(input, []);
-  mobileUploadStateFor(input);
+  mobileUploadStateFor(input, '', category);
   input.addEventListener('change', () => {
     const files = [...(input.files || [])];
     input.value = '';
@@ -525,9 +526,10 @@ async function fileAsBase64(file) {
 }
 
 const mobileUploadChains = new Map();
-async function uploadGigMediaNow(gigId, files, onProgress = () => {}) {
+async function uploadGigMediaNow(gigId, files, onProgress = () => {}, category = 'show') {
   if (!crypto.randomUUID) Object.defineProperty(crypto, 'randomUUID', { value: () => `${Date.now()}-${Math.random().toString(36).slice(2)}` });
   const queue = [...files];
+  const uploadPath = category === 'artifact' ? `/api/gigs/${gigId}/artifacts` : `/api/gigs/${gigId}/media`;
   const uploadChunked = async (file, jobId) => {
     const chunkSize = 4 * 1024 * 1024;
     const uploadId = crypto.randomUUID();
@@ -539,10 +541,11 @@ async function uploadGigMediaNow(gigId, files, onProgress = () => {}) {
       let attempt = 0;
       while (true) {
         try {
-          const response = await fetch(`/api/gigs/${gigId}/media/chunk`, { method: 'POST', cache: 'no-store', signal: controller.signal, headers: { 'Content-Type': file.type, 'X-Upload-Id': uploadId, 'X-Upload-Offset': String(offset), 'X-Upload-Total': String(file.size), 'X-Media-Filename': encodeURIComponent(file.name) }, body: chunk });
+          const response = await fetch(`${uploadPath}/chunk`, { method: 'POST', cache: 'no-store', signal: controller.signal, headers: { 'Content-Type': file.type, 'X-Upload-Id': uploadId, 'X-Upload-Offset': String(offset), 'X-Upload-Total': String(file.size), 'X-Media-Filename': encodeURIComponent(file.name), 'X-Media-Category': category }, body: chunk });
           const body = await response.json().catch(() => ({}));
           if (response.status === 409 && Number.isFinite(Number(body.offset))) { offset = Math.max(0, Math.min(file.size, Number(body.offset))); continue; }
           if (!response.ok) throw new Error(body.error || `Chunk failed (HTTP ${response.status})`);
+          if (body.complete && category === 'artifact' && body.media?.category !== 'artifact') throw new Error('The server did not save this as an artifact. Restart the server and retry.');
           offset = body.complete ? file.size : Math.max(offset, Number(body.offset) || 0);
           updateJob(jobId, { progress: offset / file.size * 100 });
           onProgress(file, offset / file.size);
@@ -565,12 +568,13 @@ async function uploadGigMediaNow(gigId, files, onProgress = () => {}) {
         else await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           updateJob(jobId, { cancel: () => xhr.abort() });
-          xhr.open('POST', `/api/gigs/${gigId}/media`);
+          xhr.open('POST', uploadPath);
           xhr.setRequestHeader('Content-Type', file.type);
           xhr.setRequestHeader('X-Media-Filename', encodeURIComponent(file.name));
           xhr.setRequestHeader('X-Media-Caption', encodeURIComponent(file.name));
+          xhr.setRequestHeader('X-Media-Category', category);
           xhr.upload.onprogress = (event) => { if (event.lengthComputable) { updateJob(jobId, { progress: (event.loaded / event.total) * 100 }); onProgress(file, event.loaded / event.total); } };
-          xhr.onload = () => { let body = {}; try { body = JSON.parse(xhr.responseText); } catch {} if (xhr.status >= 200 && xhr.status < 300) { updateJob(jobId, { status: 'complete', progress: 100 }); resolve(body); } else reject(new Error(body.error || 'Media upload failed.')); };
+          xhr.onload = () => { let body = {}; try { body = JSON.parse(xhr.responseText); } catch {} if (xhr.status >= 200 && xhr.status < 300) { if (category === 'artifact' && body.media?.category !== 'artifact' && body.category !== 'artifact') return reject(new Error('The server did not save this as an artifact. Restart the server and retry.')); updateJob(jobId, { status: 'complete', progress: 100 }); resolve(body); } else reject(new Error(body.error || 'Media upload failed.')); };
           xhr.onerror = () => reject(new Error('Media upload failed.'));
           xhr.onabort = () => reject(new Error('Upload cancelled.'));
           xhr.send(file);
@@ -582,10 +586,10 @@ async function uploadGigMediaNow(gigId, files, onProgress = () => {}) {
   const concurrency = isMobileUpload ? 1 : 2;
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
 }
-function uploadGigMedia(gigId, files, onProgress = () => {}) {
-  if (!isMobileUpload) return uploadGigMediaNow(gigId, files, onProgress);
+function uploadGigMedia(gigId, files, onProgress = () => {}, category = 'show') {
+  if (!isMobileUpload) return uploadGigMediaNow(gigId, files, onProgress, category);
   const previous = mobileUploadChains.get(gigId) || Promise.resolve();
-  const next = previous.catch(() => {}).then(() => uploadGigMediaNow(gigId, files, onProgress));
+  const next = previous.catch(() => {}).then(() => uploadGigMediaNow(gigId, files, onProgress, category));
   mobileUploadChains.set(gigId, next);
   next.finally(() => { if (mobileUploadChains.get(gigId) === next) mobileUploadChains.delete(gigId); }).catch(() => {});
   return next;
@@ -633,21 +637,21 @@ function mediaRecognitionMarkup(item, songs = []) {
   return `<small class="media-detection">Detected: ${escapeHtml(details)}${status}</small>`;
 }
 
-function renderMediaGallery(container, media = [], { editable = false, songs = [] } = {}) {
+function renderMediaGallery(container, media = [], { editable = false, songs = [], allowCover = true, onDelete = () => {} } = {}) {
   container.replaceChildren();
   if (!media.length) return;
       for (const id of [...selectedMediaIds]) if (!media.some((item) => item.id === id)) selectedMediaIds.delete(id);
       const selectedCount = media.filter((item) => selectedMediaIds.has(item.id)).length;
-      container.innerHTML = `${editable && selectedCount ? `<div class="media-bulk-actions"><span>${selectedCount} selected</span><button type="button" class="media-bulk-delete">Remove selected</button><button type="button" class="media-bulk-clear">Clear</button></div>` : ''}${media.map((item, index) => `<figure class="media-item${item.isCover ? ' is-cover' : ''}${selectedMediaIds.has(item.id) ? ' is-selected' : ''}" data-media-id="${item.id}">${editable ? `<button type="button" class="media-delete-corner" aria-label="${selectedMediaIds.has(item.id) ? 'Deselect media' : 'Select media for removal'}" title="${selectedMediaIds.has(item.id) ? 'Deselect media' : 'Select media for removal'}" aria-pressed="${selectedMediaIds.has(item.id)}">×</button>` : ''}${item.mimeType === 'video/youtube' ? `<iframe src="${youtubeEmbedUrl(item.url)}" title="${escapeHtml(item.caption || 'YouTube video')}" loading="lazy" allowfullscreen></iframe>` : item.mimeType.startsWith('video/') ? `<video src="${item.url}" controls preload="${isMobileUpload ? 'none' : 'metadata'}"></video>` : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" style="transform:rotate(${item.rotation || 0}deg)" /></button>`}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${mediaRecognitionMarkup(item, songs)}${editable ? `<div class="media-actions"><button type="button" class="media-menu-toggle" aria-expanded="false">⋮ Options</button><div class="media-action-menu" hidden>${songs.length ? `<label class="media-song-label">Setlist track${item.recognitionOverride ? ' · manual override' : ''}<select class="media-song-select"><option value="">Unassigned</option>${songs.map((song, songIndex) => `<option value="${songIndex}" ${item.songIndex === songIndex ? 'selected' : ''}>${songIndex + 1}. ${escapeHtml(song.title)}</option>`).join('')}</select></label>` : ''}<button class="media-caption" type="button">Caption</button><button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button>${item.mimeType.startsWith('video/') && item.mimeType !== 'video/youtube' ? '<button type="button" class="media-trim">Trim video</button><button type="button" class="media-rotate media-rotate-cw">↻ Clockwise</button><button type="button" class="media-rotate media-rotate-ccw">↺ Counter-clockwise</button>' : ''}<button type="button" class="media-up" ${index === 0 ? 'disabled' : ''}>↑ Move earlier</button><button type="button" class="media-down" ${index === media.length - 1 ? 'disabled' : ''}>↓ Move later</button></div></div>` : ''}</figure>`).join('')}`;
+      container.innerHTML = `${editable && selectedCount ? `<div class="media-bulk-actions"><span>${selectedCount} selected</span><button type="button" class="media-bulk-delete">Remove selected</button><button type="button" class="media-bulk-clear">Clear</button></div>` : ''}${media.map((item, index) => `<figure class="media-item${item.isCover ? ' is-cover' : ''}${item.useBackgroundRemoved ? ' is-cutout' : ''}${selectedMediaIds.has(item.id) ? ' is-selected' : ''}" data-media-id="${item.id}">${editable ? `<button type="button" class="media-delete-corner" aria-label="${selectedMediaIds.has(item.id) ? 'Deselect media' : 'Select media for removal'}" title="${selectedMediaIds.has(item.id) ? 'Deselect media' : 'Select media for removal'}" aria-pressed="${selectedMediaIds.has(item.id)}">×</button>` : ''}${item.mimeType === 'video/youtube' ? `<iframe src="${youtubeEmbedUrl(item.url)}" title="${escapeHtml(item.caption || 'YouTube video')}" loading="lazy" allowfullscreen></iframe>` : item.mimeType.startsWith('video/') ? `<video src="${item.url}" controls preload="${isMobileUpload ? 'none' : 'metadata'}"></video>` : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" style="transform:rotate(${item.rotation || 0}deg)" /></button>`}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${item.backgroundStatus === 'running' ? '<small class="media-background-status">Removing background…</small>' : item.backgroundStatus === 'error' ? `<small class="media-background-status media-detection-error">${escapeHtml(item.backgroundError || 'Background removal failed')}</small>` : item.useBackgroundRemoved ? '<small class="media-background-status">Transparent cutout</small>' : ''}${mediaRecognitionMarkup(item, songs)}${editable ? `<div class="media-actions"><button type="button" class="media-menu-toggle" aria-expanded="false">⋮ Options</button><div class="media-action-menu" hidden>${songs.length && item.category !== 'artifact' ? `<label class="media-song-label">Setlist track${item.recognitionOverride ? ' · manual override' : ''}<select class="media-song-select"><option value="">Unassigned</option>${songs.map((song, songIndex) => `<option value="${songIndex}" ${item.songIndex === songIndex ? 'selected' : ''}>${songIndex + 1}. ${escapeHtml(song.title)}</option>`).join('')}</select></label>` : ''}<button class="media-caption" type="button">Caption</button>${allowCover && item.category !== 'artifact' ? `<button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button>` : ''}${item.category === 'artifact' && item.mimeType.startsWith('image/') ? `${item.backgroundFilename ? `<button type="button" class="media-background-toggle">${item.useBackgroundRemoved ? 'Use original photo' : 'Use transparent cutout'}</button>` : ''}<button type="button" class="media-background-remove" ${item.backgroundStatus === 'running' ? 'disabled' : ''}>${item.backgroundFilename ? 'Recreate cutout' : item.backgroundStatus === 'error' ? 'Retry background removal' : 'Remove background'}</button>` : ''}${item.mimeType.startsWith('video/') && item.mimeType !== 'video/youtube' ? '<button type="button" class="media-trim">Trim video</button><button type="button" class="media-rotate media-rotate-cw">↻ Clockwise</button><button type="button" class="media-rotate media-rotate-ccw">↺ Counter-clockwise</button>' : ''}<button type="button" class="media-up" ${index === 0 ? 'disabled' : ''}>↑ Move earlier</button><button type="button" class="media-down" ${index === media.length - 1 ? 'disabled' : ''}>↓ Move later</button></div></div>` : ''}</figure>`).join('')}`;
   container.querySelectorAll('.media-open').forEach((button, index) => button.addEventListener('click', () => openMediaLightbox(media[index])));
   if (editable) {
     container.querySelectorAll('.media-delete-corner').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
       if (!item) return;
       if (selectedMediaIds.has(item.id)) selectedMediaIds.delete(item.id); else selectedMediaIds.add(item.id);
-      renderMediaGallery(container, media, { editable: true, songs });
+      renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
     }));
-    container.querySelector('.media-bulk-clear')?.addEventListener('click', () => { selectedMediaIds.clear(); renderMediaGallery(container, media, { editable: true, songs }); });
+    container.querySelector('.media-bulk-clear')?.addEventListener('click', () => { selectedMediaIds.clear(); renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete }); });
     container.querySelector('.media-bulk-delete')?.addEventListener('click', async (event) => {
       const selected = media.filter((item) => selectedMediaIds.has(item.id));
       if (!selected.length || !confirm(`Remove ${selected.length} selected media item${selected.length === 1 ? '' : 's'}?`)) return;
@@ -655,7 +659,8 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
       try {
         await Promise.all(selected.map((item) => fetchJson(`/api/media/${item.id}`, { method: 'DELETE' })));
         selected.forEach((item) => { selectedMediaIds.delete(item.id); media.splice(media.indexOf(item), 1); });
-        renderMediaGallery(container, media, { editable: true, songs });
+        onDelete(selected);
+        renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
       } catch (error) { event.currentTarget.disabled = false; event.currentTarget.textContent = error.message; }
     });
     container.querySelectorAll('.media-song-select').forEach((select) => select.addEventListener('change', async () => {
@@ -664,7 +669,7 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
       await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ songIndex: value, recognitionOverride: true }) });
       item.songIndex = value;
       item.recognitionOverride = true;
-      renderMediaGallery(container, media, { editable: true, songs });
+      renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
     }));
     container.querySelectorAll('.media-menu-toggle').forEach((button) => button.addEventListener('click', () => {
       const menu = button.nextElementSibling;
@@ -679,19 +684,49 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
       const caption = prompt('Caption this memory', item.caption || item.filename || '');
       if (caption === null) return;
       await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caption }) });
-      item.caption = caption; renderMediaGallery(container, media, { editable: true, songs });
+      item.caption = caption; renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
+    }));
+    container.querySelectorAll('.media-background-toggle').forEach((button) => button.addEventListener('click', async () => {
+      const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
+      const updated = await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ useBackgroundRemoved: !item.useBackgroundRemoved }) });
+      Object.assign(item, updated);
+      renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
+    }));
+    container.querySelectorAll('.media-background-remove').forEach((button) => button.addEventListener('click', async () => {
+      const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
+      button.disabled = true;
+      try {
+        const job = await fetchJson(`/api/media/${item.id}/remove-background`, { method: 'POST' });
+        item.backgroundStatus = 'running';
+        updateJob(job.jobId, { id: job.jobId, type: 'Remove background', name: item.caption || item.filename, status: 'running', progress: 10 });
+        let status;
+        do {
+          await new Promise((resolve) => setTimeout(resolve, 900));
+          status = await fetchJson(`/api/jobs/${job.jobId}`);
+          updateJob(job.jobId, status);
+        } while (status.status === 'running' || status.status === 'queued');
+        if (status.status === 'error') throw new Error(status.error || 'Background removal failed.');
+        item.backgroundStatus = 'complete';
+        item.backgroundFilename = `${item.id}.cutout.png`;
+        item.backgroundError = '';
+        item.useBackgroundRemoved = true;
+        item.url = `/api/media/${item.id}?variant=cutout&v=${Date.now()}`;
+      } catch (error) {
+        item.backgroundStatus = 'error'; item.backgroundError = error.message;
+      }
+      renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
     }));
     container.querySelectorAll('.media-cover').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
       await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isCover: true }) });
-      media.forEach((entry) => { entry.isCover = entry.id === item.id; }); renderMediaGallery(container, media, { editable: true, songs });
+      media.forEach((entry) => { entry.isCover = entry.id === item.id; }); renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
     }));
     container.querySelectorAll('.media-trim').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
       const start = prompt('Trim start time in seconds', '0'); if (start === null) return;
       const end = prompt('Trim end time in seconds', ''); if (end === null || end === '' || Number(end) <= Number(start)) return;
       button.disabled = true; button.textContent = 'Trimming…';
-      try { const job = await fetchJson(`/api/media/${item.id}/trim?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, { method: 'POST' }); let status; do { await new Promise((resolve) => setTimeout(resolve, 1000)); status = await fetchJson(`/api/media/rotate/${job.jobId}`); button.textContent = `Trimming ${status.progress}%`; } while (status.status === 'running'); if (status.status === 'error') throw new Error(status.error || 'Video trim failed.'); renderMediaGallery(container, media, { editable: true, songs }); } catch (error) { button.textContent = error.message; } finally { button.disabled = false; }
+      try { const job = await fetchJson(`/api/media/${item.id}/trim?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, { method: 'POST' }); let status; do { await new Promise((resolve) => setTimeout(resolve, 1000)); status = await fetchJson(`/api/media/rotate/${job.jobId}`); button.textContent = `Trimming ${status.progress}%`; } while (status.status === 'running'); if (status.status === 'error') throw new Error(status.error || 'Video trim failed.'); renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete }); } catch (error) { button.textContent = error.message; } finally { button.disabled = false; }
     }));
     container.querySelectorAll('.media-rotate').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
@@ -705,7 +740,7 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
         item.rotation = ((item.rotation || 0) + 90) % 360;
         await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rotation: item.rotation }) });
       }
-      renderMediaGallery(container, media, { editable: true, songs });
+      renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
     }));
     container.querySelectorAll('.media-up, .media-down').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
@@ -713,7 +748,7 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
       if (nextIndex < 0 || nextIndex >= media.length) return;
       [media[index], media[nextIndex]] = [media[nextIndex], media[index]];
       await Promise.all(media.map((entry, order) => fetchJson(`/api/media/${entry.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sortOrder: order }) })));
-      renderMediaGallery(container, media, { editable: true, songs });
+      renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
     }));
   }
 }
@@ -765,7 +800,8 @@ function renderArtistShows(records) {
     ratings.innerHTML = `${gig.performanceRating ? `<span>Performance ${gig.performanceRating} / 5</span>` : ''}${gig.venueRating ? `<span>Venue ${gig.venueRating} / 5</span>` : ''}`;
     const setlist = card.querySelector('.setlist');
     if (gig.songs?.length) setlist.innerHTML = `<ol>${gig.songs.map((song) => `<li>${escapeHtml(song.title)}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>`;
-    renderMediaGallery(card.querySelector('.media-gallery'), gig.media, { songs: gig.songs || [] });
+    renderMediaGallery(card.querySelector('.media-gallery'), (gig.media || []).filter((item) => item.category !== 'artifact'), { songs: gig.songs || [] });
+    card.querySelector('.artifact-section')?.remove();
     artistShows.append(card);
   }
 }
@@ -856,7 +892,8 @@ async function renderVenuePage() {
     card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
     renderAttendeeSummary(card.querySelector('.gig-summary'), gig);
     card.querySelector('.song-total').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist';
-    renderMediaGallery(card.querySelector('.media-gallery'), gig.media, { songs: gig.songs || [] });
+    renderMediaGallery(card.querySelector('.media-gallery'), (gig.media || []).filter((item) => item.category !== 'artifact'), { songs: gig.songs || [] });
+    card.querySelector('.artifact-section')?.remove();
     venueShows.append(card);
   });
   if (!venueNameFromUrl) return;
@@ -968,10 +1005,10 @@ function renderShowPage() {
   showDetailSetlist.innerHTML = gig.songs?.length ? `<ol>${renderTrackList(gig.songs, gig.artist)}</ol>${renderAlbumStats(gig.songs)}` : '<p>No setlist attached.</p>';
   if (gig.songs?.length) fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats`).then((data) => { gig.songs = data.songs; showDetailSetlist.innerHTML = `<ol>${renderTrackList(gig.songs, gig.artist)}</ol>${renderAlbumStats(gig.songs)}`; }).catch(() => {});
   showEditLink.href = `/edit?id=${encodeURIComponent(gig.id)}`;
-  showDetailNoMedia.hidden = Boolean(gig.media?.length);
+  showDetailNoMedia.hidden = Boolean((gig.media || []).some((item) => item.category !== 'artifact'));
   // Keep the gallery manageable from the show page too, including YouTube videos
   // attached by the setlist search.
-  renderMediaGallery(showDetailGallery, gig.media, { editable: true, songs: gig.songs || [] });
+  renderMediaGallery(showDetailGallery, (gig.media || []).filter((item) => item.category !== 'artifact'), { editable: true, songs: gig.songs || [] });
   if (page === 'playback' || new URLSearchParams(window.location.search).get('play') === '1') setTimeout(() => playWholeSet?.click(), 0);
 }
 
@@ -1061,7 +1098,7 @@ findYouTubeSet.addEventListener('click', async () => {
       const match = button.closest('.youtube-match');
       const songIndex = Number(match?.dataset.songIndex);
       const added = await fetchJson(`/api/gigs/${gig.id}/media`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ externalUrl: button.dataset.youtubeUrl, caption: button.closest('.youtube-result').querySelector('p').textContent, songIndex: Number.isInteger(songIndex) ? songIndex : null }) });
-      gig.media = [...(gig.media || []), added]; button.textContent = 'Added'; renderMediaGallery(document.querySelector('#show-detail-gallery'), gig.media, { editable: true, songs: gig.songs || [] });
+      gig.media = [...(gig.media || []), added]; button.textContent = 'Added'; renderMediaGallery(document.querySelector('#show-detail-gallery'), gig.media.filter((item) => item.category !== 'artifact'), { editable: true, songs: gig.songs || [] });
     }));
   } catch (error) { youtubeSearchMessage.textContent = error.message; youtubeSearchMessage.classList.add('error'); }
   finally { findYouTubeSet.disabled = false; findYouTubeSet.textContent = 'Find YouTube videos'; }
@@ -1370,6 +1407,48 @@ function remoteSharedArchiveShows() {
   return sharedShows.filter((show) => show.contributions?.length && !localIds.has(show.id) && !localIds.has(show.sourceGigId));
 }
 
+function setupArtifactSection(card, gig) {
+  const section = card.querySelector('.artifact-section');
+  const input = card.querySelector('.artifact-input');
+  const gallery = card.querySelector('.artifact-gallery');
+  const message = card.querySelector('.artifact-message');
+  if (!section || !input || !gallery) return;
+  let artifacts = (gig.media || []).filter((item) => item.category === 'artifact');
+  const renderArtifacts = () => {
+    section.querySelector('summary span').textContent = artifacts.length ? `Artifacts · ${artifacts.length}` : 'Artifacts';
+    renderMediaGallery(gallery, artifacts, { editable: true, allowCover: false, onDelete: (removed) => {
+      const removedIds = new Set(removed.map((item) => item.id));
+      gig.media = (gig.media || []).filter((item) => !removedIds.has(item.id));
+      section.querySelector('summary span').textContent = artifacts.length ? `Artifacts · ${artifacts.length}` : 'Artifacts';
+    } });
+  };
+  const refreshArtifacts = async () => {
+    const media = await fetchJson(`/api/gigs/${gig.id}/media`);
+    gig.media = media;
+    artifacts = media.filter((item) => item.category === 'artifact');
+    renderArtifacts();
+  };
+  renderArtifacts();
+  if (artifacts.length) section.open = true;
+  if (isMobileUpload) {
+    setupMobileFileQueue(input, 'artifact');
+    startMobileUploadQueue(input, gig.id, () => { message.textContent = 'Artifact photo uploaded.'; }, refreshArtifacts, 'artifact');
+  } else {
+    input.addEventListener('change', async () => {
+      const files = [...(input.files || [])];
+      if (!files.length) return;
+      input.disabled = true;
+      message.classList.remove('error');
+      try {
+        await uploadGigMedia(gig.id, files, (file, fraction) => { message.textContent = `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; }, 'artifact');
+        await refreshArtifacts();
+        message.textContent = `${files.length} artifact photo${files.length === 1 ? '' : 's'} added.`;
+      } catch (error) { message.textContent = error.message; message.classList.add('error'); }
+      finally { input.disabled = false; input.value = ''; }
+    });
+  }
+}
+
 function renderRemoteSharedGig(show) {
   const card = document.querySelector('#gig-template').content.cloneNode(true);
   const article = card.querySelector('.gig-card');
@@ -1378,6 +1457,7 @@ function renderRemoteSharedGig(show) {
   article.dataset.showDate = show.date || '';
   article.dataset.showRating = String(Math.max(0, ...show.contributions.map((entry) => Number(entry.performanceRating || 0))));
   article.dataset.showFavorite = show.contributions.some((entry) => entry.favorite) ? '1' : '0';
+  card.querySelector('.artifact-section')?.remove();
   card.querySelector('.gig-date').textContent = formatGigDate(show.date);
   card.querySelector('h3').innerHTML = `<a class="artist-link" href="/artist?name=${encodeURIComponent(show.artist)}">${escapeHtml(show.artist)}</a>`;
   card.querySelector('.gig-place').innerHTML = `<a class="venue-link" href="/venue?name=${encodeURIComponent(show.venue)}&city=${encodeURIComponent(show.city)}">${escapeHtml(show.venue)}</a> · <a class="venue-link" href="/city?name=${encodeURIComponent(show.city)}">${escapeHtml(show.city)}</a>`;
@@ -1481,7 +1561,8 @@ function renderGigs() {
       exports.hidden = false;
       setupExportButtons(exports, gig);
     }
-    renderMediaGallery(card.querySelector('.media-gallery'), gig.media, { songs: gig.songs || [] });
+    renderMediaGallery(card.querySelector('.media-gallery'), (gig.media || []).filter((item) => item.category !== 'artifact'), { songs: gig.songs || [] });
+    setupArtifactSection(card, gig);
     card.querySelector('.delete-gig').addEventListener('click', async () => {
       if (!confirm(`Remove ${gig.artist} at ${gig.venue}?`)) return;
       await fetchJson(`/api/gigs/${gig.id}`, { method: 'DELETE' });
