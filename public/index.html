@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>The Master List — Live music archive</title>
-    <link rel="stylesheet" href="/styles.css?v=archive-health-3" />
+    <link rel="stylesheet" href="/styles.css?v=global-search-2" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   </head>
   <body>
@@ -14,7 +14,7 @@
     </div>
     <header class="site-header">
       <a class="brand" href="/">The<br /><em>Master</em> List</a>
-      <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">☰</button><nav class="site-nav" id="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/overview">Overview</a><a href="/health">Health</a><a href="/api-limits">API limits</a><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a><a href="/login">Sign in</a></nav>
+      <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">☰</button><nav class="site-nav" id="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/overview">Overview</a><a href="/search">Search</a><a href="/health">Health</a><a href="/api-limits">API limits</a><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a><a href="/login">Sign in</a></nav>
       <span class="record-count" id="record-count">0 shows</span>
     </header>
 
@@ -86,9 +86,11 @@
 
       <section class="overview-page" id="overview-page" aria-labelledby="overview-heading"><div class="section-heading"><p class="eyebrow">05 / Archive intelligence</p><h1 id="overview-heading">Overview</h1><p class="lede">A snapshot of your live-music life.</p></div><div class="dashboard-stats" id="dashboard-stats"></div></section>
 
-      <section class="api-limits-page" id="api-limits-page" aria-labelledby="api-limits-heading"><div class="section-heading"><p class="eyebrow">06 / Service health</p><h1 id="api-limits-heading">API limits</h1><p class="lede">A local estimate of how much provider capacity this archive has used today.</p></div><p class="api-limits-note" id="api-limits-note">Loading tracked requests…</p><div class="api-limits-grid" id="api-limits-grid"></div><div class="api-usage-detail" id="api-usage-detail"></div></section>
+      <section class="search-page" id="search-page" aria-labelledby="search-heading"><div class="section-heading"><p class="eyebrow">06 / Find a memory</p><h1 id="search-heading">Search the archive</h1><p class="lede">Search shows, songs, artists, venues, notes and media captions.</p></div><div class="global-search-controls"><label class="global-search-query">Search<input id="global-search-input" type="search" placeholder="Track, artist, venue, note…" autocomplete="off" /></label><label>Year<select id="global-search-year"><option value="">All years</option></select></label><label>Rating<select id="global-search-rating"><option value="0">Any rating</option><option value="3">3+ stars</option><option value="4">4+ stars</option><option value="5">5 stars</option></select></label><label>Media<select id="global-search-media"><option value="any">Any</option><option value="with">Has media</option><option value="without">No media</option></select></label><label class="global-search-favourite"><input id="global-search-favourite" type="checkbox" /> Favourites only</label></div><p class="global-search-summary" id="global-search-summary"></p><div class="global-search-results" id="global-search-results"></div></section>
 
-      <section class="health-page" id="health-page" aria-labelledby="health-heading"><div class="section-heading health-heading"><div><p class="eyebrow">07 / Archive maintenance</p><h1 id="health-heading">Metadata health</h1><p class="lede">Find incomplete show, artist, venue and map records.</p></div><button class="button" id="repair-all-metadata" type="button">Repair all available</button></div><div class="health-summary" id="health-summary"></div><div class="health-filters" id="health-filters" aria-label="Filter metadata issues"></div><p class="form-message" id="health-message" role="status"></p><div class="health-list" id="health-list"></div></section>
+      <section class="api-limits-page" id="api-limits-page" aria-labelledby="api-limits-heading"><div class="section-heading"><p class="eyebrow">07 / Service health</p><h1 id="api-limits-heading">API limits</h1><p class="lede">A local estimate of how much provider capacity this archive has used today.</p></div><p class="api-limits-note" id="api-limits-note">Loading tracked requests…</p><div class="api-limits-grid" id="api-limits-grid"></div><div class="api-usage-detail" id="api-usage-detail"></div></section>
+
+      <section class="health-page" id="health-page" aria-labelledby="health-heading"><div class="section-heading health-heading"><div><p class="eyebrow">08 / Archive maintenance</p><h1 id="health-heading">Metadata health</h1><p class="lede">Find incomplete show, artist, venue and map records.</p></div><button class="button" id="repair-all-metadata" type="button">Repair all available</button></div><div class="health-summary" id="health-summary"></div><div class="health-filters" id="health-filters" aria-label="Filter metadata issues"></div><p class="form-message" id="health-message" role="status"></p><div class="health-list" id="health-list"></div></section>
 
       <section class="artist-page" id="artist-page" aria-labelledby="artist-heading">
         <a class="text-button artist-back" href="/shows">← Back to shows</a>
@@ -192,6 +194,6 @@
     <div class="media-lightbox" id="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Media viewer"><button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Close media viewer">×</button><img id="media-lightbox-image" alt="" /><video id="media-lightbox-video" controls></video><p id="media-lightbox-caption"></p></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="/app.js?v=archive-health-3"></script>
+    <script src="/app.js?v=global-search-1"></script>
   </body>
 </html>
