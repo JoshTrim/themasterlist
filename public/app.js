@@ -267,6 +267,12 @@ const showDetailVenueNotes = document.querySelector('#show-detail-venue-notes');
 const showDetailRatings = document.querySelector('#show-detail-ratings');
 const showDetailGallery = document.querySelector('#show-detail-gallery');
 const showDetailNoMedia = document.querySelector('#show-detail-no-media');
+const showDetailArtifacts = document.querySelector('#show-detail-artifacts');
+const showDetailNoArtifacts = document.querySelector('#show-detail-no-artifacts');
+const showMemoryFacts = document.querySelector('#show-memory-facts');
+const showNavTrackCount = document.querySelector('#show-nav-track-count');
+const showNavMediaCount = document.querySelector('#show-nav-media-count');
+const showNavArtifactCount = document.querySelector('#show-nav-artifact-count');
 const showDetailSetlist = document.querySelector('#show-detail-setlist');
 const findYouTubeSet = document.querySelector('#find-youtube-set');
 const youtubeResults = document.querySelector('#youtube-results');
@@ -989,23 +995,25 @@ function renderShowPage() {
   showDetailDate.textContent = formatGigDate(gig.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   showDetailNotes.textContent = gig.performanceNotes || gig.notes || 'No performance notes yet.';
   showDetailVenueNotes.textContent = gig.venueNotes ? `Venue: ${gig.venueNotes}` : 'No venue notes yet.';
-  const attendeesLine = document.querySelector('#show-detail-attendees') || (() => {
-    const line = document.createElement('p');
-    line.id = 'show-detail-attendees';
-    line.className = 'show-detail-attendees';
-    showDetailNotes.parentElement.append(line);
-    return line;
-  })();
+  const attendeesLine = document.querySelector('#show-detail-attendees');
   const names = attendeeNames(gig);
   attendeesLine.textContent = names.length > 1 ? `Attended with ${names.slice(1).join(', ')}` : 'Solo show';
-  showDetailRatings.innerHTML = `${gig.performanceRating ? `<span>Performance ${gig.performanceRating} / 5</span>` : '<span>Performance unrated</span>'}${gig.venueRating ? `<span>Venue ${gig.venueRating} / 5</span>` : '<span>Venue unrated</span>'}`;
+  showDetailRatings.innerHTML = gig.performanceRating ? `<span><b>${gig.performanceRating}</b> / 5 stars</span>` : '<span>Not rated yet</span>';
   showDetailSetlist.innerHTML = gig.songs?.length ? `<ol>${renderTrackList(gig.songs, gig.artist)}</ol>${renderAlbumStats(gig.songs)}` : '<p>No setlist attached.</p>';
   if (gig.songs?.length) fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats`).then((data) => { gig.songs = data.songs; showDetailSetlist.innerHTML = `<ol>${renderTrackList(gig.songs, gig.artist)}</ol>${renderAlbumStats(gig.songs)}`; }).catch(() => {});
   showEditLink.href = `/edit?id=${encodeURIComponent(gig.id)}`;
-  showDetailNoMedia.hidden = Boolean((gig.media || []).some((item) => item.category !== 'artifact'));
+  const generalMedia = (gig.media || []).filter((item) => item.category !== 'artifact');
+  const artifacts = (gig.media || []).filter((item) => item.category === 'artifact');
+  showDetailNoMedia.hidden = Boolean(generalMedia.length);
+  showDetailNoArtifacts.hidden = Boolean(artifacts.length);
+  showNavTrackCount.textContent = gig.songs?.length ? String(gig.songs.length) : '';
+  showNavMediaCount.textContent = generalMedia.length ? String(generalMedia.length) : '';
+  showNavArtifactCount.textContent = artifacts.length ? String(artifacts.length) : '';
+  showMemoryFacts.innerHTML = `<span><b>${gig.performanceRating || '—'}</b> rating</span><span><b>${gig.songs?.length || 0}</b> tracks</span><span><b>${generalMedia.length}</b> media</span><span><b>${artifacts.length}</b> artifacts</span><span><b>${Math.max(names.length, 1)}</b> attendee${Math.max(names.length, 1) === 1 ? '' : 's'}</span>`;
   // Keep the gallery manageable from the show page too, including YouTube videos
   // attached by the setlist search.
-  renderMediaGallery(showDetailGallery, (gig.media || []).filter((item) => item.category !== 'artifact'), { editable: true, songs: gig.songs || [] });
+  renderMediaGallery(showDetailGallery, generalMedia, { editable: true, songs: gig.songs || [] });
+  renderMediaGallery(showDetailArtifacts, artifacts, { editable: true, allowCover: false, songs: gig.songs || [] });
   if (page === 'playback' || new URLSearchParams(window.location.search).get('play') === '1') setTimeout(() => playWholeSet?.click(), 0);
 }
 
