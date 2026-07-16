@@ -122,6 +122,26 @@ addColumnIfMissing('gig_media', 'background_filename', 'TEXT');
 addColumnIfMissing('gig_media', 'background_status', "TEXT NOT NULL DEFAULT 'not_started'");
 addColumnIfMissing('gig_media', 'background_error', 'TEXT');
 addColumnIfMissing('gig_media', 'use_background_removed', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('gig_media', 'playback_preferred', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('gig_media', 'playback_start', 'REAL');
+addColumnIfMissing('gig_media', 'playback_end', 'REAL');
+addColumnIfMissing('gig_media', 'playback_clips_initialized', 'INTEGER NOT NULL DEFAULT 0');
+database.exec(`
+  CREATE TABLE IF NOT EXISTS media_playback_clips (
+    media_id TEXT NOT NULL,
+    song_index INTEGER NOT NULL,
+    start_seconds REAL,
+    end_seconds REAL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (media_id, song_index),
+    FOREIGN KEY (media_id) REFERENCES gig_media(id) ON DELETE CASCADE
+  )
+`);
+database.prepare(`INSERT OR IGNORE INTO media_playback_clips (media_id, song_index, start_seconds, end_seconds, created_at, updated_at)
+  SELECT id, song_index, playback_start, playback_end, created_at, ? FROM gig_media
+  WHERE playback_clips_initialized = 0 AND song_index IS NOT NULL AND mime_type LIKE 'video/%' AND category <> 'artifact'`).run(new Date().toISOString());
+database.prepare("UPDATE gig_media SET playback_clips_initialized = 1 WHERE playback_clips_initialized = 0 AND mime_type LIKE 'video/%'").run();
 database.prepare("UPDATE gig_media SET background_status = 'error', background_error = 'Interrupted by server restart' WHERE background_status = 'running'").run();
 database.prepare("UPDATE gig_media SET playback_status = 'ready', playback_error = NULL WHERE playback_filename IS NOT NULL").run();
 database.prepare("UPDATE gig_media SET playback_status = 'error', playback_error = 'Interrupted by server restart' WHERE playback_status = 'encoding'").run();
@@ -344,7 +364,7 @@ async function readGigs() {
     setlistFmUrl: row.setlist_fm_url,
     songs: JSON.parse(row.songs || '[]'),
     attendees: JSON.parse(row.attendees || '[]'),
-    media: database.prepare('SELECT id, filename, playback_filename AS playbackFilename, playback_mime AS playbackMime, playback_status AS playbackStatus, playback_error AS playbackError, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt, recognition_status AS recognitionStatus, recognition_title AS recognitionTitle, recognition_artist AS recognitionArtist, recognition_album AS recognitionAlbum, recognition_error AS recognitionError, recognition_override AS recognitionOverride, background_filename AS backgroundFilename, background_status AS backgroundStatus, background_error AS backgroundError, use_background_removed AS useBackgroundRemoved FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id).map(formatMediaRow),
+    media: mediaRows(row.id),
     createdAt: row.created_at
   }));
 }
@@ -804,7 +824,11 @@ function syncMediaManifest(gig) {
     checksum: item.checksum || null,
     category: item.category || 'show',
     externalUrl: item.externalUrl || null,
-    songIndex: item.songIndex ?? null
+    songIndex: item.songIndex ?? null,
+    playbackPreferred: Boolean(item.playbackPreferred),
+    playbackStart: item.playbackStart ?? null,
+    playbackEnd: item.playbackEnd ?? null,
+    playbackClips: Array.isArray(item.playbackClips) ? item.playbackClips : []
   }));
 }
 
@@ -1009,7 +1033,7 @@ function findGigSync(id) {
     attendees: JSON.parse(row.attendees || '[]'),
     notes: row.notes, performanceNotes: row.performance_notes, venueNotes: row.venue_notes,
     performanceRating: row.performance_rating, venueRating: row.venue_rating, favorite: Boolean(row.favorite),
-    media: database.prepare('SELECT id, filename, mime_type AS mimeType, caption, category, size, checksum, external_url AS externalUrl, song_index AS songIndex FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id)
+    media: mediaRows(row.id)
   };
 }
 
@@ -1048,6 +1072,9 @@ function formatMediaRow(media) {
   return {
     ...media,
     isCover: Boolean(media.isCover),
+    playbackPreferred: Boolean(media.playbackPreferred),
+    playbackStart: media.playbackStart === null || media.playbackStart === undefined ? null : Number(media.playbackStart),
+    playbackEnd: media.playbackEnd === null || media.playbackEnd === undefined ? null : Number(media.playbackEnd),
     recognitionOverride: Boolean(media.recognitionOverride),
     useBackgroundRemoved,
     rotation: Number(media.rotation || 0),
@@ -1061,7 +1088,13 @@ function formatMediaRow(media) {
 }
 
 function mediaRows(gigId) {
-  return database.prepare('SELECT id, filename, playback_filename AS playbackFilename, playback_mime AS playbackMime, playback_status AS playbackStatus, playback_error AS playbackError, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt, recognition_status AS recognitionStatus, recognition_title AS recognitionTitle, recognition_artist AS recognitionArtist, recognition_album AS recognitionAlbum, recognition_error AS recognitionError, recognition_override AS recognitionOverride, background_filename AS backgroundFilename, background_status AS backgroundStatus, background_error AS backgroundError, use_background_removed AS useBackgroundRemoved FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(gigId).map(formatMediaRow);
+  const rows = database.prepare('SELECT id, filename, playback_filename AS playbackFilename, playback_mime AS playbackMime, playback_status AS playbackStatus, playback_error AS playbackError, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, playback_preferred AS playbackPreferred, playback_start AS playbackStart, playback_end AS playbackEnd, size, created_at AS createdAt, recognition_status AS recognitionStatus, recognition_title AS recognitionTitle, recognition_artist AS recognitionArtist, recognition_album AS recognitionAlbum, recognition_error AS recognitionError, recognition_override AS recognitionOverride, background_filename AS backgroundFilename, background_status AS backgroundStatus, background_error AS backgroundError, use_background_removed AS useBackgroundRemoved FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(gigId).map(formatMediaRow);
+  const clips = database.prepare(`SELECT clips.media_id AS mediaId, clips.song_index AS songIndex, clips.start_seconds AS startSeconds, clips.end_seconds AS endSeconds
+    FROM media_playback_clips clips JOIN gig_media media ON media.id = clips.media_id WHERE media.gig_id = ? ORDER BY clips.song_index`).all(gigId);
+  const byMedia = new Map();
+  clips.forEach((clip) => { if (!byMedia.has(clip.mediaId)) byMedia.set(clip.mediaId, []); byMedia.get(clip.mediaId).push({ songIndex: Number(clip.songIndex), startSeconds: clip.startSeconds === null ? null : Number(clip.startSeconds), endSeconds: clip.endSeconds === null ? null : Number(clip.endSeconds) }); });
+  rows.forEach((media) => { media.playbackClips = byMedia.get(media.id) || []; });
+  return rows;
 }
 
 function removeImageBackground(inputPath, outputPath) {
@@ -2173,8 +2206,18 @@ async function handleApi(request, response, url) {
     const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(mediaMatch[1]);
     if (!media) return sendError(response, 404, 'Media not found.');
     const body = await readBody(request);
+    const playbackStart = 'playbackStart' in body && body.playbackStart !== '' && body.playbackStart !== null ? Number(body.playbackStart) : null;
+    const playbackEnd = 'playbackEnd' in body && body.playbackEnd !== '' && body.playbackEnd !== null ? Number(body.playbackEnd) : null;
+    if ('playbackStart' in body && playbackStart !== null && (!Number.isFinite(playbackStart) || playbackStart < 0)) return sendError(response, 400, 'Playback start must be zero or greater.');
+    if ('playbackEnd' in body && playbackEnd !== null && (!Number.isFinite(playbackEnd) || playbackEnd <= 0)) return sendError(response, 400, 'Playback end must be greater than zero.');
+    const effectiveStart = 'playbackStart' in body ? playbackStart : media.playback_start;
+    const effectiveEnd = 'playbackEnd' in body ? playbackEnd : media.playback_end;
+    if (effectiveStart !== null && effectiveEnd !== null && Number(effectiveEnd) <= Number(effectiveStart)) return sendError(response, 400, 'Playback end must be after playback start.');
+    const nextSongIndex = 'songIndex' in body ? (body.songIndex === null || body.songIndex === '' ? null : Number(body.songIndex)) : media.song_index;
+    const nextPreferred = 'playbackPreferred' in body ? Boolean(body.playbackPreferred) : Boolean(media.playback_preferred);
+    if (nextPreferred && nextSongIndex !== null) database.prepare('UPDATE gig_media SET playback_preferred = 0 WHERE gig_id = ? AND song_index = ? AND id <> ?').run(media.gig_id, nextSongIndex, media.id);
     if ('isCover' in body && body.isCover) database.prepare('UPDATE gig_media SET is_cover = 0 WHERE gig_id = ?').run(media.gig_id);
-    database.prepare('UPDATE gig_media SET caption = COALESCE(?, caption), is_cover = COALESCE(?, is_cover), sort_order = COALESCE(?, sort_order), rotation = COALESCE(?, rotation), song_index = CASE WHEN ? THEN ? ELSE song_index END, recognition_override = COALESCE(?, recognition_override), use_background_removed = COALESCE(?, use_background_removed) WHERE id = ?').run('caption' in body ? String(body.caption || '').trim() : null, 'isCover' in body ? (body.isCover ? 1 : 0) : null, 'sortOrder' in body ? Number(body.sortOrder) : null, 'rotation' in body ? ((Number(body.rotation) % 360) + 360) % 360 : null, 'songIndex' in body ? 1 : 0, 'songIndex' in body && body.songIndex !== null && body.songIndex !== '' ? Number(body.songIndex) : null, 'recognitionOverride' in body ? (body.recognitionOverride ? 1 : 0) : null, 'useBackgroundRemoved' in body ? (body.useBackgroundRemoved ? 1 : 0) : null, mediaMatch[1]);
+    database.prepare('UPDATE gig_media SET caption = COALESCE(?, caption), is_cover = COALESCE(?, is_cover), sort_order = COALESCE(?, sort_order), rotation = COALESCE(?, rotation), song_index = CASE WHEN ? THEN ? ELSE song_index END, recognition_override = COALESCE(?, recognition_override), use_background_removed = COALESCE(?, use_background_removed), playback_preferred = COALESCE(?, playback_preferred), playback_start = CASE WHEN ? THEN ? ELSE playback_start END, playback_end = CASE WHEN ? THEN ? ELSE playback_end END WHERE id = ?').run('caption' in body ? String(body.caption || '').trim() : null, 'isCover' in body ? (body.isCover ? 1 : 0) : null, 'sortOrder' in body ? Number(body.sortOrder) : null, 'rotation' in body ? ((Number(body.rotation) % 360) + 360) % 360 : null, 'songIndex' in body ? 1 : 0, nextSongIndex, 'recognitionOverride' in body ? (body.recognitionOverride ? 1 : 0) : null, 'useBackgroundRemoved' in body ? (body.useBackgroundRemoved ? 1 : 0) : null, 'playbackPreferred' in body ? (body.playbackPreferred ? 1 : 0) : null, 'playbackStart' in body ? 1 : 0, playbackStart, 'playbackEnd' in body ? 1 : 0, playbackEnd, mediaMatch[1]);
     return sendJson(response, 200, mediaRows(media.gig_id).find((entry) => entry.id === mediaMatch[1]));
   }
   if (request.method === 'DELETE' && mediaMatch) {
@@ -2239,6 +2282,38 @@ async function handleApi(request, response, url) {
   }
   const rotateStatusMatch = url.pathname.match(/^\/api\/media\/rotate\/([\w-]+)$/);
   if (request.method === 'GET' && rotateStatusMatch) return sendJson(response, 200, rotateJobs.get(rotateStatusMatch[1]) || database.prepare('SELECT id, type, name, status, progress, error FROM background_jobs WHERE id = ?').get(rotateStatusMatch[1]) || { status: 'missing', progress: 0 });
+  const playbackPlanMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/playback-plan$/);
+  if (request.method === 'PUT' && playbackPlanMatch) {
+    requireAccount(request);
+    const gig = database.prepare('SELECT id, songs FROM gigs WHERE id = ?').get(playbackPlanMatch[1]);
+    if (!gig) return sendError(response, 404, 'Gig not found.');
+    const songs = JSON.parse(gig.songs || '[]');
+    const media = database.prepare("SELECT id FROM gig_media WHERE gig_id = ? AND mime_type LIKE 'video/%' AND category <> 'artifact'").all(gig.id);
+    const mediaIds = new Set(media.map((item) => item.id));
+    const body = await readBody(request);
+    if (!Array.isArray(body.clips)) return sendError(response, 400, 'Playback clips are required.');
+    const clipsBySong = new Map();
+    for (const item of body.clips.slice(0, songs.length)) {
+      const songIndex = Number(item.songIndex);
+      const mediaId = String(item.mediaId || '');
+      const startSeconds = item.startSeconds === '' || item.startSeconds === null || item.startSeconds === undefined ? null : Number(item.startSeconds);
+      const endSeconds = item.endSeconds === '' || item.endSeconds === null || item.endSeconds === undefined ? null : Number(item.endSeconds);
+      if (!Number.isInteger(songIndex) || songIndex < 0 || songIndex >= songs.length || !mediaIds.has(mediaId)) return sendError(response, 400, 'Playback clip references an invalid song or video.');
+      if (startSeconds !== null && (!Number.isFinite(startSeconds) || startSeconds < 0)) return sendError(response, 400, `Invalid start point for track ${songIndex + 1}.`);
+      if (endSeconds !== null && (!Number.isFinite(endSeconds) || endSeconds <= 0)) return sendError(response, 400, `Invalid end point for track ${songIndex + 1}.`);
+      if (startSeconds !== null && endSeconds !== null && endSeconds <= startSeconds) return sendError(response, 400, `Playback end must follow the start for track ${songIndex + 1}.`);
+      clipsBySong.set(songIndex, { mediaId, songIndex, startSeconds, endSeconds });
+    }
+    const savePlan = database.transaction((clips) => {
+      database.prepare('DELETE FROM media_playback_clips WHERE media_id IN (SELECT id FROM gig_media WHERE gig_id = ?)').run(gig.id);
+      database.prepare("UPDATE gig_media SET playback_clips_initialized = 1 WHERE gig_id = ? AND mime_type LIKE 'video/%'").run(gig.id);
+      const insert = database.prepare('INSERT INTO media_playback_clips (media_id, song_index, start_seconds, end_seconds, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+      const now = new Date().toISOString();
+      clips.forEach((clip) => insert.run(clip.mediaId, clip.songIndex, clip.startSeconds, clip.endSeconds, now, now));
+    });
+    savePlan([...clipsBySong.values()]);
+    return sendJson(response, 200, { media: mediaRows(gig.id) });
+  }
   if (request.method === 'PATCH' && gigMatch) {
     const update = await readBody(request);
     const gigs = await readGigs();
