@@ -36,7 +36,6 @@ const results = document.querySelector('#search-results');
 const gigList = document.querySelector('#gig-list');
 const emptyState = document.querySelector('#empty-state');
 const count = document.querySelector('#record-count');
-const copyPlaylist = document.querySelector('#copy-playlist');
 const showFilter = document.querySelector('#show-filter');
 const yearFilter = document.querySelector('#year-filter');
 const sortFilter = document.querySelector('#sort-filter');
@@ -795,13 +794,12 @@ function renderArtistShows(records) {
     card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
     card.querySelector('.venue-notes').textContent = gig.venueNotes || '';
     renderAttendeeSummary(card.querySelector('.gig-summary'), gig);
-    card.querySelector('.song-total').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist';
     const ratings = card.querySelector('.gig-ratings');
     ratings.innerHTML = `${gig.performanceRating ? `<span>Performance ${gig.performanceRating} / 5</span>` : ''}${gig.venueRating ? `<span>Venue ${gig.venueRating} / 5</span>` : ''}`;
     const setlist = card.querySelector('.setlist');
     if (gig.songs?.length) setlist.innerHTML = `<ol>${gig.songs.map((song) => `<li>${escapeHtml(song.title)}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>`;
-    renderMediaGallery(card.querySelector('.media-gallery'), (gig.media || []).filter((item) => item.category !== 'artifact'), { songs: gig.songs || [] });
-    card.querySelector('.artifact-section')?.remove();
+    setupShowMediaSection(card, (gig.media || []).filter((item) => item.category !== 'artifact'), { songs: gig.songs || [] });
+    card.querySelectorAll('.artifact-section, .add-artifact-gig').forEach((element) => element.remove());
     artistShows.append(card);
   }
 }
@@ -891,9 +889,8 @@ async function renderVenuePage() {
     card.querySelector('.gig-place').textContent = `${gig.venue} · ${gig.city}`;
     card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
     renderAttendeeSummary(card.querySelector('.gig-summary'), gig);
-    card.querySelector('.song-total').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist';
-    renderMediaGallery(card.querySelector('.media-gallery'), (gig.media || []).filter((item) => item.category !== 'artifact'), { songs: gig.songs || [] });
-    card.querySelector('.artifact-section')?.remove();
+    setupShowMediaSection(card, (gig.media || []).filter((item) => item.category !== 'artifact'), { songs: gig.songs || [] });
+    card.querySelectorAll('.artifact-section, .add-artifact-gig').forEach((element) => element.remove());
     venueShows.append(card);
   });
   if (!venueNameFromUrl) return;
@@ -1407,46 +1404,35 @@ function remoteSharedArchiveShows() {
   return sharedShows.filter((show) => show.contributions?.length && !localIds.has(show.id) && !localIds.has(show.sourceGigId));
 }
 
+function setupShowMediaSection(card, media = [], options = {}) {
+  const section = card.querySelector('.show-media-section');
+  const gallery = section?.querySelector('.media-gallery');
+  if (!section || !gallery) return;
+  section.hidden = media.length === 0;
+  if (!media.length) return;
+  section.querySelector('summary span').textContent = media.length ? `Media · ${media.length}` : 'Media';
+  renderMediaGallery(gallery, media, options);
+}
+
 function setupArtifactSection(card, gig) {
   const section = card.querySelector('.artifact-section');
-  const input = card.querySelector('.artifact-input');
   const gallery = card.querySelector('.artifact-gallery');
-  const message = card.querySelector('.artifact-message');
-  if (!section || !input || !gallery) return;
+  if (!section || !gallery) return;
   let artifacts = (gig.media || []).filter((item) => item.category === 'artifact');
+  const syncArtifactVisibility = () => {
+    section.hidden = artifacts.length === 0;
+  };
   const renderArtifacts = () => {
+    syncArtifactVisibility();
     section.querySelector('summary span').textContent = artifacts.length ? `Artifacts · ${artifacts.length}` : 'Artifacts';
     renderMediaGallery(gallery, artifacts, { editable: true, allowCover: false, onDelete: (removed) => {
       const removedIds = new Set(removed.map((item) => item.id));
       gig.media = (gig.media || []).filter((item) => !removedIds.has(item.id));
       section.querySelector('summary span').textContent = artifacts.length ? `Artifacts · ${artifacts.length}` : 'Artifacts';
+      syncArtifactVisibility();
     } });
   };
-  const refreshArtifacts = async () => {
-    const media = await fetchJson(`/api/gigs/${gig.id}/media`);
-    gig.media = media;
-    artifacts = media.filter((item) => item.category === 'artifact');
-    renderArtifacts();
-  };
   renderArtifacts();
-  if (artifacts.length) section.open = true;
-  if (isMobileUpload) {
-    setupMobileFileQueue(input, 'artifact');
-    startMobileUploadQueue(input, gig.id, () => { message.textContent = 'Artifact photo uploaded.'; }, refreshArtifacts, 'artifact');
-  } else {
-    input.addEventListener('change', async () => {
-      const files = [...(input.files || [])];
-      if (!files.length) return;
-      input.disabled = true;
-      message.classList.remove('error');
-      try {
-        await uploadGigMedia(gig.id, files, (file, fraction) => { message.textContent = `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; }, 'artifact');
-        await refreshArtifacts();
-        message.textContent = `${files.length} artifact photo${files.length === 1 ? '' : 's'} added.`;
-      } catch (error) { message.textContent = error.message; message.classList.add('error'); }
-      finally { input.disabled = false; input.value = ''; }
-    });
-  }
 }
 
 function renderRemoteSharedGig(show) {
@@ -1457,7 +1443,7 @@ function renderRemoteSharedGig(show) {
   article.dataset.showDate = show.date || '';
   article.dataset.showRating = String(Math.max(0, ...show.contributions.map((entry) => Number(entry.performanceRating || 0))));
   article.dataset.showFavorite = show.contributions.some((entry) => entry.favorite) ? '1' : '0';
-  card.querySelector('.artifact-section')?.remove();
+  card.querySelectorAll('.artifact-section, .add-artifact-gig').forEach((element) => element.remove());
   card.querySelector('.gig-date').textContent = formatGigDate(show.date);
   card.querySelector('h3').innerHTML = `<a class="artist-link" href="/artist?name=${encodeURIComponent(show.artist)}">${escapeHtml(show.artist)}</a>`;
   card.querySelector('.gig-place').innerHTML = `<a class="venue-link" href="/venue?name=${encodeURIComponent(show.venue)}&city=${encodeURIComponent(show.city)}">${escapeHtml(show.venue)}</a> · <a class="venue-link" href="/city?name=${encodeURIComponent(show.city)}">${escapeHtml(show.city)}</a>`;
@@ -1465,7 +1451,6 @@ function renderRemoteSharedGig(show) {
   card.querySelector('.gig-notes').textContent = `Shared by ${participants.join(', ')}`;
   const mediaTotal = show.contributions.reduce((sum, entry) => sum + (entry.media?.length || 0), 0);
   card.querySelector('.venue-notes').textContent = `${mediaTotal} media item${mediaTotal === 1 ? '' : 's'} listed on peer instances`;
-  card.querySelector('.song-total').textContent = show.songs?.length ? `${show.songs.length} songs` : 'No setlist';
   const ratings = card.querySelector('.gig-ratings');
   ratings.innerHTML = show.contributions.map((entry) => `<span class="remote-rating"><b>${escapeHtml(entry.participantName || 'Peer')}</b> · ${entry.performanceRating ? `Performance ${entry.performanceRating}/5` : 'Performance unrated'} · ${entry.venueRating ? `Venue ${entry.venueRating}/5` : 'Venue unrated'}${entry.favorite ? ' · ♥ Favourite' : ''}</span>`).join('');
   const heart = card.querySelector('.heart-toggle');
@@ -1478,8 +1463,10 @@ function renderRemoteSharedGig(show) {
     card.querySelector('.setlist').innerHTML = `<details class="setlist-accordion"><summary>Setlist <span>${show.songs.length} tracks</span></summary><div class="setlist-accordion-content">${tracks}</div></details>`;
   }
   const contributions = card.querySelector('.media-gallery');
+  card.querySelector('.show-media-section').hidden = mediaTotal === 0;
   contributions.className = 'remote-contributions local-shared-attendees';
   contributions.innerHTML = show.contributions.map((entry) => `<div><strong>${escapeHtml(entry.participantName || 'Peer')}</strong><span>${entry.media?.length || 0} media · synced ${escapeHtml(new Date(entry.updatedAt).toLocaleString())}</span>${entry.performanceNotes || entry.venueNotes ? `<small>${escapeHtml(entry.performanceNotes || entry.venueNotes)}</small>` : ''}</div>`).join('');
+  card.querySelector('.show-media-section summary span').textContent = `Peer media · ${mediaTotal}`;
   return card;
 }
 
@@ -1494,7 +1481,6 @@ function renderGigs() {
   const filtered = gigs.filter((gig) => (!query || [gig.artist, gig.venue, gig.city].some((value) => value.toLowerCase().includes(query))) && (!year || gig.date.startsWith(year)) && (!favouriteFilter?.checked || gig.favorite));
   const remoteFiltered = remoteShows.filter((show) => (!query || [show.artist, show.venue, show.city, ...show.contributions.map((entry) => entry.participantName || '')].some((value) => value.toLowerCase().includes(query))) && (!year || show.date.startsWith(year)) && (!favouriteFilter?.checked || show.contributions.some((entry) => entry.favorite)));
   emptyState.hidden = Boolean(filtered.length || remoteFiltered.length);
-  copyPlaylist.hidden = !gigs.some((gig) => gig.songs?.length);
   gigList.replaceChildren();
   const orderedGigs = [...filtered].sort((a, b) => sort === 'oldest' ? a.date.localeCompare(b.date) : sort === 'rating' ? (Number(b.performanceRating || 0) - Number(a.performanceRating || 0)) || b.date.localeCompare(a.date) : Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || b.date.localeCompare(a.date));
   for (const gig of orderedGigs) {
@@ -1523,9 +1509,8 @@ function renderGigs() {
       details.innerHTML = `<summary>${peerContributions.length} peer contribution${peerContributions.length === 1 ? '' : 's'}</summary>${peerContributions.map((entry) => `<div><strong>${escapeHtml(entry.participantName || 'Peer')}</strong><span>${entry.performanceRating ? `Performance ${entry.performanceRating}/5` : 'Performance unrated'} · ${entry.venueRating ? `Venue ${entry.venueRating}/5` : 'Venue unrated'} · ${entry.media?.length || 0} media</span>${entry.performanceNotes || entry.venueNotes ? `<small>${escapeHtml(entry.performanceNotes || entry.venueNotes)}</small>` : ''}</div>`).join('')}`;
       card.querySelector('.gig-summary').append(details);
     }
-    card.querySelector('.song-total').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist';
     const ratings = card.querySelector('.gig-ratings');
-    ratings.innerHTML = quickRating('performanceRating', 'Performance', gig.performanceRating) + quickRating('venueRating', 'Venue', gig.venueRating);
+    ratings.innerHTML = quickRating('performanceRating', 'Performance', gig.performanceRating);
     ratings.querySelectorAll('.quick-star').forEach((button) => button.addEventListener('click', async () => {
       try {
         const updated = await fetchJson(`/api/gigs/${gig.id}`, {
@@ -1550,18 +1535,16 @@ function renderGigs() {
         setMessage(error.message, true);
       }
     });
-    const shareButton = card.querySelector('.share-gig');
-    shareButton.textContent = attendeeNames(gig).length > 1 ? 'Shared' : 'Add attendees';
-    shareButton.addEventListener('click', () => window.location.assign(`/edit?id=${encodeURIComponent(gig.id)}`));
     const setlist = card.querySelector('.setlist');
     const exports = card.querySelector('.exports');
+    exports.hidden = true;
     if (gig.songs?.length) {
       const tracks = `<ol>${gig.songs.map((song) => `<li>${escapeHtml(song.title)}${song.artist && song.artist !== gig.artist ? ` <span>— ${escapeHtml(song.artist)}</span>` : ''}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>${gig.setlistFmUrl ? `<a href="${escapeHtml(gig.setlistFmUrl)}" target="_blank" rel="noreferrer">View source on setlist.fm ↗</a>` : ''}`;
       setlist.innerHTML = `<details class="setlist-accordion"><summary>Setlist <span>${gig.songs.length} tracks</span></summary><div class="setlist-accordion-content">${tracks}</div></details>`;
       exports.hidden = false;
       setupExportButtons(exports, gig);
     }
-    renderMediaGallery(card.querySelector('.media-gallery'), (gig.media || []).filter((item) => item.category !== 'artifact'), { songs: gig.songs || [] });
+    setupShowMediaSection(card, (gig.media || []).filter((item) => item.category !== 'artifact'), { songs: gig.songs || [] });
     setupArtifactSection(card, gig);
     card.querySelector('.delete-gig').addEventListener('click', async () => {
       if (!confirm(`Remove ${gig.artist} at ${gig.venue}?`)) return;
@@ -1670,14 +1653,12 @@ function setupExportButtons(exports, gig) {
     const provider = button.dataset.provider;
     const integration = integrationFor(provider);
     const label = providerName(provider);
+    button.textContent = label;
     if (!integration?.configured) {
-      button.textContent = `Set up ${label}`;
       button.disabled = true;
       button.title = `Add ${label} credentials to .env, then restart the server.`;
       return;
     }
-    if (provider !== 'apple-music' && !integration.connected) button.textContent = `Connect ${label}`;
-    else button.textContent = `Export to ${label}`;
     button.addEventListener('click', () => runExport(provider, gig, exports, status));
   });
 }
@@ -1730,15 +1711,6 @@ async function authorizeAppleMusic(developerToken) {
   }
   return window.MusicKit.getInstance().authorize();
 }
-
-copyPlaylist.addEventListener('click', async () => {
-  const source = gigs.find((gig) => gig.songs?.length);
-  if (!source) return;
-  const text = source.songs.map((song) => `${song.artist || source.artist} — ${song.title}`).join('\n');
-  await navigator.clipboard.writeText(text);
-  copyPlaylist.textContent = 'Copied!';
-  setTimeout(() => { copyPlaylist.textContent = 'Copy selected setlist'; }, 1800);
-});
 
 async function initializeApp() {
   if (page === 'shared') { window.location.replace('/shows'); return; }

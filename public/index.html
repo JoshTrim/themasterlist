@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>The Master List — Live music archive</title>
-    <link rel="stylesheet" href="/styles.css?v=artifacts-2" />
+    <link rel="stylesheet" href="/styles.css?v=show-layout-11" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   </head>
   <body>
@@ -76,7 +76,6 @@
       <section class="archive" id="shows-archive" aria-labelledby="archive-heading">
         <div class="section-heading archive-heading">
           <div><p class="eyebrow">02 / The archive</p><h2 id="archive-heading">Shows attended</h2></div>
-          <button class="text-button" id="copy-playlist" type="button" hidden>Copy selected setlist</button>
         </div>
         <div class="archive-filters" aria-label="Filter shows"><label>Search <input id="show-filter" type="search" placeholder="Artist, venue, city" /></label><label>Year <select id="year-filter"><option value="">All years</option></select></label><label>View <select id="sort-filter"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="rating">Highest rated</option></select></label><label class="filter-favourite"><input id="favourite-filter" type="checkbox" /> Favourites only</label></div>
         <div class="archive-stats" id="archive-stats" aria-label="Archive statistics"></div>
@@ -158,13 +157,13 @@
       <article class="gig-card">
         <div class="gig-date"></div>
         <div class="gig-summary"><h3></h3><p class="gig-place"></p><p class="gig-notes"></p><p class="venue-notes"></p></div>
-        <div class="gig-meta"><button class="heart-toggle" aria-label="Mark as favourite" title="Mark as favourite">♡</button><span class="song-total"></span><a class="show-detail-link" href="#">Open memory</a><a class="play-gig" href="#">▶ Play set</a><button class="share-gig" type="button">Share</button><a class="edit-gig" href="#">Edit</a><button class="icon-button delete-gig" aria-label="Remove show" title="Remove show">×</button></div>
+        <div class="gig-meta"><button class="heart-toggle" aria-label="Mark as favourite" title="Mark as favourite">♡</button><a class="show-detail-link" href="#">Open</a><a class="play-gig" href="#">▶ Play set</a><a class="edit-gig" href="#">Edit</a><button class="icon-button delete-gig" aria-label="Remove show" title="Remove show">×</button></div>
         <div class="gig-ratings"></div>
         <div class="setlist"></div>
-        <div class="media-gallery" aria-label="Photos and videos from this show"></div>
-        <details class="artifact-section"><summary><span>Artifacts</span><small>Merch, physical setlists, tickets and keepsakes</small></summary><div class="artifact-content"><label class="artifact-upload media-upload">+ Add artifact photos<input class="artifact-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple /><span>Photograph something you brought home from the show.</span><div class="media-upload-status" aria-live="polite" hidden></div></label><p class="artifact-message" role="status"></p><div class="artifact-gallery media-gallery" aria-label="Photos of artifacts from this show"></div></div></details>
+        <details class="show-media-section"><summary><span>Media</span></summary><div class="show-media-content"><div class="media-gallery" aria-label="Photos and videos from this show"></div></div></details>
+        <details class="artifact-section"><summary><span>Artifacts</span><small>Merch, physical setlists, tickets and keepsakes</small></summary><div class="artifact-content"><div class="artifact-gallery media-gallery" aria-label="Photos of artifacts from this show"></div></div></details>
         <div class="exports" hidden>
-          <span>Make it a playlist</span>
+          <span>Export playlist</span>
           <div class="export-buttons">
             <button class="export-button" data-provider="spotify" type="button">Spotify</button>
             <button class="export-button" data-provider="youtube" type="button">YouTube</button>
@@ -187,6 +186,6 @@
     <div class="media-lightbox" id="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Media viewer"><button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Close media viewer">×</button><img id="media-lightbox-image" alt="" /><video id="media-lightbox-video" controls></video><p id="media-lightbox-caption"></p></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="/app.js?v=artifacts-2"></script>
+    <script src="/app.js?v=show-layout-11"></script>
   </body>
 </html>
