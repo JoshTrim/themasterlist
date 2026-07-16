@@ -108,6 +108,8 @@ addColumnIfMissing('gig_media', 'external_url', 'TEXT');
 addColumnIfMissing('gig_media', 'song_index', 'INTEGER');
 addColumnIfMissing('gig_media', 'playback_filename', 'TEXT');
 addColumnIfMissing('gig_media', 'playback_mime', 'TEXT');
+addColumnIfMissing('gig_media', 'playback_status', "TEXT NOT NULL DEFAULT 'not_started'");
+addColumnIfMissing('gig_media', 'playback_error', 'TEXT');
 addColumnIfMissing('gig_media', 'checksum', 'TEXT');
 addColumnIfMissing('gig_media', 'recognition_status', "TEXT NOT NULL DEFAULT 'not_started'");
 addColumnIfMissing('gig_media', 'recognition_result', 'TEXT');
@@ -121,6 +123,8 @@ addColumnIfMissing('gig_media', 'background_status', "TEXT NOT NULL DEFAULT 'not
 addColumnIfMissing('gig_media', 'background_error', 'TEXT');
 addColumnIfMissing('gig_media', 'use_background_removed', 'INTEGER NOT NULL DEFAULT 0');
 database.prepare("UPDATE gig_media SET background_status = 'error', background_error = 'Interrupted by server restart' WHERE background_status = 'running'").run();
+database.prepare("UPDATE gig_media SET playback_status = 'ready', playback_error = NULL WHERE playback_filename IS NOT NULL").run();
+database.prepare("UPDATE gig_media SET playback_status = 'error', playback_error = 'Interrupted by server restart' WHERE playback_status = 'encoding'").run();
 database.exec(`
   CREATE TABLE IF NOT EXISTS profiles (
     id TEXT PRIMARY KEY,
@@ -340,7 +344,7 @@ async function readGigs() {
     setlistFmUrl: row.setlist_fm_url,
     songs: JSON.parse(row.songs || '[]'),
     attendees: JSON.parse(row.attendees || '[]'),
-    media: database.prepare('SELECT id, filename, playback_filename AS playbackFilename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt, recognition_status AS recognitionStatus, recognition_title AS recognitionTitle, recognition_artist AS recognitionArtist, recognition_album AS recognitionAlbum, recognition_error AS recognitionError, recognition_override AS recognitionOverride, background_filename AS backgroundFilename, background_status AS backgroundStatus, background_error AS backgroundError, use_background_removed AS useBackgroundRemoved FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id).map(formatMediaRow),
+    media: database.prepare('SELECT id, filename, playback_filename AS playbackFilename, playback_mime AS playbackMime, playback_status AS playbackStatus, playback_error AS playbackError, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt, recognition_status AS recognitionStatus, recognition_title AS recognitionTitle, recognition_artist AS recognitionArtist, recognition_album AS recognitionAlbum, recognition_error AS recognitionError, recognition_override AS recognitionOverride, background_filename AS backgroundFilename, background_status AS backgroundStatus, background_error AS backgroundError, use_background_removed AS useBackgroundRemoved FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(row.id).map(formatMediaRow),
     createdAt: row.created_at
   }));
 }
@@ -1034,6 +1038,13 @@ function createPlaybackProxy(filePath, outputPath) {
 
 function formatMediaRow(media) {
   const useBackgroundRemoved = Boolean(media.useBackgroundRemoved && media.backgroundFilename);
+  const external = Boolean(media.externalUrl);
+  const originalExists = external || Boolean(media.filename && legacyFs.existsSync(path.join(MEDIA_DIR, media.filename)));
+  const playbackExists = Boolean(media.playbackFilename && legacyFs.existsSync(path.join(MEDIA_DIR, media.playbackFilename)));
+  let playbackSize = 0;
+  if (playbackExists) {
+    try { playbackSize = legacyFs.statSync(path.join(MEDIA_DIR, media.playbackFilename)).size; } catch { playbackSize = 0; }
+  }
   return {
     ...media,
     isCover: Boolean(media.isCover),
@@ -1041,12 +1052,16 @@ function formatMediaRow(media) {
     useBackgroundRemoved,
     rotation: Number(media.rotation || 0),
     songIndex: media.songIndex === null ? null : Number(media.songIndex),
+    originalExists,
+    playbackExists,
+    playbackSize,
+    playbackStatus: external ? 'external' : !String(media.mimeType || '').startsWith('video/') ? 'not_required' : !originalExists ? 'missing' : playbackExists ? 'ready' : media.playbackStatus || 'not_started',
     url: media.externalUrl || `/api/media/${media.id}${useBackgroundRemoved ? '?variant=cutout' : ''}`
   };
 }
 
 function mediaRows(gigId) {
-  return database.prepare('SELECT id, filename, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt, recognition_status AS recognitionStatus, recognition_title AS recognitionTitle, recognition_artist AS recognitionArtist, recognition_album AS recognitionAlbum, recognition_error AS recognitionError, recognition_override AS recognitionOverride, background_filename AS backgroundFilename, background_status AS backgroundStatus, background_error AS backgroundError, use_background_removed AS useBackgroundRemoved FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(gigId).map(formatMediaRow);
+  return database.prepare('SELECT id, filename, playback_filename AS playbackFilename, playback_mime AS playbackMime, playback_status AS playbackStatus, playback_error AS playbackError, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, size, created_at AS createdAt, recognition_status AS recognitionStatus, recognition_title AS recognitionTitle, recognition_artist AS recognitionArtist, recognition_album AS recognitionAlbum, recognition_error AS recognitionError, recognition_override AS recognitionOverride, background_filename AS backgroundFilename, background_status AS backgroundStatus, background_error AS backgroundError, use_background_removed AS useBackgroundRemoved FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(gigId).map(formatMediaRow);
 }
 
 function removeImageBackground(inputPath, outputPath) {
@@ -1163,6 +1178,51 @@ async function mapLocations() {
   }
   if (changed) await writeGeocodes(geocodes);
   return [...locations.values()];
+}
+
+async function archiveHealth() {
+  const gigs = await readGigs();
+  const geocodes = await readGeocodes();
+  const issues = [];
+  const artists = new Map();
+  const venues = new Map();
+
+  for (const gig of gigs) {
+    const songs = Array.isArray(gig.songs) ? gig.songs : [];
+    if (!songs.length) issues.push({ id: `setlist:${gig.id}`, type: 'setlist', title: gig.artist, detail: `${gig.venue} · ${gig.date || 'Date unknown'} has no setlist`, repairable: false, href: `/edit?id=${encodeURIComponent(gig.id)}` });
+    const missingAlbums = songs.filter((song) => !String(song.album || '').trim() || /^unknown album$/i.test(String(song.album).trim())).length;
+    if (missingAlbums) issues.push({ id: `albums:${gig.id}`, type: 'albums', key: gig.id, title: gig.artist, detail: `${missingAlbums} of ${songs.length} tracks need album metadata`, repairable: true, href: `/edit?id=${encodeURIComponent(gig.id)}` });
+    const artistKey = gig.artist.trim().toLowerCase();
+    if (!artists.has(artistKey)) artists.set(artistKey, gig.artist.trim());
+    const venueKey = `${gig.venue}|${gig.city}`.toLowerCase();
+    if (!venues.has(venueKey)) venues.set(venueKey, { name: gig.venue, city: gig.city });
+  }
+
+  for (const [key, name] of artists) {
+    const info = database.prepare('SELECT bio, image FROM artist_info WHERE lookup_name = ?').get(key);
+    if (!info?.bio || !info?.image) issues.push({ id: `artist:${key}`, type: 'artist', key: name, title: name, detail: !info ? 'Artist profile has not been fetched' : `Artist profile is missing ${[!info.bio && 'bio', !info.image && 'photo'].filter(Boolean).join(' and ')}`, repairable: true, href: `/artist?name=${encodeURIComponent(name)}` });
+  }
+
+  for (const [key, venue] of venues) {
+    const info = database.prepare('SELECT bio, description, image FROM venue_info WHERE lookup_name = ?').get(key);
+    if (!(info?.bio || info?.description) || !info?.image) issues.push({ id: `venue:${key}`, type: 'venue', key, name: venue.name, city: venue.city, title: venue.name, detail: !info ? `${venue.city} venue profile has not been fetched` : `Venue profile is missing ${[!(info.bio || info.description) && 'bio', !info.image && 'photo'].filter(Boolean).join(' and ')}`, repairable: true, href: `/venue?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}` });
+    if (!geocodes[key]) issues.push({ id: `location:${key}`, type: 'location', key, name: venue.name, city: venue.city, title: venue.name, detail: `No map coordinates stored for ${venue.city}`, repairable: true, href: '/map' });
+  }
+
+  const counts = issues.reduce((result, issue) => { result[issue.type] = (result[issue.type] || 0) + 1; return result; }, {});
+  return { totalShows: gigs.length, healthy: issues.length === 0, counts, issues };
+}
+
+async function enrichGigAlbums(gigId, forceMissing = false) {
+  const gig = database.prepare('SELECT artist, songs FROM gigs WHERE id = ?').get(gigId);
+  if (!gig) throw new Error('Gig not found.');
+  const songs = JSON.parse(gig.songs || '[]');
+  if (forceMissing) songs.filter((song) => !String(song.album || '').trim() || /^unknown album$/i.test(String(song.album).trim())).forEach((song) => database.prepare('DELETE FROM album_lookup_cache WHERE cache_key = ?').run(`v6::${song.artist || gig.artist}::${song.title}`.toLowerCase()));
+  const enriched = await Promise.all(songs.map(async (song) => ({ ...song, album: await resolveAlbum(song.artist || gig.artist, song.title) || song.album || null })));
+  database.prepare('UPDATE gigs SET songs = ? WHERE id = ?').run(JSON.stringify(enriched), gigId);
+  const counts = {};
+  enriched.forEach((song) => { const album = song.album || 'Unknown album'; counts[album] = (counts[album] || 0) + 1; });
+  return { songs: enriched, albums: counts };
 }
 
 async function readBody(request) {
@@ -1850,6 +1910,69 @@ async function handleApi(request, response, url) {
     return sendJson(response, 200, { name, city, ...info });
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/health') return sendJson(response, 200, await archiveHealth());
+  if (request.method === 'POST' && url.pathname === '/api/health/repair') {
+    const body = await readBody(request);
+    const type = String(body.type || '');
+    if (type === 'albums') await enrichGigAlbums(String(body.key || ''), true);
+    else if (type === 'artist') {
+      const name = String(body.key || '').trim();
+      if (!name) return sendError(response, 400, 'Artist name is required.');
+      database.prepare('DELETE FROM artist_info WHERE lookup_name = ?').run(name.toLowerCase());
+      await fetchArtistInfo(name);
+    } else if (type === 'venue') {
+      const name = String(body.name || '').trim(); const city = String(body.city || '').trim();
+      if (!name) return sendError(response, 400, 'Venue name is required.');
+      database.prepare('DELETE FROM venue_info WHERE lookup_name = ?').run(`${name}|${city}`.toLowerCase());
+      await fetchVenueInfo(name, city);
+    } else if (type === 'location') {
+      const key = String(body.key || '').toLowerCase();
+      const geocodes = await readGeocodes();
+      delete geocodes[key];
+      await writeGeocodes(geocodes);
+      await mapLocations();
+    } else return sendError(response, 400, 'This metadata issue cannot be repaired automatically.');
+    return sendJson(response, 200, await archiveHealth());
+  }
+  if (request.method === 'POST' && url.pathname === '/api/health/manual') {
+    const body = await readBody(request);
+    const type = String(body.type || '');
+    if (type === 'artist') {
+      const name = String(body.key || '').trim();
+      if (!name) return sendError(response, 400, 'Artist name is required.');
+      const info = {
+        title: String(body.title || name).trim(), description: String(body.description || '').trim(), bio: String(body.bio || '').trim(),
+        image: String(body.image || '').trim() || null, source: String(body.source || '').trim() || null
+      };
+      database.prepare('INSERT OR REPLACE INTO artist_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(name.toLowerCase(), info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
+    } else if (type === 'venue') {
+      const name = String(body.name || '').trim(); const city = String(body.city || '').trim();
+      if (!name) return sendError(response, 400, 'Venue name is required.');
+      const info = {
+        title: String(body.title || name).trim(), description: String(body.description || '').trim(), bio: String(body.bio || '').trim(),
+        image: String(body.image || '').trim() || null, source: String(body.source || '').trim() || null
+      };
+      database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(`${name}|${city}`.toLowerCase(), info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
+    } else if (type === 'location') {
+      const key = String(body.key || '').toLowerCase(); const address = String(body.address || '').trim();
+      let lat = Number(body.lat); let lng = Number(body.lng);
+      if (!key) return sendError(response, 400, 'A venue location is required.');
+      if (address) {
+        const query = new URL('https://nominatim.openstreetmap.org/search');
+        query.searchParams.set('q', address); query.searchParams.set('format', 'jsonv2'); query.searchParams.set('limit', '1');
+        const result = await fetch(query, { headers: { 'User-Agent': 'TheMasterList/0.1 personal-live-music-archive', 'Accept-Language': 'en' } });
+        const match = result.ok ? (await result.json())[0] : null;
+        if (!match) return sendError(response, 404, 'That address could not be found. Try including the suburb, city and country.');
+        lat = Number(match.lat); lng = Number(match.lon);
+      }
+      if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) return sendError(response, 400, 'Enter an address or valid latitude and longitude coordinates.');
+      const geocodes = await readGeocodes();
+      geocodes[key] = { lat, lng };
+      await writeGeocodes(geocodes);
+    } else return sendError(response, 400, 'Manual entry is not available for this issue type.');
+    return sendJson(response, 200, await archiveHealth());
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/gigs') {
     const gigs = await readGigs();
     return sendJson(response, 200, gigs.sort((a, b) => b.date.localeCompare(a.date)));
@@ -1857,14 +1980,7 @@ async function handleApi(request, response, url) {
 
   const albumStatsMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/album-stats$/);
   if (albumStatsMatch && request.method === 'GET') {
-    const gig = database.prepare('SELECT artist, songs FROM gigs WHERE id = ?').get(albumStatsMatch[1]);
-    if (!gig) return sendError(response, 404, 'Gig not found.');
-    const songs = JSON.parse(gig.songs || '[]');
-    const enriched = await Promise.all(songs.map(async (song) => ({ ...song, album: await resolveAlbum(song.artist || gig.artist, song.title) || song.album || null })));
-    database.prepare('UPDATE gigs SET songs = ? WHERE id = ?').run(JSON.stringify(enriched), albumStatsMatch[1]);
-    const counts = {};
-    enriched.forEach((song) => { const album = song.album || 'Unknown album'; counts[album] = (counts[album] || 0) + 1; });
-    return sendJson(response, 200, { songs: enriched, albums: counts });
+    return sendJson(response, 200, await enrichGigAlbums(albumStatsMatch[1]));
   }
 
   if (request.method === 'POST' && url.pathname === '/api/gigs') {
@@ -1931,7 +2047,7 @@ async function handleApi(request, response, url) {
       const id = randomUUID(); const mimeType = uploadMimeType; const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ? AND category = ?').get(gigId, session.category || 'show').next;
       database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, rotation, category, checksum, size, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, 0, ?, ?, ?, ?)').run(id, gigId, session.stored, mimeType, filename, sortOrder, session.category || 'show', digest, session.total, new Date().toISOString()); uploadSessions.set(uploadId, { ...session, complete: true, mediaId: id, expiresAt: Date.now() + 10 * 60 * 1000 });
       if (process.env.AUDD_API_TOKEN && mimeType.startsWith('video/')) database.prepare("UPDATE gig_media SET recognition_status = 'queued' WHERE id = ?").run(id);
-      if (mimeType.startsWith('video/')) { const gigInfo = database.prepare('SELECT artist, venue, date FROM gigs WHERE id = ?').get(gigId); const sourcePath = path.join(MEDIA_DIR, session.stored); const proxyName = `${safeMediaName(gigInfo?.artist)}-${safeMediaName(gigInfo?.venue)}-${safeMediaName(gigInfo?.date)}-${id.slice(0, 8)}-playback.mp4`; const encodeJobId = randomUUID(); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'running', 1); setImmediate(async () => { const encoded = await createPlaybackProxy(sourcePath, path.join(MEDIA_DIR, proxyName)); if (encoded) { database.prepare('UPDATE gig_media SET playback_filename = ?, playback_mime = ? WHERE id = ?').run(proxyName, 'video/mp4', id); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'complete', 100); } else saveBackgroundJob(encodeJobId, 'Encode video', filename, 'error', 0, 'Playback encode failed.'); }); setImmediate(() => recognizeVideoTrack(gigId, id, sourcePath, filename)); }
+      if (mimeType.startsWith('video/')) { const gigInfo = database.prepare('SELECT artist, venue, date FROM gigs WHERE id = ?').get(gigId); const sourcePath = path.join(MEDIA_DIR, session.stored); const proxyName = `${safeMediaName(gigInfo?.artist)}-${safeMediaName(gigInfo?.venue)}-${safeMediaName(gigInfo?.date)}-${id.slice(0, 8)}-playback.mp4`; const encodeJobId = randomUUID(); database.prepare("UPDATE gig_media SET playback_status = 'encoding', playback_error = NULL WHERE id = ?").run(id); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'running', 1); setImmediate(async () => { const encoded = await createPlaybackProxy(sourcePath, path.join(MEDIA_DIR, proxyName)); if (encoded) { database.prepare("UPDATE gig_media SET playback_filename = ?, playback_mime = ?, playback_status = 'ready', playback_error = NULL WHERE id = ?").run(proxyName, 'video/mp4', id); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'complete', 100); } else { database.prepare("UPDATE gig_media SET playback_status = 'error', playback_error = 'Playback encode failed.' WHERE id = ?").run(id); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'error', 0, 'Playback encode failed.'); } }); setImmediate(() => recognizeVideoTrack(gigId, id, sourcePath, filename)); }
       return sendJson(response, 201, { complete: true, media: mediaRows(gigId).find((entry) => entry.id === id) });
     }
     return sendJson(response, 200, { complete: false, offset: session.offset });
@@ -1983,7 +2099,7 @@ async function handleApi(request, response, url) {
       database.prepare('INSERT INTO gig_media (id, gig_id, filename, playback_filename, mime_type, caption, is_cover, sort_order, rotation, category, checksum, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, storedFilename, playbackFilename, mimeType, decodeURIComponent(String(request.headers['x-media-caption'] || filename)).trim(), 0, sortOrder, 0, category, digest, size, new Date().toISOString());
       if (process.env.AUDD_API_TOKEN && mimeType.startsWith('video/')) database.prepare("UPDATE gig_media SET recognition_status = 'queued' WHERE id = ?").run(id);
       console.log(`[media] upload complete: ${id}`);
-      if (mimeType.startsWith('video/')) { const gigInfo = database.prepare('SELECT artist, venue, date FROM gigs WHERE id = ?').get(gigId); const sourcePath = path.join(MEDIA_DIR, storedFilename); const proxyName = `${safeMediaName(gigInfo?.artist)}-${safeMediaName(gigInfo?.venue)}-${safeMediaName(gigInfo?.date)}-${id.slice(0, 8)}-playback.mp4`; const encodeJobId = randomUUID(); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'running', 1); setImmediate(async () => { const encoded = await createPlaybackProxy(sourcePath, path.join(MEDIA_DIR, proxyName)); if (encoded) { database.prepare('UPDATE gig_media SET playback_filename = ?, playback_mime = ? WHERE id = ?').run(proxyName, 'video/mp4', id); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'complete', 100); } else saveBackgroundJob(encodeJobId, 'Encode video', filename, 'error', 0, 'Playback encode failed.'); }); setImmediate(() => recognizeVideoTrack(gigId, id, sourcePath, filename)); }
+      if (mimeType.startsWith('video/')) { const gigInfo = database.prepare('SELECT artist, venue, date FROM gigs WHERE id = ?').get(gigId); const sourcePath = path.join(MEDIA_DIR, storedFilename); const proxyName = `${safeMediaName(gigInfo?.artist)}-${safeMediaName(gigInfo?.venue)}-${safeMediaName(gigInfo?.date)}-${id.slice(0, 8)}-playback.mp4`; const encodeJobId = randomUUID(); database.prepare("UPDATE gig_media SET playback_status = 'encoding', playback_error = NULL WHERE id = ?").run(id); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'running', 1); setImmediate(async () => { const encoded = await createPlaybackProxy(sourcePath, path.join(MEDIA_DIR, proxyName)); if (encoded) { database.prepare("UPDATE gig_media SET playback_filename = ?, playback_mime = ?, playback_status = 'ready', playback_error = NULL WHERE id = ?").run(proxyName, 'video/mp4', id); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'complete', 100); } else { database.prepare("UPDATE gig_media SET playback_status = 'error', playback_error = 'Playback encode failed.' WHERE id = ?").run(id); saveBackgroundJob(encodeJobId, 'Encode video', filename, 'error', 0, 'Playback encode failed.'); } }); setImmediate(() => recognizeVideoTrack(gigId, id, sourcePath, filename)); }
       return sendJson(response, 201, mediaRows(gigId).find((media) => media.id === id));
     }
     const body = await readBody(request);
@@ -2013,6 +2129,44 @@ async function handleApi(request, response, url) {
     if (process.env.AUDD_API_TOKEN && mimeType.startsWith('video/')) database.prepare("UPDATE gig_media SET recognition_status = 'queued' WHERE id = ?").run(id);
     if (mimeType.startsWith('video/')) setImmediate(() => recognizeVideoTrack(gigId, id, path.join(MEDIA_DIR, storedFilename), filename));
     return sendJson(response, 201, mediaRows(gigId).find((media) => media.id === id));
+  }
+  const retryEncodeMatch = url.pathname.match(/^\/api\/media\/([\w-]+)\/retry-encode$/);
+  if (request.method === 'POST' && retryEncodeMatch) {
+    requireAccount(request);
+    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(retryEncodeMatch[1]);
+    if (!media || !String(media.mime_type || '').startsWith('video/') || media.external_url) return sendError(response, 400, 'Only uploaded videos can create a playback copy.');
+    if (media.playback_status === 'encoding') return sendError(response, 409, 'Playback encoding is already running.');
+    const sourcePath = path.join(MEDIA_DIR, media.filename);
+    if (!legacyFs.existsSync(sourcePath)) return sendError(response, 409, 'The original media file is missing from disk.');
+    const gigInfo = database.prepare('SELECT artist, venue, date FROM gigs WHERE id = ?').get(media.gig_id);
+    const proxyName = `${safeMediaName(gigInfo?.artist)}-${safeMediaName(gigInfo?.venue)}-${safeMediaName(gigInfo?.date)}-${media.id.slice(0, 8)}-playback.mp4`;
+    const jobId = randomUUID();
+    database.prepare("UPDATE gig_media SET playback_status = 'encoding', playback_error = NULL WHERE id = ?").run(media.id);
+    saveBackgroundJob(jobId, 'Encode video', media.caption || media.filename, 'running', 1);
+    setImmediate(async () => {
+      const encoded = await createPlaybackProxy(sourcePath, path.join(MEDIA_DIR, proxyName));
+      if (encoded) {
+        database.prepare("UPDATE gig_media SET playback_filename = ?, playback_mime = ?, playback_status = 'ready', playback_error = NULL WHERE id = ?").run(proxyName, 'video/mp4', media.id);
+        saveBackgroundJob(jobId, 'Encode video', media.caption || media.filename, 'complete', 100);
+      } else {
+        database.prepare("UPDATE gig_media SET playback_status = 'error', playback_error = 'Playback encode failed.' WHERE id = ?").run(media.id);
+        saveBackgroundJob(jobId, 'Encode video', media.caption || media.filename, 'error', 0, 'Playback encode failed.');
+      }
+    });
+    return sendJson(response, 202, { jobId });
+  }
+  const retryRecognitionMatch = url.pathname.match(/^\/api\/media\/([\w-]+)\/retry-recognition$/);
+  if (request.method === 'POST' && retryRecognitionMatch) {
+    requireAccount(request);
+    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(retryRecognitionMatch[1]);
+    if (!media || !String(media.mime_type || '').startsWith('video/') || media.external_url) return sendError(response, 400, 'Only uploaded videos can use track detection.');
+    if (['queued', 'running'].includes(media.recognition_status)) return sendError(response, 409, 'Track detection is already running.');
+    if (!process.env.AUDD_API_TOKEN) return sendError(response, 409, 'AudD is not configured.');
+    const sourcePath = path.join(MEDIA_DIR, media.filename);
+    if (!legacyFs.existsSync(sourcePath)) return sendError(response, 409, 'The original media file is missing from disk.');
+    database.prepare("UPDATE gig_media SET recognition_status = 'queued', recognition_error = NULL WHERE id = ?").run(media.id);
+    setImmediate(() => recognizeVideoTrack(media.gig_id, media.id, sourcePath, media.caption || media.filename));
+    return sendJson(response, 202, { ok: true });
   }
   const mediaMatch = url.pathname.match(/^\/api\/media\/([\w-]+)$/);
   if (request.method === 'PATCH' && mediaMatch) {
@@ -2068,7 +2222,7 @@ async function handleApi(request, response, url) {
     const start = Number(url.searchParams.get('start')); const end = Number(url.searchParams.get('end'));
     if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) return sendError(response, 400, 'Trim times are invalid.');
     const inputPath = path.join(MEDIA_DIR, media.filename); const outputPath = `${inputPath}.trimming.mp4`; const jobId = randomUUID(); saveBackgroundJob(jobId, 'Trim video', media.filename, 'running', 5);
-    setImmediate(async () => { try { await trimVideoFile(inputPath, outputPath, start, end - start, (timeMs) => saveBackgroundJob(jobId, 'Trim video', media.filename, 'running', Math.min(99, Math.round((timeMs / 1000000 / (end - start)) * 100)))); await fs.rename(outputPath, inputPath); if (media.playback_filename) await fs.rm(path.join(MEDIA_DIR, media.playback_filename), { force: true }); database.prepare('UPDATE gig_media SET playback_filename = NULL, playback_mime = NULL, size = ?, checksum = ? WHERE id = ?').run((await fs.stat(inputPath)).size, await hashFile(inputPath), media.id); saveBackgroundJob(jobId, 'Trim video', media.filename, 'complete', 100); } catch (error) { await fs.rm(outputPath, { force: true }); saveBackgroundJob(jobId, 'Trim video', media.filename, 'error', 0, error.message); } });
+    setImmediate(async () => { try { await trimVideoFile(inputPath, outputPath, start, end - start, (timeMs) => saveBackgroundJob(jobId, 'Trim video', media.filename, 'running', Math.min(99, Math.round((timeMs / 1000000 / (end - start)) * 100)))); await fs.rename(outputPath, inputPath); if (media.playback_filename) await fs.rm(path.join(MEDIA_DIR, media.playback_filename), { force: true }); database.prepare("UPDATE gig_media SET playback_filename = NULL, playback_mime = NULL, playback_status = 'not_started', playback_error = NULL, size = ?, checksum = ? WHERE id = ?").run((await fs.stat(inputPath)).size, await hashFile(inputPath), media.id); saveBackgroundJob(jobId, 'Trim video', media.filename, 'complete', 100); } catch (error) { await fs.rm(outputPath, { force: true }); saveBackgroundJob(jobId, 'Trim video', media.filename, 'error', 0, error.message); } });
     return sendJson(response, 202, { jobId });
   }
   const rotateMatch = url.pathname.match(/^\/api\/media\/([\w-]+)\/rotate$/);
@@ -2095,7 +2249,24 @@ async function handleApi(request, response, url) {
     if ('city' in update) gig.city = String(update.city || '').trim();
     if ('date' in update) gig.date = String(update.date || '').trim();
     if ('attendees' in update) gig.attendees = normaliseGigAttendees(update.attendees, request.account);
-    if ('songs' in update && Array.isArray(update.songs)) gig.songs = update.songs.map((song, index) => ({ title: String(song.title || '').trim(), artist: String(song.artist || '').trim(), encore: Boolean(song.encore), position: index + 1, info: String(song.info || '').trim() })).filter((song) => song.title);
+    if ('songs' in update && Array.isArray(update.songs)) gig.songs = update.songs.map((song, index) => {
+      const existing = gig.songs[index] || {};
+      const merged = {
+        ...existing,
+        ...song,
+        title: String(song.title || '').trim(),
+        artist: String(song.artist ?? existing.artist ?? '').trim(),
+        album: String(song.album ?? existing.album ?? '').trim() || null,
+        encore: 'encore' in song ? Boolean(song.encore) : Boolean(existing.encore),
+        position: index + 1,
+        info: String(song.info ?? existing.info ?? '').trim(),
+        startSeconds: song.startSeconds === '' || song.startSeconds === null || song.startSeconds === undefined ? null : Number(song.startSeconds),
+        endSeconds: song.endSeconds === '' || song.endSeconds === null || song.endSeconds === undefined ? null : Number(song.endSeconds)
+      };
+      if (!Number.isFinite(merged.startSeconds)) merged.startSeconds = null;
+      if (!Number.isFinite(merged.endSeconds)) merged.endSeconds = null;
+      return merged;
+    }).filter((song) => song.title);
     if ('favorite' in update) gig.favorite = update.favorite === true;
     if ('performanceRating' in update) gig.performanceRating = normaliseRating(update.performanceRating);
     if ('venueRating' in update) gig.venueRating = normaliseRating(update.venueRating);

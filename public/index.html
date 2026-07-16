@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>The Master List — Live music archive</title>
-    <link rel="stylesheet" href="/styles.css?v=memory-view-1" />
+    <link rel="stylesheet" href="/styles.css?v=archive-health-3" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   </head>
   <body>
@@ -14,7 +14,7 @@
     </div>
     <header class="site-header">
       <a class="brand" href="/">The<br /><em>Master</em> List</a>
-      <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">☰</button><nav class="site-nav" id="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/overview">Overview</a><a href="/api-limits">API limits</a><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a><a href="/login">Sign in</a></nav>
+      <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">☰</button><nav class="site-nav" id="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/overview">Overview</a><a href="/health">Health</a><a href="/api-limits">API limits</a><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a><a href="/login">Sign in</a></nav>
       <span class="record-count" id="record-count">0 shows</span>
     </header>
 
@@ -68,6 +68,7 @@
             <button class="button button-secondary" id="find-setlist" type="button">Find setlist.fm matches</button>
             <button class="button" type="submit">Save show</button>
           </div>
+          <div class="duplicate-warning" id="add-duplicate-warning" hidden></div>
           <p class="form-message" id="form-message" role="status"></p>
         </form>
         <div class="search-results" id="search-results" hidden></div>
@@ -86,6 +87,8 @@
       <section class="overview-page" id="overview-page" aria-labelledby="overview-heading"><div class="section-heading"><p class="eyebrow">05 / Archive intelligence</p><h1 id="overview-heading">Overview</h1><p class="lede">A snapshot of your live-music life.</p></div><div class="dashboard-stats" id="dashboard-stats"></div></section>
 
       <section class="api-limits-page" id="api-limits-page" aria-labelledby="api-limits-heading"><div class="section-heading"><p class="eyebrow">06 / Service health</p><h1 id="api-limits-heading">API limits</h1><p class="lede">A local estimate of how much provider capacity this archive has used today.</p></div><p class="api-limits-note" id="api-limits-note">Loading tracked requests…</p><div class="api-limits-grid" id="api-limits-grid"></div><div class="api-usage-detail" id="api-usage-detail"></div></section>
+
+      <section class="health-page" id="health-page" aria-labelledby="health-heading"><div class="section-heading health-heading"><div><p class="eyebrow">07 / Archive maintenance</p><h1 id="health-heading">Metadata health</h1><p class="lede">Find incomplete show, artist, venue and map records.</p></div><button class="button" id="repair-all-metadata" type="button">Repair all available</button></div><div class="health-summary" id="health-summary"></div><div class="health-filters" id="health-filters" aria-label="Filter metadata issues"></div><p class="form-message" id="health-message" role="status"></p><div class="health-list" id="health-list"></div></section>
 
       <section class="artist-page" id="artist-page" aria-labelledby="artist-heading">
         <a class="text-button artist-back" href="/shows">← Back to shows</a>
@@ -121,8 +124,8 @@
       <section class="edit-page" id="edit-page" aria-labelledby="edit-heading">
         <a class="text-button" href="/shows">← Back to shows</a>
         <div class="section-heading"><p class="eyebrow">Show edit</p><h1 id="edit-heading">Edit show</h1></div>
-        <form id="edit-form"><div class="form-grid"><label>Artist <input name="artist" required /></label><label>Date <input name="date" type="date" /></label><label>Venue <input name="venue" required /></label><label>City <input name="city" required /></label><label class="notes media-upload">Photos and videos <input id="edit-media-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>On mobile, select multiple files if your browser allows it; uploads queue one at a time.</small><div class="media-upload-status" aria-live="polite" hidden></div></label><label class="notes media-upload">Other media · YouTube <input id="edit-youtube-media-input" type="url" placeholder="https://youtube.com/watch?v=…" /></label></div><div class="edit-setlist"><p class="eyebrow">Setlist</p><p class="form-hint">Optional chapter times in seconds for the set player.</p><div id="edit-setlist-tracks"></div><button class="button button-secondary" id="add-edit-track" type="button">+ Add track</button></div><div class="form-actions"><button class="button" type="submit">Save changes</button></div><p class="form-message" id="edit-message" role="status"></p></form>
-        <div class="edit-gallery-heading"><p class="eyebrow">Attached media</p></div><div class="media-gallery edit-gallery" id="edit-gallery"></div>
+        <form id="edit-form"><div class="form-grid"><label>Artist <input name="artist" required /></label><label>Date <input name="date" type="date" /></label><label>Venue <input name="venue" required /></label><label>City <input name="city" required /></label><label class="notes media-upload">Photos and videos <input id="edit-media-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>On mobile, select multiple files if your browser allows it; uploads queue one at a time.</small><div class="media-upload-status" aria-live="polite" hidden></div></label><label class="notes media-upload">Other media · YouTube <input id="edit-youtube-media-input" type="url" placeholder="https://youtube.com/watch?v=…" /></label></div><div class="duplicate-warning" id="edit-duplicate-warning" hidden></div><div class="edit-setlist"><p class="eyebrow">Setlist</p><p class="form-hint">Optional chapter times in seconds for the set player.</p><div id="edit-setlist-tracks"></div><button class="button button-secondary" id="add-edit-track" type="button">+ Add track</button></div><div class="form-actions"><button class="button" type="submit">Save changes</button></div><p class="form-message" id="edit-message" role="status"></p></form>
+        <section class="media-workspace" aria-labelledby="media-workspace-heading"><div class="media-workspace-heading"><div><p class="eyebrow">Attached media</p><h2 id="media-workspace-heading">Media processing</h2><p>Track uploads, playback copies and song detection before they enter the show memory.</p></div><button class="button button-secondary" id="media-workspace-refresh" type="button">Refresh status</button></div><div class="media-workspace-stats" id="media-workspace-stats" aria-label="Media processing summary"></div><div class="media-workspace-filters" id="media-workspace-filters" aria-label="Filter attached media"><button type="button" data-media-filter="all" class="active">All</button><button type="button" data-media-filter="processing">Processing</button><button type="button" data-media-filter="failed">Needs attention</button><button type="button" data-media-filter="unassigned">Unassigned</button><button type="button" data-media-filter="ready">Ready</button></div><p class="empty-state media-workspace-empty" id="media-workspace-empty" hidden>No media matches this filter.</p><div class="media-gallery edit-gallery" id="edit-gallery"></div></section>
       </section>
 
       <section class="shared-section" id="shows-shared" aria-labelledby="shared-heading">
@@ -189,6 +192,6 @@
     <div class="media-lightbox" id="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Media viewer"><button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Close media viewer">×</button><img id="media-lightbox-image" alt="" /><video id="media-lightbox-video" controls></video><p id="media-lightbox-caption"></p></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="/app.js?v=memory-view-1"></script>
+    <script src="/app.js?v=archive-health-3"></script>
   </body>
 </html>

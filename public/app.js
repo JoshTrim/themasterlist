@@ -29,7 +29,12 @@ function updateJob(id, patch) {
   }));
   jobPanel.hidden = !visibleJobs.length;
 }
-window.addEventListener('beforeunload', (event) => { if ([...jobQueue.values()].some((job) => job.type === 'Uploading' && job.status === 'running')) { event.preventDefault(); event.returnValue = ''; } });
+window.addEventListener('beforeunload', (event) => {
+  const activeJob = [...jobQueue.values()].some((job) => job.type === 'Uploading' && job.status === 'running');
+  const mobileState = mobileUploadStates.get(editMediaInput);
+  const queuedMobileUpload = mobileState?.items?.some((item) => ['queued', 'uploading'].includes(item.status));
+  if (activeJob || queuedMobileUpload) { event.preventDefault(); event.returnValue = ''; }
+});
 async function loadPersistentJobs() { try { const jobs = await fetchJson('/api/jobs'); jobs.forEach((job) => updateJob(job.id, job)); } catch {} }
 const message = document.querySelector('#form-message');
 const results = document.querySelector('#search-results');
@@ -45,6 +50,13 @@ const dashboardStats = document.querySelector('#dashboard-stats');
 const apiLimitsGrid = document.querySelector('#api-limits-grid');
 const apiLimitsNote = document.querySelector('#api-limits-note');
 const apiUsageDetail = document.querySelector('#api-usage-detail');
+const healthSummary = document.querySelector('#health-summary');
+const healthFilters = document.querySelector('#health-filters');
+const healthList = document.querySelector('#health-list');
+const healthMessage = document.querySelector('#health-message');
+const repairAllMetadata = document.querySelector('#repair-all-metadata');
+const addDuplicateWarning = document.querySelector('#add-duplicate-warning');
+const editDuplicateWarning = document.querySelector('#edit-duplicate-warning');
 const loadMapButton = document.querySelector('#load-map');
 const mapMessage = document.querySelector('#map-message');
 const mapElement = document.querySelector('#gig-map');
@@ -90,11 +102,12 @@ let musicKitConfigured = false;
 let venueMap;
 let venueLayer;
 
-const page = ({ '/': 'home', '/overview': 'overview', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[window.location.pathname] || 'home';
+const page = ({ '/': 'home', '/overview': 'overview', '/health': 'health', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[window.location.pathname] || 'home';
 document.body.dataset.page = page;
 const routeSections = {
   home: ['home-page'],
   overview: ['overview-page'],
+  health: ['health-page'],
   'api-limits': ['api-limits-page'],
   add: ['add-page'],
   shows: ['shows-archive'],
@@ -110,7 +123,7 @@ const routeSections = {
   map: ['map-page'],
   account: ['account-page']
 };
-for (const id of ['home-page', 'overview-page', 'api-limits-page', 'add-page', 'shows-archive', 'artist-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
+for (const id of ['home-page', 'overview-page', 'health-page', 'api-limits-page', 'add-page', 'shows-archive', 'artist-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
   document.querySelector(`#${id}`).hidden = !routeSections[page].includes(id);
 }
 const chestButton = document.querySelector('#open-chest');
@@ -250,6 +263,10 @@ function addFileClearButton(input) { if (!input) return; const button = document
 addFileClearButton(mediaInput);
 addFileClearButton(editMediaInput);
 const editGallery = document.querySelector('#edit-gallery');
+const mediaWorkspaceStats = document.querySelector('#media-workspace-stats');
+const mediaWorkspaceFilters = document.querySelector('#media-workspace-filters');
+const mediaWorkspaceEmpty = document.querySelector('#media-workspace-empty');
+const mediaWorkspaceRefresh = document.querySelector('#media-workspace-refresh');
 const editSetlistTracks = document.querySelector('#edit-setlist-tracks');
 const addEditTrack = document.querySelector('#add-edit-track');
 const editGigId = new URLSearchParams(window.location.search).get('id') || '';
@@ -392,6 +409,37 @@ function formValues() {
   const data = new FormData(form);
   return Object.fromEntries(data.entries());
 }
+
+const duplicateKey = (value) => String(value || '').trim().toLocaleLowerCase();
+
+function findDuplicateShows(values, excludeId = '') {
+  const artist = duplicateKey(values.artist); const venue = duplicateKey(values.venue); const city = duplicateKey(values.city); const date = String(values.date || '').trim();
+  if (!artist || !venue) return [];
+  const localReferences = new Set(gigs.flatMap((gig) => [gig.id, gig.sharedId].filter(Boolean)));
+  const candidates = [
+    ...gigs.filter((gig) => gig.id !== excludeId).map((gig) => ({ ...gig, duplicateSource: 'Your archive' })),
+    ...sharedShows.filter((show) => !localReferences.has(show.id) && !localReferences.has(show.sourceGigId)).map((show) => ({ ...show, duplicateSource: 'Shared by a peer' }))
+  ];
+  return candidates.filter((gig) => duplicateKey(gig.artist) === artist && duplicateKey(gig.venue) === venue && (!city || !gig.city || duplicateKey(gig.city) === city) && String(gig.date || '').trim() === date);
+}
+
+function showDuplicateWarning(container, values, excludeId = '') {
+  if (!container) return [];
+  const matches = findDuplicateShows(values, excludeId);
+  container.hidden = !matches.length;
+  container.innerHTML = matches.length ? `<strong>Possible duplicate show</strong><p>${matches.length} matching ${matches.length === 1 ? 'entry already exists' : 'entries already exist'} for this artist, venue and date.</p>${matches.map((gig) => `<a href="${gig.duplicateSource === 'Your archive' ? `/show?id=${encodeURIComponent(gig.id)}` : '/shows'}"><span>${escapeHtml(gig.artist)}</span><small>${escapeHtml(gig.venue)} · ${escapeHtml(gig.city || '')} · ${escapeHtml(formatGigDate(gig.date))} · ${escapeHtml(gig.duplicateSource)}</small></a>`).join('')}` : '';
+  return matches;
+}
+
+function confirmDuplicateSave(container, values, excludeId = '') {
+  const matches = showDuplicateWarning(container, values, excludeId);
+  return !matches.length || window.confirm(`${matches.length} matching show ${matches.length === 1 ? 'already exists' : 'entries already exist'}. Save another copy anyway?`);
+}
+
+['artist', 'venue', 'city', 'date'].forEach((name) => {
+  form.elements[name]?.addEventListener('input', () => showDuplicateWarning(addDuplicateWarning, formValues()));
+  editForm?.elements[name]?.addEventListener('input', () => showDuplicateWarning(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), editGigId));
+});
 
 function renderAttendeePicker(container, selected = []) {
   if (!container) return;
@@ -642,9 +690,10 @@ function mediaRecognitionMarkup(item, songs = []) {
   return `<small class="media-detection">Detected: ${escapeHtml(details)}${status}</small>`;
 }
 
-function renderMediaGallery(container, media = [], { editable = false, songs = [], allowCover = true, onDelete = () => {} } = {}) {
+function renderMediaGallery(container, media = [], { editable = false, songs = [], allowCover = true, onDelete = () => {}, afterRender = () => {} } = {}) {
   container.replaceChildren();
-  if (!media.length) return;
+  if (!media.length) { afterRender(container, media); return; }
+      const redraw = () => renderMediaGallery(container, media, { editable, songs, allowCover, onDelete, afterRender });
       for (const id of [...selectedMediaIds]) if (!media.some((item) => item.id === id)) selectedMediaIds.delete(id);
       const selectedCount = media.filter((item) => selectedMediaIds.has(item.id)).length;
       container.innerHTML = `${editable && selectedCount ? `<div class="media-bulk-actions"><span>${selectedCount} selected</span><button type="button" class="media-bulk-delete">Remove selected</button><button type="button" class="media-bulk-clear">Clear</button></div>` : ''}${media.map((item, index) => `<figure class="media-item${item.isCover ? ' is-cover' : ''}${item.useBackgroundRemoved ? ' is-cutout' : ''}${selectedMediaIds.has(item.id) ? ' is-selected' : ''}" data-media-id="${item.id}">${editable ? `<button type="button" class="media-delete-corner" aria-label="${selectedMediaIds.has(item.id) ? 'Deselect media' : 'Select media for removal'}" title="${selectedMediaIds.has(item.id) ? 'Deselect media' : 'Select media for removal'}" aria-pressed="${selectedMediaIds.has(item.id)}">×</button>` : ''}${item.mimeType === 'video/youtube' ? `<iframe src="${youtubeEmbedUrl(item.url)}" title="${escapeHtml(item.caption || 'YouTube video')}" loading="lazy" allowfullscreen></iframe>` : item.mimeType.startsWith('video/') ? `<video src="${item.url}" controls preload="${isMobileUpload ? 'none' : 'metadata'}"></video>` : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" style="transform:rotate(${item.rotation || 0}deg)" /></button>`}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${item.backgroundStatus === 'running' ? '<small class="media-background-status">Removing background…</small>' : item.backgroundStatus === 'error' ? `<small class="media-background-status media-detection-error">${escapeHtml(item.backgroundError || 'Background removal failed')}</small>` : item.useBackgroundRemoved ? '<small class="media-background-status">Transparent cutout</small>' : ''}${mediaRecognitionMarkup(item, songs)}${editable ? `<div class="media-actions"><button type="button" class="media-menu-toggle" aria-expanded="false">⋮ Options</button><div class="media-action-menu" hidden>${songs.length && item.category !== 'artifact' ? `<label class="media-song-label">Setlist track${item.recognitionOverride ? ' · manual override' : ''}<select class="media-song-select"><option value="">Unassigned</option>${songs.map((song, songIndex) => `<option value="${songIndex}" ${item.songIndex === songIndex ? 'selected' : ''}>${songIndex + 1}. ${escapeHtml(song.title)}</option>`).join('')}</select></label>` : ''}<button class="media-caption" type="button">Caption</button>${allowCover && item.category !== 'artifact' ? `<button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button>` : ''}${item.category === 'artifact' && item.mimeType.startsWith('image/') ? `${item.backgroundFilename ? `<button type="button" class="media-background-toggle">${item.useBackgroundRemoved ? 'Use original photo' : 'Use transparent cutout'}</button>` : ''}<button type="button" class="media-background-remove" ${item.backgroundStatus === 'running' ? 'disabled' : ''}>${item.backgroundFilename ? 'Recreate cutout' : item.backgroundStatus === 'error' ? 'Retry background removal' : 'Remove background'}</button>` : ''}${item.mimeType.startsWith('video/') && item.mimeType !== 'video/youtube' ? '<button type="button" class="media-trim">Trim video</button><button type="button" class="media-rotate media-rotate-cw">↻ Clockwise</button><button type="button" class="media-rotate media-rotate-ccw">↺ Counter-clockwise</button>' : ''}<button type="button" class="media-up" ${index === 0 ? 'disabled' : ''}>↑ Move earlier</button><button type="button" class="media-down" ${index === media.length - 1 ? 'disabled' : ''}>↓ Move later</button></div></div>` : ''}</figure>`).join('')}`;
@@ -654,9 +703,9 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
       if (!item) return;
       if (selectedMediaIds.has(item.id)) selectedMediaIds.delete(item.id); else selectedMediaIds.add(item.id);
-      renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
+      redraw();
     }));
-    container.querySelector('.media-bulk-clear')?.addEventListener('click', () => { selectedMediaIds.clear(); renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete }); });
+    container.querySelector('.media-bulk-clear')?.addEventListener('click', () => { selectedMediaIds.clear(); redraw(); });
     container.querySelector('.media-bulk-delete')?.addEventListener('click', async (event) => {
       const selected = media.filter((item) => selectedMediaIds.has(item.id));
       if (!selected.length || !confirm(`Remove ${selected.length} selected media item${selected.length === 1 ? '' : 's'}?`)) return;
@@ -665,7 +714,7 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
         await Promise.all(selected.map((item) => fetchJson(`/api/media/${item.id}`, { method: 'DELETE' })));
         selected.forEach((item) => { selectedMediaIds.delete(item.id); media.splice(media.indexOf(item), 1); });
         onDelete(selected);
-        renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
+        redraw();
       } catch (error) { event.currentTarget.disabled = false; event.currentTarget.textContent = error.message; }
     });
     container.querySelectorAll('.media-song-select').forEach((select) => select.addEventListener('change', async () => {
@@ -674,7 +723,7 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
       await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ songIndex: value, recognitionOverride: true }) });
       item.songIndex = value;
       item.recognitionOverride = true;
-      renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
+      redraw();
     }));
     container.querySelectorAll('.media-menu-toggle').forEach((button) => button.addEventListener('click', () => {
       const menu = button.nextElementSibling;
@@ -689,13 +738,13 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
       const caption = prompt('Caption this memory', item.caption || item.filename || '');
       if (caption === null) return;
       await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caption }) });
-      item.caption = caption; renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
+      item.caption = caption; redraw();
     }));
     container.querySelectorAll('.media-background-toggle').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
       const updated = await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ useBackgroundRemoved: !item.useBackgroundRemoved }) });
       Object.assign(item, updated);
-      renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
+      redraw();
     }));
     container.querySelectorAll('.media-background-remove').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
@@ -719,19 +768,19 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
       } catch (error) {
         item.backgroundStatus = 'error'; item.backgroundError = error.message;
       }
-      renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
+      redraw();
     }));
     container.querySelectorAll('.media-cover').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
       await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isCover: true }) });
-      media.forEach((entry) => { entry.isCover = entry.id === item.id; }); renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
+      media.forEach((entry) => { entry.isCover = entry.id === item.id; }); redraw();
     }));
     container.querySelectorAll('.media-trim').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
       const start = prompt('Trim start time in seconds', '0'); if (start === null) return;
       const end = prompt('Trim end time in seconds', ''); if (end === null || end === '' || Number(end) <= Number(start)) return;
       button.disabled = true; button.textContent = 'Trimming…';
-      try { const job = await fetchJson(`/api/media/${item.id}/trim?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, { method: 'POST' }); let status; do { await new Promise((resolve) => setTimeout(resolve, 1000)); status = await fetchJson(`/api/media/rotate/${job.jobId}`); button.textContent = `Trimming ${status.progress}%`; } while (status.status === 'running'); if (status.status === 'error') throw new Error(status.error || 'Video trim failed.'); renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete }); } catch (error) { button.textContent = error.message; } finally { button.disabled = false; }
+      try { const job = await fetchJson(`/api/media/${item.id}/trim?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, { method: 'POST' }); let status; do { await new Promise((resolve) => setTimeout(resolve, 1000)); status = await fetchJson(`/api/media/rotate/${job.jobId}`); button.textContent = `Trimming ${status.progress}%`; } while (status.status === 'running'); if (status.status === 'error') throw new Error(status.error || 'Video trim failed.'); redraw(); } catch (error) { button.textContent = error.message; } finally { button.disabled = false; }
     }));
     container.querySelectorAll('.media-rotate').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
@@ -745,7 +794,7 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
         item.rotation = ((item.rotation || 0) + 90) % 360;
         await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rotation: item.rotation }) });
       }
-      renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
+      redraw();
     }));
     container.querySelectorAll('.media-up, .media-down').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
@@ -753,10 +802,113 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
       if (nextIndex < 0 || nextIndex >= media.length) return;
       [media[index], media[nextIndex]] = [media[nextIndex], media[index]];
       await Promise.all(media.map((entry, order) => fetchJson(`/api/media/${entry.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sortOrder: order }) })));
-      renderMediaGallery(container, media, { editable: true, songs, allowCover, onDelete });
+      redraw();
     }));
   }
+  afterRender(container, media);
 }
+
+let mediaWorkspaceFilter = 'all';
+let activeEditGig = null;
+
+function mediaWorkspaceState(item) {
+  const uploadedVideo = String(item.mimeType || '').startsWith('video/') && item.mimeType !== 'video/youtube';
+  if (item.originalExists === false) return { key: 'failed', label: 'Missing original', detail: 'The database entry exists, but its file is missing from disk.' };
+  if (item.backgroundStatus === 'error' || item.recognitionStatus === 'error' || (uploadedVideo && ['error', 'not_started'].includes(item.playbackStatus))) return { key: 'failed', label: 'Needs attention', detail: item.backgroundError || item.recognitionError || item.playbackError || 'A mobile playback copy still needs to be created.' };
+  if (item.backgroundStatus === 'running') return { key: 'processing', label: 'Removing background', detail: 'Creating a transparent artifact cutout.' };
+  if (item.recognitionStatus === 'running') return { key: 'processing', label: 'Detecting track', detail: item.playbackStatus === 'encoding' ? 'Track detection and playback encoding are running.' : 'Listening for a matching setlist track.' };
+  if (item.recognitionStatus === 'queued') return { key: 'processing', label: 'Detection queued', detail: item.playbackStatus === 'encoding' ? 'Playback encoding is also running.' : 'Waiting to identify the track.' };
+  if (uploadedVideo && item.playbackStatus === 'encoding') return { key: 'processing', label: 'Encoding playback', detail: 'Creating the mobile-friendly H.264 playback copy.' };
+  if (String(item.mimeType || '').startsWith('video/') && item.category !== 'artifact' && (item.songIndex === null || item.songIndex === undefined)) return { key: 'unassigned', label: 'Unassigned', detail: 'Choose the matching setlist track.' };
+  return { key: 'ready', label: 'Ready', detail: item.playbackStatus === 'ready' ? 'Original and playback copy are available.' : 'Available in the show memory.' };
+}
+
+function applyMediaWorkspaceFilter() {
+  if (!editGallery || !mediaWorkspaceEmpty) return;
+  let visible = 0;
+  editGallery.querySelectorAll('.media-item').forEach((card) => {
+    const show = mediaWorkspaceFilter === 'all' || card.dataset.processingState === mediaWorkspaceFilter;
+    card.hidden = !show;
+    if (show) visible += 1;
+  });
+  mediaWorkspaceEmpty.hidden = visible > 0;
+  mediaWorkspaceFilters?.querySelectorAll('button').forEach((button) => button.classList.toggle('active', button.dataset.mediaFilter === mediaWorkspaceFilter));
+}
+
+async function refreshEditMediaWorkspace(gig = activeEditGig) {
+  if (!gig) return;
+  const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`);
+  gig.media = refreshed;
+  renderEditMediaWorkspace(gig, refreshed);
+}
+
+function decorateMediaWorkspace(container, media, gig) {
+  const states = media.map((item) => mediaWorkspaceState(item));
+  const totals = { all: media.length, processing: 0, failed: 0, unassigned: 0, ready: 0 };
+  states.forEach((state) => { totals[state.key] += 1; });
+  mediaWorkspaceStats.innerHTML = `<span><b>${totals.all}</b>Total</span><span><b>${totals.processing}</b>Processing</span><span><b>${totals.failed}</b>Needs attention</span><span><b>${totals.unassigned}</b>Unassigned</span><span><b>${totals.ready}</b>Ready</span>`;
+  container.querySelectorAll('.media-item').forEach((card) => {
+    const item = media.find((entry) => entry.id === card.dataset.mediaId);
+    if (!item) return;
+    const state = mediaWorkspaceState(item);
+    card.dataset.processingState = state.key;
+    const health = document.createElement('div');
+    health.className = `media-processing-state is-${state.key}`;
+    const sizeLine = item.mimeType === 'video/youtube' ? 'YouTube embed' : `${formatUploadSize(item.size || 0)} original${item.playbackSize ? ` · ${formatUploadSize(item.playbackSize)} playback` : ''}`;
+    health.innerHTML = `<div><span class="media-processing-badge">${escapeHtml(state.label)}</span><small>${escapeHtml(sizeLine)}</small></div><p>${escapeHtml(state.detail)}</p><div class="media-processing-actions"></div>`;
+    const actions = health.querySelector('.media-processing-actions');
+    const uploadedVideo = String(item.mimeType || '').startsWith('video/') && item.mimeType !== 'video/youtube';
+    if (uploadedVideo && item.originalExists !== false && ['error', 'not_started'].includes(item.playbackStatus)) {
+      const retryEncode = document.createElement('button');
+      retryEncode.type = 'button'; retryEncode.textContent = item.playbackStatus === 'not_started' ? 'Create playback copy' : 'Retry playback copy';
+      retryEncode.addEventListener('click', async () => {
+        retryEncode.disabled = true; retryEncode.textContent = 'Queued…';
+        try {
+          const job = await fetchJson(`/api/media/${item.id}/retry-encode`, { method: 'POST' });
+          updateJob(job.jobId, { id: job.jobId, type: 'Encode video', name: item.caption || item.filename, status: 'running', progress: 1 });
+          let status;
+          do { await new Promise((resolve) => setTimeout(resolve, 1000)); status = await fetchJson(`/api/jobs/${job.jobId}`); updateJob(job.jobId, status); } while (['queued', 'running'].includes(status.status));
+          if (status.status === 'error') throw new Error(status.error || 'Playback encoding failed.');
+          await refreshEditMediaWorkspace(gig);
+        } catch (error) { retryEncode.disabled = false; retryEncode.textContent = error.message; }
+      });
+      actions.append(retryEncode);
+    }
+    if (uploadedVideo && item.originalExists !== false && item.recognitionStatus === 'error') {
+      const retryRecognition = document.createElement('button');
+      retryRecognition.type = 'button'; retryRecognition.textContent = 'Retry track detection';
+      retryRecognition.addEventListener('click', async () => {
+        retryRecognition.disabled = true; retryRecognition.textContent = 'Detecting…';
+        try {
+          await fetchJson(`/api/media/${item.id}/retry-recognition`, { method: 'POST' });
+          await pollMediaRecognition(gig.id, (refreshed) => { gig.media = refreshed; renderEditMediaWorkspace(gig, refreshed); });
+        } catch (error) { retryRecognition.disabled = false; retryRecognition.textContent = error.message; }
+      });
+      actions.append(retryRecognition);
+    }
+    if (!actions.childElementCount) actions.remove();
+    card.querySelector('figcaption')?.insertAdjacentElement('afterend', health);
+  });
+  applyMediaWorkspaceFilter();
+}
+
+function renderEditMediaWorkspace(gig, media = []) {
+  if (!editGallery || !mediaWorkspaceStats) return;
+  activeEditGig = gig;
+  gig.media = media;
+  renderMediaGallery(editGallery, media, {
+    editable: true,
+    songs: gig.songs || [],
+    onDelete: (removed) => { const ids = new Set(removed.map((item) => item.id)); gig.media = gig.media.filter((item) => !ids.has(item.id)); },
+    afterRender: (container, current) => decorateMediaWorkspace(container, current, gig)
+  });
+}
+
+mediaWorkspaceFilters?.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => { mediaWorkspaceFilter = button.dataset.mediaFilter; applyMediaWorkspaceFilter(); }));
+mediaWorkspaceRefresh?.addEventListener('click', async () => {
+  mediaWorkspaceRefresh.disabled = true; mediaWorkspaceRefresh.textContent = 'Refreshing…';
+  try { await refreshEditMediaWorkspace(); } finally { mediaWorkspaceRefresh.disabled = false; mediaWorkspaceRefresh.textContent = 'Refresh status'; }
+});
 
 function setSharedMessage(text, isError = false) {
   sharedMessage.textContent = text;
@@ -876,6 +1028,80 @@ async function renderApiLimits() {
   }
 }
 
+let healthData = null;
+let healthFilter = 'all';
+const healthTypeLabels = { setlist: 'Setlists', albums: 'Albums', artist: 'Artists', venue: 'Venues', location: 'Map' };
+
+function manualMetadataForm(issue) {
+  if (issue.type === 'location') return `<form class="health-manual-form" hidden><div class="health-manual-grid"><label class="health-manual-wide">Venue address<input name="address" placeholder="Street, suburb, city, country" /></label><p class="health-coordinate-divider">Or enter exact coordinates</p><label>Latitude<input name="lat" type="number" min="-90" max="90" step="any" placeholder="-27.4698" /></label><label>Longitude<input name="lng" type="number" min="-180" max="180" step="any" placeholder="153.0251" /></label></div><button class="button" type="submit">Save location</button><button class="button button-secondary health-manual-cancel" type="button">Cancel</button></form>`;
+  if (!['artist', 'venue'].includes(issue.type)) return '';
+  return `<form class="health-manual-form" hidden><div class="health-manual-grid"><label>Display name<input name="title" value="${escapeHtml(issue.title)}" required /></label><label>Short description<input name="description" placeholder="Optional short description" /></label><label class="health-manual-wide">Biography<textarea name="bio" rows="4" placeholder="Enter the information you want displayed"></textarea></label><label>Photo URL<input name="image" type="url" placeholder="https://…" /></label><label>Source URL<input name="source" type="url" placeholder="https://…" /></label></div><button class="button" type="submit">Save manual entry</button><button class="button button-secondary health-manual-cancel" type="button">Cancel</button></form>`;
+}
+
+function renderHealthSnapshot(data) {
+  if (!healthSummary || !healthList) return;
+  healthData = data;
+  const repairable = data.issues.filter((issue) => issue.repairable).length;
+  healthSummary.innerHTML = `<article><strong>${data.totalShows}</strong><span>Shows scanned</span></article><article><strong>${data.issues.length}</strong><span>Issues found</span></article><article><strong>${repairable}</strong><span>Can auto-repair</span></article><article class="${data.healthy ? 'is-healthy' : ''}"><strong>${data.healthy ? '✓' : Math.max(0, data.totalShows - new Set(data.issues.filter((issue) => issue.href?.startsWith('/show') || issue.href?.startsWith('/edit')).map((issue) => issue.href)).size)}</strong><span>${data.healthy ? 'Archive healthy' : 'Shows without show-level issues'}</span></article>`;
+  const types = ['all', ...Object.keys(healthTypeLabels).filter((type) => data.counts[type])];
+  healthFilters.innerHTML = types.map((type) => `<button type="button" class="${type === healthFilter ? 'active' : ''}" data-health-filter="${type}">${type === 'all' ? 'All' : healthTypeLabels[type]} <span>${type === 'all' ? data.issues.length : data.counts[type]}</span></button>`).join('');
+  healthFilters.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => { healthFilter = button.dataset.healthFilter; renderHealthSnapshot(healthData); }));
+  const visible = data.issues.filter((issue) => healthFilter === 'all' || issue.type === healthFilter);
+  healthList.innerHTML = visible.length ? visible.map((issue) => `<article class="health-item" data-health-issue="${escapeHtml(issue.id)}"><div class="health-item-copy"><span class="health-type">${escapeHtml(healthTypeLabels[issue.type] || issue.type)}</span><h2>${escapeHtml(issue.title)}</h2><p>${escapeHtml(issue.detail)}</p></div><div class="health-actions"><a class="button button-secondary" href="${escapeHtml(issue.href)}">${['setlist', 'albums'].includes(issue.type) ? 'Edit manually' : 'Open'}</a>${issue.repairable ? '<button class="button health-repair" type="button">Repair</button>' : ''}${['artist', 'venue', 'location'].includes(issue.type) ? '<button class="button button-secondary health-manual-toggle" type="button">Enter manually</button>' : ''}</div>${manualMetadataForm(issue)}</article>`).join('') : `<div class="empty-state">${data.healthy ? 'Everything is in good shape.' : 'No issues match this filter.'}</div>`;
+  healthList.querySelectorAll('.health-repair').forEach((button) => {
+    const issue = visible.find((entry) => entry.id === button.closest('.health-item').dataset.healthIssue);
+    button.addEventListener('click', async () => {
+      button.disabled = true; button.textContent = 'Repairing…'; healthMessage.textContent = `Repairing ${issue.title}…`;
+      try { renderHealthSnapshot(await fetchJson('/api/health/repair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(issue) })); healthMessage.textContent = `${issue.title} checked.`; }
+      catch (error) { button.disabled = false; button.textContent = 'Retry'; healthMessage.textContent = error.message; healthMessage.classList.add('error'); }
+    });
+  });
+  healthList.querySelectorAll('.health-manual-toggle').forEach((button) => button.addEventListener('click', () => {
+    const form = button.closest('.health-item').querySelector('.health-manual-form');
+    form.hidden = !form.hidden;
+    button.textContent = form.hidden ? 'Enter manually' : 'Close manual entry';
+    if (!form.hidden) form.querySelector('input, textarea')?.focus();
+  }));
+  healthList.querySelectorAll('.health-manual-cancel').forEach((button) => button.addEventListener('click', () => {
+    const card = button.closest('.health-item'); card.querySelector('.health-manual-form').hidden = true; card.querySelector('.health-manual-toggle').textContent = 'Enter manually';
+  }));
+  healthList.querySelectorAll('.health-manual-form').forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const issue = visible.find((entry) => entry.id === form.closest('.health-item').dataset.healthIssue);
+    const submit = form.querySelector('button[type="submit"]'); submit.disabled = true; submit.textContent = 'Saving…';
+    healthMessage.classList.remove('error'); healthMessage.textContent = `Saving ${issue.title}…`;
+    try {
+      const manual = Object.fromEntries(new FormData(form).entries());
+      renderHealthSnapshot(await fetchJson('/api/health/manual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...issue, ...manual }) }));
+      healthMessage.textContent = `${issue.title} saved.`;
+    } catch (error) { submit.disabled = false; submit.textContent = 'Retry save'; healthMessage.textContent = error.message; healthMessage.classList.add('error'); }
+  }));
+  repairAllMetadata.disabled = !repairable;
+}
+
+async function renderArchiveHealth() {
+  if (page !== 'health' || !healthList) return;
+  try { renderHealthSnapshot(await fetchJson('/api/health')); }
+  catch (error) { healthMessage.textContent = error.message; healthMessage.classList.add('error'); }
+}
+
+repairAllMetadata?.addEventListener('click', async () => {
+  const repairable = (healthData?.issues || []).filter((issue) => issue.repairable);
+  if (!repairable.length) return;
+  repairAllMetadata.disabled = true;
+  healthMessage.classList.remove('error');
+  let latest = healthData;
+  for (const [index, issue] of repairable.entries()) {
+    repairAllMetadata.textContent = `${index + 1} / ${repairable.length}`;
+    healthMessage.textContent = `Repairing ${issue.title}…`;
+    try { latest = await fetchJson('/api/health/repair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(issue) }); }
+    catch (error) { healthMessage.textContent = `${issue.title}: ${error.message}`; healthMessage.classList.add('error'); }
+  }
+  renderHealthSnapshot(latest);
+  repairAllMetadata.textContent = 'Repair all available';
+  healthMessage.textContent = latest.issues.length ? 'Metadata repair pass complete. Some records may still need manual attention.' : 'Metadata repair complete. The archive is healthy.';
+});
+
 async function renderVenuePage() {
   if (page !== 'venue') return;
   const records = gigs.filter((gig) => gig.venue.toLowerCase() === venueNameFromUrl.toLowerCase() && (!venueCityFromUrl || gig.city.toLowerCase() === venueCityFromUrl.toLowerCase()));
@@ -946,14 +1172,15 @@ function renderEditPage() {
     if (isMobileUpload) {
       const state = mobileUploadStateFor(editMediaInput, gig.id);
       state.onUploaded = (item) => { editMessage.textContent = `${item.name} uploaded.`; editMessage.classList.remove('error'); };
-      state.onDrained = async () => { await pollMediaRecognition(gig.id, (refreshed) => renderMediaGallery(editGallery, refreshed, { editable: true, songs: gig.songs || [] })); };
+      state.onDrained = async () => { await pollMediaRecognition(gig.id, (refreshed) => renderEditMediaWorkspace(gig, refreshed)); };
       startMobileUploadQueue(editMediaInput, gig.id, state.onUploaded, state.onDrained);
-    } else editMediaInput.addEventListener('change', async () => { const files = pendingMedia.get(editMediaInput) || [...(editMediaInput.files || [])]; if (!files.length) return; editMessage.textContent = `Uploading ${files.length} file${files.length === 1 ? '' : 's'}…`; try { await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; }); pendingMedia.set(editMediaInput, []); editMediaInput.value = ''; editMessage.textContent = 'Media uploaded.'; const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`); renderMediaGallery(editGallery, refreshed, { editable: true, songs: gig.songs || [] }); } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); } });
+    } else editMediaInput.addEventListener('change', async () => { const files = pendingMedia.get(editMediaInput) || [...(editMediaInput.files || [])]; if (!files.length) return; editMessage.textContent = `Uploading ${files.length} file${files.length === 1 ? '' : 's'}…`; try { await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; }); pendingMedia.set(editMediaInput, []); editMediaInput.value = ''; editMessage.textContent = 'Media uploaded.'; const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`); renderEditMediaWorkspace(gig, refreshed); } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); } });
   }
   editForm.elements.artist.value = gig.artist;
   editForm.elements.date.value = gig.date;
   editForm.elements.venue.value = gig.venue;
   editForm.elements.city.value = gig.city;
+  showDuplicateWarning(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), gig.id);
   const tracks = [...(gig.songs || [])];
   const renderTracks = () => {
     editSetlistTracks.innerHTML = tracks.map((song, index) => `<div class="edit-track" data-track-index="${index}"><span class="edit-track-number">${index + 1}</span><input class="edit-track-title" value="${escapeHtml(song.title || '')}" placeholder="Track title" /><input class="edit-track-artist" value="${escapeHtml(song.artist || '')}" placeholder="Artist (optional)" /><input class="edit-track-album" value="${escapeHtml(song.album || '')}" placeholder="Album (optional)" /><input class="edit-track-start" type="number" min="0" step="1" value="${song.startSeconds ?? ''}" placeholder="Start s" aria-label="Start time in seconds" /><input class="edit-track-end" type="number" min="0" step="1" value="${song.endSeconds ?? ''}" placeholder="End s" aria-label="End time in seconds" /><button class="icon-button edit-track-remove" type="button" aria-label="Remove track">×</button></div>`).join('');
@@ -961,16 +1188,17 @@ function renderEditPage() {
   };
   renderTracks();
   addEditTrack.onclick = () => { tracks.push({ title: '', artist: gig.artist, album: '' }); renderTracks(); editSetlistTracks.lastElementChild?.querySelector('.edit-track-title')?.focus(); };
-  renderMediaGallery(editGallery, gig.media, { editable: true, songs: gig.songs || [] });
+  renderEditMediaWorkspace(gig, gig.media);
   renderAttendeePicker(ensureEditAttendeePicker(), gig.attendees || []);
   editForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const submitButton = editForm.querySelector('button[type="submit"]');
     try {
+      if (!confirmDuplicateSave(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), gig.id)) return;
       submitButton.disabled = true;
       const update = Object.fromEntries(new FormData(editForm).entries());
       update.attendees = readAttendees(ensureEditAttendeePicker());
-      update.songs = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row) => ({ title: row.querySelector('.edit-track-title').value, artist: row.querySelector('.edit-track-artist').value, album: row.querySelector('.edit-track-album').value, startSeconds: row.querySelector('.edit-track-start').value === '' ? null : Number(row.querySelector('.edit-track-start').value), endSeconds: row.querySelector('.edit-track-end').value === '' ? null : Number(row.querySelector('.edit-track-end').value), encore: false }));
+      update.songs = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row, index) => ({ ...tracks[index], title: row.querySelector('.edit-track-title').value, artist: row.querySelector('.edit-track-artist').value, album: row.querySelector('.edit-track-album').value, startSeconds: row.querySelector('.edit-track-start').value === '' ? null : Number(row.querySelector('.edit-track-start').value), endSeconds: row.querySelector('.edit-track-end').value === '' ? null : Number(row.querySelector('.edit-track-end').value) }));
       const saved = await fetchJson(`/api/gigs/${gig.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
       const files = pendingMedia.get(editMediaInput) || [...(editMediaInput?.files || [])];
       if (files.length) await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; });
@@ -980,7 +1208,7 @@ function renderEditPage() {
       editMessage.classList.remove('error');
       editMediaInput.value = '';
       const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`);
-      renderMediaGallery(editGallery, refreshed, { editable: true, songs: gig.songs || [] });
+      renderEditMediaWorkspace(gig, refreshed);
       renderGigs();
     } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); } finally { submitButton.disabled = false; }
   });
@@ -999,8 +1227,8 @@ function renderShowPage() {
   const names = attendeeNames(gig);
   attendeesLine.textContent = names.length > 1 ? `Attended with ${names.slice(1).join(', ')}` : 'Solo show';
   showDetailRatings.innerHTML = gig.performanceRating ? `<span><b>${gig.performanceRating}</b> / 5 stars</span>` : '<span>Not rated yet</span>';
-  showDetailSetlist.innerHTML = gig.songs?.length ? `<ol>${renderTrackList(gig.songs, gig.artist)}</ol>${renderAlbumStats(gig.songs)}` : '<p>No setlist attached.</p>';
-  if (gig.songs?.length) fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats`).then((data) => { gig.songs = data.songs; showDetailSetlist.innerHTML = `<ol>${renderTrackList(gig.songs, gig.artist)}</ol>${renderAlbumStats(gig.songs)}`; }).catch(() => {});
+  showDetailSetlist.innerHTML = gig.songs?.length ? `<ol>${renderTrackList(gig.songs)}</ol>${renderAlbumStats(gig.songs)}` : '<p>No setlist attached.</p>';
+  if (gig.songs?.length) fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats`).then((data) => { gig.songs = data.songs; showDetailSetlist.innerHTML = `<ol>${renderTrackList(gig.songs)}</ol>${renderAlbumStats(gig.songs)}`; }).catch(() => {});
   showEditLink.href = `/edit?id=${encodeURIComponent(gig.id)}`;
   const generalMedia = (gig.media || []).filter((item) => item.category !== 'artifact');
   const artifacts = (gig.media || []).filter((item) => item.category === 'artifact');
@@ -1025,12 +1253,44 @@ function renderAlbumStats(songs) {
   return `<div class="album-stats"><p class="eyebrow">Album breakdown</p><div class="album-stat-bar album-stat-bar-stacked">${entries.map(([album, count], index) => `<span class="album-segment album-segment-${index % 8}" style="width:${count / total * 100}%" title="${escapeHtml(album)} · ${Math.round(count / total * 100)}%"></span>`).join('')}</div><div class="album-stat-key">${entries.map(([album, count], index) => `<span><i class="album-key-swatch album-segment-${index % 8}"></i>${escapeHtml(album)} <strong>${Math.round(count / total * 100)}%</strong></span>`).join('')}</div></div>`;
 }
 
-function renderTrackList(songs, artist) {
-  const counts = new Map();
-  songs.forEach((song) => { const album = String(song.album || 'Unknown album').trim() || 'Unknown album'; counts.set(album, (counts.get(album) || 0) + 1); });
-  const colours = new Map([...counts.entries()].sort((a, b) => b[1] - a[1]).map(([album], index) => [album, index % 8]));
-  return songs.map((song) => { const album = String(song.album || 'Unknown album').trim() || 'Unknown album'; return `<li><span class="track-title">${escapeHtml(song.title)}</span>${song.artist && song.artist !== artist ? ` <span>— ${escapeHtml(song.artist)}</span>` : ''}<span class="album-tooltip">${escapeHtml(album)}</span>${song.encore ? ' <b>Encore</b>' : ''}</li>`; }).join('');
+function renderTrackList(songs, albumFallback = 'Album data unavailable') {
+  return songs.map((song) => { const album = String(song.album || albumFallback).trim() || albumFallback; return `<li tabindex="0"><span class="track-title">${escapeHtml(song.title)}</span><span class="album-tooltip">${escapeHtml(album)}</span>${song.encore ? ' <b>Encore</b>' : ''}</li>`; }).join('');
 }
+
+function setupArchiveSetlist(setlist, gig, { fetchAlbums = true } = {}) {
+  const source = gig.setlistFmUrl ? `<a href="${escapeHtml(gig.setlistFmUrl)}" target="_blank" rel="noreferrer">View source on setlist.fm ↗</a>` : '';
+  const tracks = () => `<ol>${renderTrackList(gig.songs || [], fetchAlbums ? 'Loading album…' : 'Album data unavailable')}</ol>${source}`;
+  setlist.innerHTML = `<details class="setlist-accordion"><summary>Setlist <span>${gig.songs.length} tracks</span></summary><div class="setlist-accordion-content">${tracks()}</div></details>`;
+  const needsAlbumLookup = gig.songs.some((song) => !String(song.album || '').trim() || /^unknown album$/i.test(String(song.album).trim()));
+  if (!fetchAlbums || !needsAlbumLookup) return;
+  const details = setlist.querySelector('.setlist-accordion');
+  details.addEventListener('toggle', async () => {
+    if (!details.open || details.dataset.albumLoad) return;
+    details.dataset.albumLoad = 'loading';
+    try {
+      const data = await fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats`);
+      gig.songs = data.songs;
+      details.querySelector('.setlist-accordion-content').innerHTML = tracks();
+      details.dataset.albumLoad = 'complete';
+    } catch {
+      details.dataset.albumLoad = 'error';
+      details.querySelectorAll('.album-tooltip').forEach((tooltip) => { if (tooltip.textContent === 'Loading album…') tooltip.textContent = 'Album data unavailable'; });
+    }
+  });
+}
+
+document.addEventListener('click', (event) => {
+  const track = event.target.closest('.setlist li[tabindex]');
+  document.querySelectorAll('.setlist li.tooltip-open').forEach((item) => { if (item !== track) item.classList.remove('tooltip-open'); });
+  if (track) track.classList.toggle('tooltip-open');
+});
+document.addEventListener('keydown', (event) => {
+  if (!['Enter', ' '].includes(event.key)) return;
+  const track = event.target.closest('.setlist li[tabindex]');
+  if (!track) return;
+  event.preventDefault();
+  track.click();
+});
 
 function playSetTrack() {
   const gig = gigs.find((entry) => entry.id === showDetailId);
@@ -1364,6 +1624,7 @@ function renderMatches(setlists) {
       form.elements.venue.value = selectedSetlist.venue || form.elements.venue.value;
       form.elements.city.value = selectedSetlist.city || form.elements.city.value;
       if (selectedSetlist.date) { const [day, month, year] = selectedSetlist.date.split('-'); form.elements.date.value = `${year}-${month}-${day}`; }
+      showDuplicateWarning(addDuplicateWarning, formValues());
       results.querySelectorAll('.match').forEach((item) => item.classList.remove('selected'));
       button.classList.add('selected');
       setMessage(`Setlist selected: ${selectedSetlist.songs.length} songs will be saved with this show.`);
@@ -1374,6 +1635,7 @@ function renderMatches(setlists) {
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const gig = formValues();
+  if (!confirmDuplicateSave(addDuplicateWarning, gig)) return;
   const mediaFiles = pendingMedia.get(mediaInput) || [...(mediaInput?.files || [])];
   delete gig.media;
   const payload = { ...gig, attendees: readAttendees(addAttendeePicker), songs: selectedSetlist?.songs || [], setlistFmId: selectedSetlist?.id || null, setlistFmUrl: selectedSetlist?.url || null };
@@ -1398,6 +1660,7 @@ form.addEventListener('submit', async (event) => {
     resetReviewForm();
     selectedSetlist = null;
     results.hidden = true;
+    addDuplicateWarning.hidden = true;
     setMessage(isMobileUpload && mediaFiles.length ? 'Show saved. Uploads are continuing in the queue.' : 'Show saved to The Master List.');
     renderGigs();
     await loadPersistentJobs();
@@ -1467,8 +1730,7 @@ function renderRemoteSharedGig(show) {
   heart.title = 'Favourite status belongs to the contributing peer';
   card.querySelectorAll('.show-detail-link, .play-gig, .share-gig, .edit-gig, .delete-gig').forEach((control) => control.remove());
   if (show.songs?.length) {
-    const tracks = `<ol>${show.songs.map((song) => `<li>${escapeHtml(song.title)}${song.artist && song.artist !== show.artist ? ` <span>— ${escapeHtml(song.artist)}</span>` : ''}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>`;
-    card.querySelector('.setlist').innerHTML = `<details class="setlist-accordion"><summary>Setlist <span>${show.songs.length} tracks</span></summary><div class="setlist-accordion-content">${tracks}</div></details>`;
+    setupArchiveSetlist(card.querySelector('.setlist'), show, { fetchAlbums: false });
   }
   const contributions = card.querySelector('.media-gallery');
   card.querySelector('.show-media-section').hidden = mediaTotal === 0;
@@ -1547,8 +1809,7 @@ function renderGigs() {
     const exports = card.querySelector('.exports');
     exports.hidden = true;
     if (gig.songs?.length) {
-      const tracks = `<ol>${gig.songs.map((song) => `<li>${escapeHtml(song.title)}${song.artist && song.artist !== gig.artist ? ` <span>— ${escapeHtml(song.artist)}</span>` : ''}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>${gig.setlistFmUrl ? `<a href="${escapeHtml(gig.setlistFmUrl)}" target="_blank" rel="noreferrer">View source on setlist.fm ↗</a>` : ''}`;
-      setlist.innerHTML = `<details class="setlist-accordion"><summary>Setlist <span>${gig.songs.length} tracks</span></summary><div class="setlist-accordion-content">${tracks}</div></details>`;
+      setupArchiveSetlist(setlist, gig);
       exports.hidden = false;
       setupExportButtons(exports, gig);
     }
@@ -1748,6 +2009,7 @@ async function initializeApp() {
     populateShowAutofill();
     renderGigs();
     await renderDashboardStats();
+    await renderArchiveHealth();
     await renderApiLimits();
     renderProfiles();
     renderSharedShows();
