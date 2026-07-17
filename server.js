@@ -6,13 +6,13 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash, generateKeyPairSync, sign: signPayload, verify: verifyPayload } = require('node:crypto');
 
-loadEnvFile();
+if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile();
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const DATA_DIR = path.join(ROOT, 'data');
+const DATA_DIR = process.env.MASTER_LIST_DATA_DIR ? path.resolve(process.env.MASTER_LIST_DATA_DIR) : path.join(ROOT, 'data');
 const GIGS_FILE = path.join(DATA_DIR, 'gigs.json');
 const DB_FILE = path.join(DATA_DIR, 'master-list.sqlite');
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
@@ -24,6 +24,7 @@ const rotateJobs = new Map();
 const uploadSessions = new Map();
 const MAX_MEDIA_SIZE = Number(process.env.MAX_MEDIA_SIZE_GB || 50) * 1024 * 1024 * 1024;
 
+legacyFs.mkdirSync(DATA_DIR, { recursive: true });
 const database = new Database(DB_FILE);
 database.pragma('journal_mode = WAL');
 database.exec(`
@@ -2618,12 +2619,19 @@ const server = http.createServer(async (request, response) => {
     else if (url.pathname.startsWith('/auth/')) await handleAuth(request, response, url);
     else await serveStatic(request, response, url.pathname);
   } catch (error) {
-    console.error(error);
+    if (!error.status || error.status >= 500) console.error(error);
     sendError(response, error.status || 500, error.message || 'Something went wrong.');
   }
 });
 
-server.listen(PORT, HOST, () => console.log(`The Master List is running at http://${HOST}:${PORT}`));
+if (require.main === module) server.listen(PORT, HOST, () => console.log(`The Master List is running at http://${HOST}:${PORT}`));
+
+module.exports = {
+  server,
+  database,
+  paths: { data: DATA_DIR, database: DB_FILE, media: MEDIA_DIR },
+  testables: { parsePlaybackChapters, suggestPlaybackPlan, youtubeVideoId }
+};
 
 function loadEnvFile() {
   try {
