@@ -126,6 +126,9 @@ addColumnIfMissing('gig_media', 'playback_preferred', 'INTEGER NOT NULL DEFAULT 
 addColumnIfMissing('gig_media', 'playback_start', 'REAL');
 addColumnIfMissing('gig_media', 'playback_end', 'REAL');
 addColumnIfMissing('gig_media', 'playback_clips_initialized', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('gig_media', 'source_description', "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing('gig_media', 'source_duration', 'REAL');
+addColumnIfMissing('gig_media', 'source_metadata_at', 'TEXT');
 database.exec(`
   CREATE TABLE IF NOT EXISTS media_playback_clips (
     media_id TEXT NOT NULL,
@@ -1075,6 +1078,7 @@ function formatMediaRow(media) {
     playbackPreferred: Boolean(media.playbackPreferred),
     playbackStart: media.playbackStart === null || media.playbackStart === undefined ? null : Number(media.playbackStart),
     playbackEnd: media.playbackEnd === null || media.playbackEnd === undefined ? null : Number(media.playbackEnd),
+    sourceDuration: media.sourceDuration === null || media.sourceDuration === undefined ? null : Number(media.sourceDuration),
     recognitionOverride: Boolean(media.recognitionOverride),
     useBackgroundRemoved,
     rotation: Number(media.rotation || 0),
@@ -1088,7 +1092,7 @@ function formatMediaRow(media) {
 }
 
 function mediaRows(gigId) {
-  const rows = database.prepare('SELECT id, filename, playback_filename AS playbackFilename, playback_mime AS playbackMime, playback_status AS playbackStatus, playback_error AS playbackError, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, playback_preferred AS playbackPreferred, playback_start AS playbackStart, playback_end AS playbackEnd, size, created_at AS createdAt, recognition_status AS recognitionStatus, recognition_title AS recognitionTitle, recognition_artist AS recognitionArtist, recognition_album AS recognitionAlbum, recognition_error AS recognitionError, recognition_override AS recognitionOverride, background_filename AS backgroundFilename, background_status AS backgroundStatus, background_error AS backgroundError, use_background_removed AS useBackgroundRemoved FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(gigId).map(formatMediaRow);
+  const rows = database.prepare('SELECT id, filename, playback_filename AS playbackFilename, playback_mime AS playbackMime, playback_status AS playbackStatus, playback_error AS playbackError, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, playback_preferred AS playbackPreferred, playback_start AS playbackStart, playback_end AS playbackEnd, source_description AS sourceDescription, source_duration AS sourceDuration, source_metadata_at AS sourceMetadataAt, size, created_at AS createdAt, recognition_status AS recognitionStatus, recognition_title AS recognitionTitle, recognition_artist AS recognitionArtist, recognition_album AS recognitionAlbum, recognition_error AS recognitionError, recognition_override AS recognitionOverride, background_filename AS backgroundFilename, background_status AS backgroundStatus, background_error AS backgroundError, use_background_removed AS useBackgroundRemoved FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(gigId).map(formatMediaRow);
   const clips = database.prepare(`SELECT clips.media_id AS mediaId, clips.song_index AS songIndex, clips.start_seconds AS startSeconds, clips.end_seconds AS endSeconds
     FROM media_playback_clips clips JOIN gig_media media ON media.id = clips.media_id WHERE media.gig_id = ? ORDER BY clips.song_index`).all(gigId);
   const byMedia = new Map();
@@ -1450,11 +1454,153 @@ async function searchYouTubeForGig(gig) {
       const statusResult = await providerResponse(`https://www.googleapis.com/youtube/v3/videos?${statusQuery}`, { headers }, 'YouTube video status');
       embeddableIds = new Set((statusResult.items || []).filter((item) => item.status?.embeddable === true).map((item) => item.id));
     }
-    const results = filtered.filter((item) => embeddableIds.has(item.id.videoId)).slice(0, 3).map((item) => ({ id: item.id.videoId, title: item.snippet?.title || '', channel: item.snippet?.channelTitle || '', thumbnail: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url || '' }));
+    const results = filtered.filter((item) => embeddableIds.has(item.id.videoId)).slice(0, 3).map((item) => ({ id: item.id.videoId, title: item.snippet?.title || '', description: item.snippet?.description || '', channel: item.snippet?.channelTitle || '', thumbnail: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url || '' }));
     database.prepare('INSERT INTO youtube_search_cache (cache_key, results, created_at) VALUES (?, ?, ?) ON CONFLICT(cache_key) DO UPDATE SET results = excluded.results, created_at = excluded.created_at').run(cacheKey, JSON.stringify(results), new Date().toISOString());
     matches.push({ index, title: song.title, results });
   }
   return matches;
+}
+
+function youtubeVideoId(value) {
+  try {
+    const parsed = new URL(String(value || ''));
+    if (parsed.hostname === 'youtu.be') return parsed.pathname.split('/').filter(Boolean)[0] || '';
+    return parsed.searchParams.get('v') || parsed.pathname.split('/').filter(Boolean).pop() || '';
+  } catch { return ''; }
+}
+
+function isoDurationSeconds(value) {
+  const match = String(value || '').match(/^P(?:([\d.]+)D)?T(?:([\d.]+)H)?(?:([\d.]+)M)?(?:([\d.]+)S)?$/i);
+  if (!match) return null;
+  return (Number(match[1]) || 0) * 86400 + (Number(match[2]) || 0) * 3600 + (Number(match[3]) || 0) * 60 + (Number(match[4]) || 0);
+}
+
+function chapterSeconds(value) {
+  const parts = String(value || '').split(':').map(Number);
+  if (parts.some((part) => !Number.isFinite(part)) || parts.length < 2 || parts.length > 3) return null;
+  const seconds = parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 60 + parts[1];
+  return seconds >= 0 ? seconds : null;
+}
+
+function parsePlaybackChapters(description) {
+  const timestamp = '(?:\\d{1,2}:)?\\d{1,2}:\\d{2}';
+  const leading = new RegExp(`^\\s*(?:[-*#]\\s*)?(${timestamp})\\s*(?:[-–—|:]\\s*)?(.+?)\\s*$`);
+  const trailing = new RegExp(`^\\s*(.+?)\\s+(?:[-–—|]\\s*)?(${timestamp})\\s*$`);
+  const chapters = [];
+  String(description || '').split(/\r?\n/).forEach((line) => {
+    const match = line.match(leading);
+    const reverse = match ? null : line.match(trailing);
+    const seconds = chapterSeconds(match?.[1] || reverse?.[2]);
+    const title = String(match?.[2] || reverse?.[1] || '').replace(/^\d+[.)]\s*/, '').trim();
+    if (seconds !== null && title) chapters.push({ seconds, title });
+  });
+  return chapters.filter((chapter, index) => index === 0 || chapter.seconds > chapters[index - 1].seconds).slice(0, 200);
+}
+
+function playbackMatchTokens(value, artist = '') {
+  const artistTokens = new Set(String(artist || '').toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 2));
+  const ignored = new Set(['live', 'official', 'video', 'audio', 'lyrics', 'concert', 'full', 'show', 'set', 'tour', 'feat', 'featuring', ...artistTokens]);
+  return String(value || '').toLowerCase().replace(/&amp;/g, ' and ').split(/[^a-z0-9]+/).filter((token) => token && !ignored.has(token));
+}
+
+function playbackTitleScore(value, song, gig) {
+  const candidateKey = recognitionKey(value);
+  const songKey = recognitionKey(song.title);
+  if (!candidateKey || !songKey) return 0;
+  if (candidateKey === songKey) return 1;
+  if (songKey.length >= 4 && candidateKey.includes(songKey)) return .94;
+  const candidateTokens = new Set(playbackMatchTokens(value, song.artist || gig.artist));
+  const songTokens = new Set(playbackMatchTokens(song.title));
+  if (!candidateTokens.size || !songTokens.size) return 0;
+  const matched = [...songTokens].filter((token) => candidateTokens.has(token)).length;
+  const recall = matched / songTokens.size;
+  const precision = matched / candidateTokens.size;
+  return (recall * .75) + (precision * .25);
+}
+
+function bestPlaybackSong(gig, value, minimum = .55) {
+  let best = null;
+  (gig.songs || []).forEach((song, songIndex) => {
+    const score = playbackTitleScore(value, song, gig);
+    if (score >= minimum && (!best || score > best.score)) best = { songIndex, score };
+  });
+  return best;
+}
+
+async function refreshYouTubePlaybackMetadata(gigId, media) {
+  const staleBefore = Date.now() - (30 * 24 * 60 * 60 * 1000);
+  const pending = media.filter((item) => item.mimeType === 'video/youtube' && youtubeVideoId(item.externalUrl || item.url) && (!item.sourceMetadataAt || Date.parse(item.sourceMetadataAt) < staleBefore));
+  if (!pending.length) return null;
+  if (!configured('youtube')) return 'YouTube metadata is not configured; title and AudD matching were used instead.';
+  try {
+    const token = await getAccessToken('youtube');
+    const byVideoId = new Map(pending.map((item) => [youtubeVideoId(item.externalUrl || item.url), item]));
+    const query = new URLSearchParams({ part: 'snippet,contentDetails,status', id: [...byVideoId.keys()].join(',') });
+    const result = await providerResponse(`https://www.googleapis.com/youtube/v3/videos?${query}`, { headers: { Authorization: `Bearer ${token}` } }, 'YouTube video metadata');
+    const now = new Date().toISOString();
+    const update = database.prepare('UPDATE gig_media SET caption = ?, source_description = ?, source_duration = ?, source_metadata_at = ? WHERE id = ?');
+    const seen = new Set();
+    (result.items || []).forEach((video) => {
+      const item = byVideoId.get(video.id);
+      if (!item) return;
+      seen.add(video.id);
+      const caption = !item.caption || item.caption === 'YouTube video' ? video.snippet?.title || item.caption : item.caption;
+      update.run(caption, video.snippet?.description || '', isoDurationSeconds(video.contentDetails?.duration), now, item.id);
+    });
+    pending.forEach((item) => { if (!seen.has(youtubeVideoId(item.externalUrl || item.url))) database.prepare('UPDATE gig_media SET source_metadata_at = ? WHERE id = ?').run(now, item.id); });
+    return null;
+  } catch (error) {
+    return `YouTube metadata could not be refreshed: ${error.message}`;
+  }
+}
+
+function suggestPlaybackPlan(gig, media) {
+  const occupied = new Set(media.flatMap((item) => (item.playbackClips || []).map((clip) => clip.songIndex)));
+  const suggestions = new Map();
+  const setlistStarts = (gig.songs || []).map((song) => {
+    if (song.startSeconds === null || song.startSeconds === undefined || song.startSeconds === '') return null;
+    const value = Number(song.startSeconds);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  });
+  const timedSongs = setlistStarts.filter((value) => value !== null).length;
+  const offer = (songIndex, item, startSeconds, endSeconds, confidence, reason) => {
+    if (!Number.isInteger(songIndex) || occupied.has(songIndex)) return;
+    const current = suggestions.get(songIndex);
+    if (!current || confidence > current.confidence) suggestions.set(songIndex, { songIndex, mediaId: item.id, startSeconds, endSeconds, confidence: Math.round(confidence * 100) / 100, reason, sourceLabel: item.caption || item.filename || 'Video' });
+  };
+  media.filter((item) => item.category !== 'artifact' && String(item.mimeType || '').startsWith('video/')).forEach((item) => {
+    if (Number.isInteger(item.songIndex)) offer(item.songIndex, item, item.playbackStart, item.playbackEnd, .9, 'Existing track assignment');
+    if (item.recognitionTitle) {
+      const match = bestPlaybackSong(gig, item.recognitionTitle, .5);
+      if (match) offer(match.songIndex, item, item.playbackStart, item.playbackEnd, .9 + (.08 * match.score), `AudD matched “${item.recognitionTitle}”`);
+    }
+    const chapters = item.mimeType === 'video/youtube' ? parsePlaybackChapters(item.sourceDescription) : [];
+    chapters.forEach((chapter, index) => {
+      const match = bestPlaybackSong(gig, chapter.title, .5);
+      if (!match) return;
+      const next = chapters[index + 1];
+      const end = next?.seconds ?? item.sourceDuration ?? null;
+      offer(match.songIndex, item, chapter.seconds, end, .74 + (.24 * match.score), `YouTube chapter “${chapter.title}”`);
+    });
+    const sourceText = `${item.caption || ''} ${item.sourceDescription || ''}`.toLowerCase();
+    const artistWords = String(gig.artist || '').toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2);
+    const venueWords = String(gig.venue || '').toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 3);
+    const looksLikeFullShow = timedSongs >= 2 && artistWords.some((word) => sourceText.includes(word)) && (/full\s+(?:set|show)|complete\s+(?:set|show)|whole\s+(?:set|show)|concert|live\s+at/.test(sourceText) || venueWords.some((word) => sourceText.includes(word)));
+    if (looksLikeFullShow) setlistStarts.forEach((start, songIndex) => {
+      if (start === null) return;
+      const next = setlistStarts.slice(songIndex + 1).find((value) => value !== null && value > start);
+      offer(songIndex, item, start, next ?? item.sourceDuration ?? null, .72, 'Setlist timestamp matched to a full-show video');
+    });
+    const titleMatch = bestPlaybackSong(gig, item.caption, .62);
+    if (titleMatch) offer(titleMatch.songIndex, item, item.playbackStart, item.playbackEnd, .58 + (.28 * titleMatch.score), 'Video title matches the setlist');
+    if (!chapters.length && item.sourceDescription) {
+      String(item.sourceDescription).split(/\r?\n/).filter((line) => line.trim().length >= 3 && line.trim().length <= 140).slice(0, 100).forEach((line) => {
+        const match = bestPlaybackSong(gig, line, .82);
+        if (match) offer(match.songIndex, item, item.playbackStart, item.playbackEnd, .55 + (.2 * match.score), `Video description mentions “${line.trim()}”`);
+      });
+    }
+  });
+  return [...suggestions.values()].sort((a, b) => a.songIndex - b.songIndex);
 }
 
 async function exportAppleMusic(gig, musicUserToken) {
@@ -2142,7 +2288,7 @@ async function handleApi(request, response, url) {
       if (!['youtube.com', 'www.youtube.com', 'youtu.be', 'www.youtube-nocookie.com'].includes(parsed.hostname.toLowerCase())) return sendError(response, 400, 'Only YouTube URLs can be added as external media.');
       const id = randomUUID();
       const sortOrder = database.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM gig_media WHERE gig_id = ?').get(gigId).next;
-      database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, rotation, category, external_url, song_index, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, 'external', 'video/youtube', String(body.caption || 'YouTube video').trim(), 0, sortOrder, 0, 'other', parsed.toString(), Number.isInteger(body.songIndex) ? body.songIndex : null, 0, new Date().toISOString());
+      database.prepare('INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, is_cover, sort_order, rotation, category, external_url, song_index, source_description, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, gigId, 'external', 'video/youtube', String(body.caption || 'YouTube video').trim(), 0, sortOrder, 0, 'other', parsed.toString(), Number.isInteger(body.songIndex) ? body.songIndex : null, String(body.sourceDescription || ''), 0, new Date().toISOString());
       return sendJson(response, 201, mediaRows(gigId).find((media) => media.id === id));
     }
     const mimeType = String(body.mimeType || '');
@@ -2282,6 +2428,16 @@ async function handleApi(request, response, url) {
   }
   const rotateStatusMatch = url.pathname.match(/^\/api\/media\/rotate\/([\w-]+)$/);
   if (request.method === 'GET' && rotateStatusMatch) return sendJson(response, 200, rotateJobs.get(rotateStatusMatch[1]) || database.prepare('SELECT id, type, name, status, progress, error FROM background_jobs WHERE id = ?').get(rotateStatusMatch[1]) || { status: 'missing', progress: 0 });
+  const playbackSuggestMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/playback-plan\/suggest$/);
+  if (request.method === 'POST' && playbackSuggestMatch) {
+    requireAccount(request);
+    const gig = findGigSync(playbackSuggestMatch[1]);
+    let media = mediaRows(gig.id);
+    const metadataWarning = await refreshYouTubePlaybackMetadata(gig.id, media);
+    media = mediaRows(gig.id);
+    const suggestions = suggestPlaybackPlan(gig, media);
+    return sendJson(response, 200, { suggestions, metadataWarning, inspected: media.filter((item) => item.category !== 'artifact' && String(item.mimeType || '').startsWith('video/')).length });
+  }
   const playbackPlanMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/playback-plan$/);
   if (request.method === 'PUT' && playbackPlanMatch) {
     requireAccount(request);

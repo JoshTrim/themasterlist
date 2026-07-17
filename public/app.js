@@ -276,7 +276,9 @@ const mediaWorkspaceEmpty = document.querySelector('#media-workspace-empty');
 const mediaWorkspaceRefresh = document.querySelector('#media-workspace-refresh');
 const playbackEditorList = document.querySelector('#playback-editor-list');
 const playbackEditorHealth = document.querySelector('#playback-editor-health');
+const playbackEditorSuggestions = document.querySelector('#playback-editor-suggestions');
 const playbackEditorMessage = document.querySelector('#playback-editor-message');
+const autoBuildPlaybackPlan = document.querySelector('#auto-build-playback-plan');
 const savePlaybackPlan = document.querySelector('#save-playback-plan');
 const editSetlistTracks = document.querySelector('#edit-setlist-tracks');
 const addEditTrack = document.querySelector('#add-edit-track');
@@ -1208,6 +1210,68 @@ function openPlaybackEditorPreview(gig, row) {
   updateTime();
 }
 
+let playbackSuggestionState = { gigId: '', suggestions: [], metadataWarning: '' };
+function playbackSuggestionConfidence(value) {
+  if (value >= .9) return 'High confidence';
+  if (value >= .75) return 'Good confidence';
+  return 'Possible match';
+}
+function playbackSuggestionTiming(suggestion) {
+  if (suggestion.startSeconds === null || suggestion.startSeconds === undefined) return 'Timing not detected';
+  const start = formatPlaybackTime(suggestion.startSeconds);
+  const end = suggestion.endSeconds === null || suggestion.endSeconds === undefined ? 'video end' : formatPlaybackTime(suggestion.endSeconds);
+  return `${start}–${end}`;
+}
+function applyPlaybackSuggestion(gig, suggestion) {
+  const row = playbackEditorList.querySelector(`.playback-editor-row[data-song-index="${suggestion.songIndex}"]`);
+  if (!row) return false;
+  const select = row.querySelector('.playback-source');
+  if (![...select.options].some((option) => option.value === suggestion.mediaId)) return false;
+  select.value = suggestion.mediaId;
+  select.dispatchEvent(new Event('change'));
+  row.querySelector('.playback-start').value = suggestion.startSeconds ?? '';
+  row.querySelector('.playback-end').value = suggestion.endSeconds ?? '';
+  row.classList.add('suggestion-applied');
+  playbackSuggestionState.suggestions = playbackSuggestionState.suggestions.filter((item) => item.songIndex !== suggestion.songIndex);
+  playbackEditorHealthCheck(gig);
+  return true;
+}
+function renderPlaybackSuggestions(gig) {
+  playbackEditorList.querySelectorAll('.playback-suggestion').forEach((element) => element.remove());
+  if (playbackSuggestionState.gigId !== gig.id) { playbackEditorSuggestions.innerHTML = ''; return; }
+  const suggestions = playbackSuggestionState.suggestions;
+  if (!suggestions.length) {
+    playbackEditorSuggestions.innerHTML = `<p>${playbackSuggestionState.metadataWarning ? escapeHtml(playbackSuggestionState.metadataWarning) : 'No unapplied suggestions remain.'}</p>`;
+    return;
+  }
+  const safeSuggestions = suggestions.filter((suggestion) => {
+    if (suggestion.confidence < .75) return false;
+    const row = playbackEditorList.querySelector(`.playback-editor-row[data-song-index="${suggestion.songIndex}"]`);
+    if (!row) return false;
+    const selected = row.querySelector('.playback-source').value;
+    const hasTiming = row.querySelector('.playback-start').value !== '' || row.querySelector('.playback-end').value !== '';
+    return !selected || (selected === suggestion.mediaId && !hasTiming);
+  });
+  playbackEditorSuggestions.innerHTML = `<div><strong>${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} ready to review</strong><small>${playbackSuggestionState.metadataWarning ? escapeHtml(playbackSuggestionState.metadataWarning) : 'Manual clips have been left untouched.'}</small></div>${safeSuggestions.length ? `<button type="button" class="button button-secondary apply-safe-suggestions">Apply ${safeSuggestions.length} safe suggestion${safeSuggestions.length === 1 ? '' : 's'}</button>` : ''}`;
+  suggestions.forEach((suggestion) => {
+    const row = playbackEditorList.querySelector(`.playback-editor-row[data-song-index="${suggestion.songIndex}"]`);
+    if (!row) return;
+    const suggestionElement = document.createElement('div');
+    suggestionElement.className = 'playback-suggestion';
+    suggestionElement.innerHTML = `<div><span>${playbackSuggestionConfidence(suggestion.confidence)} · ${Math.round(suggestion.confidence * 100)}%</span><strong>${escapeHtml(suggestion.sourceLabel)}</strong><small>${escapeHtml(playbackSuggestionTiming(suggestion))} · ${escapeHtml(suggestion.reason)}</small></div><div><button type="button" class="apply-playback-suggestion">Apply</button><button type="button" class="dismiss-playback-suggestion">Dismiss</button></div>`;
+    row.querySelector('.playback-preview').insertAdjacentElement('beforebegin', suggestionElement);
+    suggestionElement.querySelector('.apply-playback-suggestion').addEventListener('click', () => { applyPlaybackSuggestion(gig, suggestion); renderPlaybackSuggestions(gig); });
+    suggestionElement.querySelector('.dismiss-playback-suggestion').addEventListener('click', () => { playbackSuggestionState.suggestions = playbackSuggestionState.suggestions.filter((item) => item.songIndex !== suggestion.songIndex); renderPlaybackSuggestions(gig); });
+  });
+  playbackEditorSuggestions.querySelector('.apply-safe-suggestions')?.addEventListener('click', () => {
+    let applied = 0;
+    safeSuggestions.forEach((suggestion) => { if (applyPlaybackSuggestion(gig, suggestion)) applied += 1; });
+    playbackEditorMessage.textContent = `${applied} suggestion${applied === 1 ? '' : 's'} applied. Review the plan, then save it.`;
+    playbackEditorMessage.classList.remove('error');
+    renderPlaybackSuggestions(gig);
+  });
+}
+
 function renderPlaybackEditor(gig) {
   if (!playbackEditorList) return;
   closePlaybackEditorPreview();
@@ -1240,6 +1304,7 @@ function renderPlaybackEditor(gig) {
   playbackEditorList.querySelectorAll('.playback-preview-toggle').forEach((button) => button.addEventListener('click', () => openPlaybackEditorPreview(gig, button.closest('.playback-editor-row'))));
   playbackEditorList.querySelectorAll('.playback-start, .playback-end').forEach((input) => input.addEventListener('input', () => playbackEditorHealthCheck(gig)));
   playbackEditorHealthCheck(gig);
+  renderPlaybackSuggestions(gig);
   savePlaybackPlan.onclick = async () => {
     const health = playbackEditorHealthCheck(gig);
     if (health.errors.length) { playbackEditorMessage.textContent = health.errors[0]; playbackEditorMessage.classList.add('error'); return; }
@@ -1262,12 +1327,36 @@ function renderPlaybackEditor(gig) {
       const updated = await fetchJson(`/api/gigs/${gig.id}/playback-plan`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clips }) });
       gig.media = updated.media;
       gigs = gigs.map((entry) => entry.id === gig.id ? gig : entry);
+      playbackSuggestionState = { gigId: gig.id, suggestions: [], metadataWarning: '' };
       playbackEditorMessage.textContent = 'Playback plan saved.';
       renderPlaybackEditor(gig);
     } catch (error) { playbackEditorMessage.textContent = error.message; playbackEditorMessage.classList.add('error'); }
     finally { savePlaybackPlan.disabled = false; }
   };
 }
+
+autoBuildPlaybackPlan?.addEventListener('click', async () => {
+  const gig = gigs.find((entry) => entry.id === editGigId);
+  if (!gig) return;
+  autoBuildPlaybackPlan.disabled = true;
+  autoBuildPlaybackPlan.textContent = 'Inspecting videos…';
+  playbackEditorSuggestions.innerHTML = '<p>Reading chapters, titles and track detections…</p>';
+  playbackEditorMessage.textContent = '';
+  try {
+    const result = await fetchJson(`/api/gigs/${gig.id}/playback-plan/suggest`, { method: 'POST' });
+    playbackSuggestionState = { gigId: gig.id, suggestions: result.suggestions || [], metadataWarning: result.metadataWarning || '' };
+    renderPlaybackSuggestions(gig);
+    playbackEditorMessage.textContent = result.suggestions?.length ? `Inspected ${result.inspected} video${result.inspected === 1 ? '' : 's'}. Review the highlighted suggestions below.` : 'No new setlist matches were found. Your saved plan was not changed.';
+    playbackEditorMessage.classList.remove('error');
+  } catch (error) {
+    playbackEditorSuggestions.innerHTML = '';
+    playbackEditorMessage.textContent = error.message;
+    playbackEditorMessage.classList.add('error');
+  } finally {
+    autoBuildPlaybackPlan.disabled = false;
+    autoBuildPlaybackPlan.textContent = '✦ Suggest plan';
+  }
+});
 
 mediaWorkspaceFilters?.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => { mediaWorkspaceFilter = button.dataset.mediaFilter; applyMediaWorkspaceFilter(); }));
 mediaWorkspaceRefresh?.addEventListener('click', async () => {
@@ -1926,12 +2015,13 @@ findYouTubeSet.addEventListener('click', async () => {
   findYouTubeSet.disabled = true; findYouTubeSet.textContent = 'Searching YouTube…'; youtubeSearchMessage.textContent = ''; youtubeResults.replaceChildren();
   try {
     const payload = await fetchJson(`/api/gigs/${gig.id}/youtube-search`, { method: 'POST' });
-    youtubeResults.innerHTML = payload.matches.map((match) => `<article class="youtube-match" data-song-index="${match.index}"><h3>${escapeHtml(match.title)}</h3><div class="youtube-match-options">${match.results.map((result) => `<div class="youtube-result"><img src="${escapeHtml(result.thumbnail)}" alt="" /><div><p>${escapeHtml(result.title)}</p><small>${escapeHtml(result.channel)}</small><button type="button" data-youtube-url="https://www.youtube.com/watch?v=${encodeURIComponent(result.id)}">Add to other media</button></div></div>`).join('') || '<p>No matching videos found.</p>'}</div></article>`).join('');
+    youtubeResults.innerHTML = payload.matches.map((match) => `<article class="youtube-match" data-song-index="${match.index}"><h3>${escapeHtml(match.title)}</h3><div class="youtube-match-options">${match.results.map((result) => `<div class="youtube-result" data-youtube-description="${escapeHtml(result.description || '')}"><img src="${escapeHtml(result.thumbnail)}" alt="" /><div><p>${escapeHtml(result.title)}</p><small>${escapeHtml(result.channel)}</small><button type="button" data-youtube-url="https://www.youtube.com/watch?v=${encodeURIComponent(result.id)}">Add to other media</button></div></div>`).join('') || '<p>No matching videos found.</p>'}</div></article>`).join('');
     youtubeResults.querySelectorAll('[data-youtube-url]').forEach((button) => button.addEventListener('click', async () => {
       button.disabled = true; button.textContent = 'Adding…';
       const match = button.closest('.youtube-match');
       const songIndex = Number(match?.dataset.songIndex);
-      const added = await fetchJson(`/api/gigs/${gig.id}/media`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ externalUrl: button.dataset.youtubeUrl, caption: button.closest('.youtube-result').querySelector('p').textContent, songIndex: Number.isInteger(songIndex) ? songIndex : null }) });
+      const result = button.closest('.youtube-result');
+      const added = await fetchJson(`/api/gigs/${gig.id}/media`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ externalUrl: button.dataset.youtubeUrl, caption: result.querySelector('p').textContent, sourceDescription: result.dataset.youtubeDescription || '', songIndex: Number.isInteger(songIndex) ? songIndex : null }) });
       gig.media = [...(gig.media || []), added]; button.textContent = 'Added'; renderMediaGallery(document.querySelector('#show-detail-gallery'), gig.media.filter((item) => item.category !== 'artifact'), { editable: true, songs: gig.songs || [] });
     }));
   } catch (error) { youtubeSearchMessage.textContent = error.message; youtubeSearchMessage.classList.add('error'); }
