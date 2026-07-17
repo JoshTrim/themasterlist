@@ -9,6 +9,7 @@
       body { margin: 0; background: #0d0817; color: #f8eaff; font-family: monospace; }
       body[data-page] main > section { display: none; }
       body[data-page="home"] #home-page, body[data-page="overview"] #overview-page,
+      body[data-page="artists"] #artists-page, body[data-page="venues"] #venues-page,
       body[data-page="timeline"] #timeline-page,
       body[data-page="search"] #search-page, body[data-page="health"] #health-page,
       body[data-page="api-limits"] #api-limits-page, body[data-page="add"] #add-page,
@@ -19,19 +20,19 @@
       body[data-page="venue-edit"] #venue-edit-page, body[data-page="edit"] #edit-page,
       body[data-page="map"] #map-page, body[data-page="account"] #account-page { display: block; }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=overview-links-1" />
+    <link rel="stylesheet" href="/styles.css?v=entity-directories-2" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   </head>
   <body>
     <script>
-      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/timeline': 'timeline', '/search': 'search', '/health': 'health', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
+      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/artists': 'artists', '/venues': 'venues', '/timeline': 'timeline', '/search': 'search', '/health': 'health', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
     </script>
     <div class="crt-overlay" aria-hidden="true">
       <span class="crt-noise"></span>
     </div>
     <header class="site-header">
       <a class="brand" href="/">The<br /><em>Master</em> List</a>
-      <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">☰</button><nav class="site-nav" id="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/overview">Overview</a><a href="/timeline">Timeline</a><a href="/search">Search</a><a href="/health">Health</a><a href="/api-limits">API limits</a><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a><a href="/login">Sign in</a></nav>
+      <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">☰</button><nav class="site-nav" id="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/overview">Overview</a><a href="/artists">Artists</a><a href="/venues">Venues</a><a href="/timeline">Timeline</a><a href="/search">Search</a><a href="/health">Health</a><a href="/api-limits">API limits</a><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a><a href="/login">Sign in</a></nav>
       <span class="record-count" id="record-count">0 shows</span>
     </header>
 
@@ -102,6 +103,18 @@
       </section>
 
       <section class="overview-page" id="overview-page" aria-labelledby="overview-heading"><div class="section-heading"><p class="eyebrow">05 / Archive intelligence</p><h1 id="overview-heading">Overview</h1><p class="lede">A snapshot of your live-music life.</p></div><div class="dashboard-stats" id="dashboard-stats"></div></section>
+
+      <section class="entity-directory-page" id="artists-page" aria-labelledby="artists-heading">
+        <div class="section-heading"><p class="eyebrow">Artists in the archive</p><h1 id="artists-heading">Artists</h1><p class="lede">Every performer you have seen, from one-off discoveries to recurring favourites.</p></div>
+        <div class="entity-directory-controls"><label>Search artists<input id="artists-filter" type="search" placeholder="Artist name" autocomplete="off" /></label><label>Order<select id="artists-sort"><option value="seen">Most seen</option><option value="recent">Recently seen</option><option value="rating">Highest rated</option><option value="name">Name A–Z</option></select></label></div>
+        <p class="entity-directory-summary" id="artists-summary"></p><div class="entity-directory-grid" id="artists-grid"></div>
+      </section>
+
+      <section class="entity-directory-page" id="venues-page" aria-labelledby="venues-heading">
+        <div class="section-heading"><p class="eyebrow">Rooms in the archive</p><h1 id="venues-heading">Venues</h1><p class="lede">The stages, halls and strange little rooms where your archive happened.</p></div>
+        <div class="entity-directory-controls"><label>Search venues<input id="venues-filter" type="search" placeholder="Venue or city" autocomplete="off" /></label><label>Order<select id="venues-sort"><option value="seen">Most visited</option><option value="recent">Recently visited</option><option value="name">Name A–Z</option></select></label></div>
+        <p class="entity-directory-summary" id="venues-summary"></p><div class="entity-directory-grid" id="venues-grid"></div>
+      </section>
 
       <section class="timeline-page" id="timeline-page" aria-labelledby="timeline-heading">
         <div class="section-heading timeline-heading"><p class="eyebrow">06 / Through the years</p><h1 id="timeline-heading">Gig timeline</h1><p class="lede">See the rhythm of your archive — the busy years, quiet spells and every show between.</p></div>
@@ -240,6 +253,6 @@
     <div class="media-lightbox" id="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Media viewer"><button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Close media viewer">×</button><img id="media-lightbox-image" alt="" /><video id="media-lightbox-video" controls></video><p id="media-lightbox-caption"></p></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="/app.js?v=overview-links-1"></script>
+    <script src="/app.js?v=entity-directories-2"></script>
   </body>
 </html>

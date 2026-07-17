@@ -2136,6 +2136,13 @@ async function handleApi(request, response, url) {
     return sendJson(response, 200, { removed });
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/directory/metadata') {
+    requireAccount(request);
+    const artists = database.prepare('SELECT lookup_name AS lookupName, title, description, image FROM artist_info').all();
+    const venues = database.prepare('SELECT lookup_name AS lookupName, title, description, image FROM venue_info').all();
+    return sendJson(response, 200, { artists, venues });
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/artists') {
     return sendJson(response, 200, await fetchArtistInfo(url.searchParams.get('name')));
   }

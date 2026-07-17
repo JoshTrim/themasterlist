@@ -96,6 +96,25 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     assert.match(timeline.body, /href="\/timeline"/);
   });
 
+  test('artist and venue directories expose their page shells and cached metadata feed', async () => {
+    const [artists, venues, metadata] = await Promise.all([
+      api('/artists'),
+      api('/venues'),
+      api('/api/directory/metadata')
+    ]);
+    assert.equal(artists.response.status, 200);
+    assert.match(artists.body, /id="artists-page"/);
+    assert.match(artists.body, /href="\/artists"/);
+    assert.equal(venues.response.status, 200);
+    assert.match(venues.body, /id="venues-page"/);
+    assert.match(venues.body, /href="\/venues"/);
+    assert.equal(metadata.response.status, 200);
+    assert.ok(Array.isArray(metadata.body.artists));
+    assert.ok(Array.isArray(metadata.body.venues));
+    const anonymous = await api('/api/directory/metadata', { cookie: '' });
+    assert.equal(anonymous.response.status, 401);
+  });
+
   test('editing show fields preserves attached media and omitted album metadata', async () => {
     const updated = await jsonApi(`/api/gigs/${gig.id}`, 'PATCH', {
       artist: 'Test Artist Updated',

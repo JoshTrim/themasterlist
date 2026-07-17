@@ -47,6 +47,14 @@ const sortFilter = document.querySelector('#sort-filter');
 const favouriteFilter = document.querySelector('#favourite-filter');
 const archiveStats = document.querySelector('#archive-stats');
 const dashboardStats = document.querySelector('#dashboard-stats');
+const artistsFilter = document.querySelector('#artists-filter');
+const artistsSort = document.querySelector('#artists-sort');
+const artistsSummary = document.querySelector('#artists-summary');
+const artistsGrid = document.querySelector('#artists-grid');
+const venuesFilter = document.querySelector('#venues-filter');
+const venuesSort = document.querySelector('#venues-sort');
+const venuesSummary = document.querySelector('#venues-summary');
+const venuesGrid = document.querySelector('#venues-grid');
 const timelineSummary = document.querySelector('#timeline-summary');
 const timelineChart = document.querySelector('#timeline-chart');
 const timelineYearDetail = document.querySelector('#timeline-year-detail');
@@ -121,6 +129,8 @@ const page = document.body.dataset.page || 'home';
 const routeSections = {
   home: ['home-page'],
   overview: ['overview-page'],
+  artists: ['artists-page'],
+  venues: ['venues-page'],
   timeline: ['timeline-page'],
   search: ['search-page'],
   health: ['health-page'],
@@ -139,7 +149,7 @@ const routeSections = {
   map: ['map-page'],
   account: ['account-page']
 };
-for (const id of ['home-page', 'overview-page', 'timeline-page', 'search-page', 'health-page', 'api-limits-page', 'add-page', 'shows-archive', 'artist-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
+for (const id of ['home-page', 'overview-page', 'artists-page', 'venues-page', 'timeline-page', 'search-page', 'health-page', 'api-limits-page', 'add-page', 'shows-archive', 'artist-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
   document.querySelector(`#${id}`).hidden = !routeSections[page].includes(id);
 }
 const chestButton = document.querySelector('#open-chest');
@@ -1716,6 +1726,150 @@ async function renderDashboardStats() {
   try { render(await fetchJson('/api/stats')); } catch { /* local snapshot remains visible */ }
 }
 
+function directoryInitials(name) {
+  return String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '♪';
+}
+
+function directoryRatingFor(show) {
+  const localRating = Number(show.performanceRating || 0);
+  if (localRating) return localRating;
+  return Math.max(0, ...(show.contributions || []).map((entry) => Number(entry.performanceRating || 0)));
+}
+
+function bindDirectoryImageFallbacks(grid) {
+  grid.querySelectorAll('.entity-card-image img').forEach((image) => image.addEventListener('error', () => {
+    image.closest('.entity-card-image')?.classList.add('is-missing');
+    image.remove();
+  }, { once: true }));
+}
+
+const directoryCardObservers = new WeakMap();
+const directoryMetadataRequests = new Map();
+const directoryHydrationQueue = [];
+let directoryHydrationActive = 0;
+
+function directoryEntityInfo(type, name, city = '') {
+  const key = `${type}|${name}|${city}`.toLocaleLowerCase();
+  if (!directoryMetadataRequests.has(key)) {
+    const endpoint = type === 'artist'
+      ? `/api/artists?name=${encodeURIComponent(name)}`
+      : `/api/venues?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}`;
+    directoryMetadataRequests.set(key, fetchJson(endpoint).catch(() => null));
+  }
+  return directoryMetadataRequests.get(key);
+}
+
+function runDirectoryHydrationQueue() {
+  while (directoryHydrationActive < 2 && directoryHydrationQueue.length) {
+    const task = directoryHydrationQueue.shift();
+    directoryHydrationActive += 1;
+    directoryEntityInfo(task.type, task.name, task.city).then((info) => {
+      if (!info?.image || !task.card.isConnected || task.card.querySelector('.entity-card-image img')) return;
+      const image = document.createElement('img');
+      image.alt = '';
+      image.loading = 'lazy';
+      image.decoding = 'async';
+      image.addEventListener('error', () => { task.card.querySelector('.entity-card-image')?.classList.add('is-missing'); image.remove(); }, { once: true });
+      image.src = info.image;
+      task.card.querySelector('.entity-card-image')?.append(image);
+    }).finally(() => {
+      directoryHydrationActive -= 1;
+      runDirectoryHydrationQueue();
+    });
+  }
+}
+
+function hydrateMissingDirectoryCards(grid, type) {
+  directoryCardObservers.get(grid)?.disconnect();
+  const cards = [...grid.querySelectorAll('.entity-card')].filter((card) => !card.querySelector('.entity-card-image img'));
+  if (!cards.length) return;
+  const enqueue = (card) => {
+    directoryHydrationQueue.push({ card, type, name: card.dataset.entityName, city: card.dataset.entityCity || '' });
+    runDirectoryHydrationQueue();
+  };
+  if (!('IntersectionObserver' in window)) { cards.forEach(enqueue); return; }
+  const observer = new IntersectionObserver((entries) => entries.forEach((entry) => {
+    if (!entry.isIntersecting) return;
+    observer.unobserve(entry.target);
+    enqueue(entry.target);
+  }), { rootMargin: '240px' });
+  cards.forEach((card) => observer.observe(card));
+  directoryCardObservers.set(grid, observer);
+}
+
+async function renderEntityDirectories() {
+  if (!['artists', 'venues'].includes(page)) return;
+  let metadata = { artists: [], venues: [] };
+  try { metadata = await fetchJson('/api/directory/metadata'); } catch { /* Directory remains useful without cached artwork. */ }
+  const artistMetadata = new Map(metadata.artists.map((entry) => [entry.lookupName, entry]));
+  const venueMetadata = new Map(metadata.venues.map((entry) => [entry.lookupName, entry]));
+  const archiveShows = [...gigs, ...remoteSharedArchiveShows()];
+
+  if (page === 'artists') {
+    const records = new Map();
+    for (const show of archiveShows) {
+      const key = show.artist.trim().toLocaleLowerCase();
+      if (!records.has(key)) records.set(key, { key, name: show.artist, shows: 0, venues: new Set(), latestDate: '', ratings: [], favourites: 0 });
+      const record = records.get(key);
+      record.shows += 1;
+      record.venues.add(`${show.venue}|${show.city}`.toLocaleLowerCase());
+      if (show.date > record.latestDate) record.latestDate = show.date;
+      const rating = directoryRatingFor(show);
+      if (rating) record.ratings.push(rating);
+      if (show.favorite || show.contributions?.some((entry) => entry.favorite)) record.favourites += 1;
+    }
+    const artists = [...records.values()].map((record) => {
+      const info = artistMetadata.get(record.key) || {};
+      return { ...record, image: info.image || '', description: info.description || '', averageRating: record.ratings.length ? record.ratings.reduce((sum, rating) => sum + rating, 0) / record.ratings.length : 0 };
+    });
+    const drawArtists = () => {
+      const query = artistsFilter.value.trim().toLocaleLowerCase();
+      const visible = artists.filter((artist) => !query || artist.name.toLocaleLowerCase().includes(query)).sort((a, b) => {
+        if (artistsSort.value === 'name') return a.name.localeCompare(b.name);
+        if (artistsSort.value === 'recent') return (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
+        if (artistsSort.value === 'rating') return b.averageRating - a.averageRating || b.shows - a.shows || a.name.localeCompare(b.name);
+        return b.shows - a.shows || (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
+      });
+      artistsSummary.textContent = `${visible.length} of ${artists.length} artist${artists.length === 1 ? '' : 's'}`;
+      artistsGrid.innerHTML = visible.map((artist) => `<a class="entity-card entity-card-artist" data-entity-name="${escapeHtml(artist.name)}" href="/artist?name=${encodeURIComponent(artist.name)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(artist.name))}</span>${artist.image ? `<img src="${escapeHtml(artist.image)}" alt="" loading="lazy" decoding="async" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${artist.shows} show${artist.shows === 1 ? '' : 's'} · ${artist.venues.size} venue${artist.venues.size === 1 ? '' : 's'}</p><h2>${escapeHtml(artist.name)}</h2><p>${escapeHtml(artist.description || (artist.latestDate ? `Last seen ${formatGigDate(artist.latestDate)}` : 'An undated archive memory'))}</p><div class="entity-card-stats"><span><strong>${artist.averageRating ? artist.averageRating.toFixed(1) : '—'}</strong>Avg rating</span><span><strong>${artist.favourites}</strong>Favourite${artist.favourites === 1 ? '' : 's'}</span><span><strong>${artist.latestDate ? artist.latestDate.slice(0, 4) : '—'}</strong>Last seen</span></div></div></a>`).join('') || '<p class="empty-state entity-directory-empty">No artists match that search.</p>';
+      bindDirectoryImageFallbacks(artistsGrid);
+      hydrateMissingDirectoryCards(artistsGrid, 'artist');
+    };
+    artistsFilter.addEventListener('input', drawArtists);
+    artistsSort.addEventListener('change', drawArtists);
+    drawArtists();
+  }
+
+  if (page === 'venues') {
+    const records = new Map();
+    for (const show of archiveShows) {
+      const key = `${show.venue}|${show.city}`.toLocaleLowerCase();
+      if (!records.has(key)) records.set(key, { key, name: show.venue, city: show.city, shows: 0, artists: new Set(), latestDate: '', favourites: 0 });
+      const record = records.get(key);
+      record.shows += 1;
+      record.artists.add(show.artist.toLocaleLowerCase());
+      if (show.date > record.latestDate) record.latestDate = show.date;
+      if (show.favorite || show.contributions?.some((entry) => entry.favorite)) record.favourites += 1;
+    }
+    const venues = [...records.values()].map((record) => { const info = venueMetadata.get(record.key) || {}; return { ...record, image: info.image || '', description: info.description || '' }; });
+    const drawVenues = () => {
+      const query = venuesFilter.value.trim().toLocaleLowerCase();
+      const visible = venues.filter((venue) => !query || `${venue.name} ${venue.city}`.toLocaleLowerCase().includes(query)).sort((a, b) => {
+        if (venuesSort.value === 'name') return a.name.localeCompare(b.name) || a.city.localeCompare(b.city);
+        if (venuesSort.value === 'recent') return (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
+        return b.shows - a.shows || (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
+      });
+      venuesSummary.textContent = `${visible.length} of ${venues.length} venue${venues.length === 1 ? '' : 's'}`;
+      venuesGrid.innerHTML = visible.map((venue) => `<a class="entity-card entity-card-venue" data-entity-name="${escapeHtml(venue.name)}" data-entity-city="${escapeHtml(venue.city)}" href="/venue?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(venue.name))}</span>${venue.image ? `<img src="${escapeHtml(venue.image)}" alt="" loading="lazy" decoding="async" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${escapeHtml(venue.city || 'Location unknown')}</p><h2>${escapeHtml(venue.name)}</h2><p>${escapeHtml(venue.description || (venue.latestDate ? `Last visited ${formatGigDate(venue.latestDate)}` : 'An undated archive location'))}</p><div class="entity-card-stats"><span><strong>${venue.shows}</strong>Visit${venue.shows === 1 ? '' : 's'}</span><span><strong>${venue.artists.size}</strong>Artist${venue.artists.size === 1 ? '' : 's'}</span><span><strong>${venue.latestDate ? venue.latestDate.slice(0, 4) : '—'}</strong>Last visit</span></div></div></a>`).join('') || '<p class="empty-state entity-directory-empty">No venues match that search.</p>';
+      bindDirectoryImageFallbacks(venuesGrid);
+      hydrateMissingDirectoryCards(venuesGrid, 'venue');
+    };
+    venuesFilter.addEventListener('input', drawVenues);
+    venuesSort.addEventListener('change', drawVenues);
+    drawVenues();
+  }
+}
+
 function renderTimeline() {
   if (page !== 'timeline' || !timelineChart) return;
   const allShows = [...gigs, ...remoteSharedArchiveShows()];
@@ -3055,11 +3209,19 @@ function renderGigs() {
   const query = showFilter?.value.trim().toLowerCase() || '';
   const year = yearFilter?.value || '';
   const sort = sortFilter?.value || 'newest';
+  const compareDates = (a, b, oldestFirst = false) => {
+    const first = String(a || '');
+    const second = String(b || '');
+    if (!first && !second) return 0;
+    if (!first) return 1;
+    if (!second) return -1;
+    return oldestFirst ? first.localeCompare(second) : second.localeCompare(first);
+  };
   const filtered = gigs.filter((gig) => (!query || [gig.artist, gig.venue, gig.city].some((value) => value.toLowerCase().includes(query))) && (!year || gig.date.startsWith(year)) && (!favouriteFilter?.checked || gig.favorite));
   const remoteFiltered = remoteShows.filter((show) => (!query || [show.artist, show.venue, show.city, ...show.contributions.map((entry) => entry.participantName || '')].some((value) => value.toLowerCase().includes(query))) && (!year || show.date.startsWith(year)) && (!favouriteFilter?.checked || show.contributions.some((entry) => entry.favorite)));
   emptyState.hidden = Boolean(filtered.length || remoteFiltered.length);
   gigList.replaceChildren();
-  const orderedGigs = [...filtered].sort((a, b) => sort === 'oldest' ? a.date.localeCompare(b.date) : sort === 'rating' ? (Number(b.performanceRating || 0) - Number(a.performanceRating || 0)) || b.date.localeCompare(a.date) : Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || b.date.localeCompare(a.date));
+  const orderedGigs = [...filtered].sort((a, b) => sort === 'oldest' ? compareDates(a.date, b.date, true) : sort === 'rating' ? (Number(b.performanceRating || 0) - Number(a.performanceRating || 0)) || compareDates(a.date, b.date) : compareDates(a.date, b.date));
   for (const gig of orderedGigs) {
     const card = document.querySelector('#gig-template').content.cloneNode(true);
     const article = card.querySelector('.gig-card');
@@ -3132,13 +3294,13 @@ function renderGigs() {
     });
     gigList.append(card);
   }
-  const orderedRemoteShows = [...remoteFiltered].sort((a, b) => sort === 'oldest' ? a.date.localeCompare(b.date) : sort === 'rating' ? Math.max(...b.contributions.map((entry) => Number(entry.performanceRating || 0))) - Math.max(...a.contributions.map((entry) => Number(entry.performanceRating || 0))) : b.date.localeCompare(a.date));
+  const orderedRemoteShows = [...remoteFiltered].sort((a, b) => sort === 'oldest' ? compareDates(a.date, b.date, true) : sort === 'rating' ? Math.max(...b.contributions.map((entry) => Number(entry.performanceRating || 0))) - Math.max(...a.contributions.map((entry) => Number(entry.performanceRating || 0))) || compareDates(a.date, b.date) : compareDates(a.date, b.date));
   for (const show of orderedRemoteShows) gigList.append(renderRemoteSharedGig(show));
   const cards = [...gigList.children].sort((a, b) => sort === 'oldest'
-    ? a.dataset.showDate.localeCompare(b.dataset.showDate)
+    ? compareDates(a.dataset.showDate, b.dataset.showDate, true)
     : sort === 'rating'
-      ? Number(b.dataset.showRating || 0) - Number(a.dataset.showRating || 0) || b.dataset.showDate.localeCompare(a.dataset.showDate)
-      : Number(b.dataset.showFavorite || 0) - Number(a.dataset.showFavorite || 0) || b.dataset.showDate.localeCompare(a.dataset.showDate));
+      ? Number(b.dataset.showRating || 0) - Number(a.dataset.showRating || 0) || compareDates(a.dataset.showDate, b.dataset.showDate)
+      : compareDates(a.dataset.showDate, b.dataset.showDate));
   gigList.append(...cards);
   hydrateArchiveArtistImages();
   if (window.location.hash.startsWith('#shared-')) requestAnimationFrame(() => document.querySelector(window.location.hash)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
@@ -3319,6 +3481,7 @@ async function initializeApp() {
     populateShowAutofill();
     renderGigs();
     await renderDashboardStats();
+    await renderEntityDirectories();
     renderTimeline();
     renderGlobalSearch();
     await renderArchiveHealth();
