@@ -367,11 +367,11 @@ function updateSetTheatreMeta(gig, entry) {
   const sourceNumber = Number(entry?.sourceIndex || 0);
   setPlayerSourceKind.textContent = sourceNumber ? `${sourceType} · Backup ${sourceNumber}` : sourceType;
   setPlayerSourceLabel.textContent = media ? (media.caption || media.filename || 'Untitled video') : 'This track will be skipped';
-  const previousSong = setQueueIndex > 0 ? gig?.songs?.[setQueue[setQueueIndex - 1]?.songIndex] : null;
-  const nextSong = setQueueIndex < setQueue.length - 1 ? gig?.songs?.[setQueue[setQueueIndex + 1]?.songIndex] : null;
-  setPlayerContextPrevious.textContent = previousSong ? `← ${previousSong.title}` : 'Start of set';
-  setPlayerContextCurrent.textContent = `${setQueueIndex + 1} / ${setQueue.length}`;
-  setPlayerContextNext.textContent = nextSong ? `${nextSong.title} →` : 'End of set';
+  const previousEntry = setQueueIndex > 0 ? setQueue[setQueueIndex - 1] : null;
+  const nextEntry = setQueueIndex < setQueue.length - 1 ? setQueue[setQueueIndex + 1] : null;
+  setPlayerContextPrevious.textContent = previousEntry ? `← ${setQueueEntryTitle(gig, previousEntry)}` : 'Start of set';
+  setPlayerContextCurrent.textContent = entry?.isUnknown ? 'Unknown' : `${entry.songIndex + 1} / ${gig.songs.length}`;
+  setPlayerContextNext.textContent = nextEntry ? `${setQueueEntryTitle(gig, nextEntry)} →` : 'End of set';
 }
 function setPlaybackIsPlaying() {
   const video = setPlayerStage.querySelector('video.set-player-current');
@@ -447,13 +447,14 @@ function playbackTimeAt(source, fraction, duration) {
 function savePlaybackResume(gig, fraction) {
   if (!gig || !setQueue[setQueueIndex]?.media || Date.now() - resumeSaveAt < 1000) return;
   resumeSaveAt = Date.now();
-  try { localStorage.setItem(playbackResumeKey(gig.id), JSON.stringify({ songIndex: setQueue[setQueueIndex].songIndex, mediaId: setQueue[setQueueIndex].media.id, fraction: Math.max(0, Math.min(1, fraction)), savedAt: Date.now() })); } catch {}
+  const entry = setQueue[setQueueIndex];
+  try { localStorage.setItem(playbackResumeKey(gig.id), JSON.stringify({ entryKey: setQueueEntryKey(entry), songIndex: entry.songIndex, mediaId: entry.media.id, fraction: Math.max(0, Math.min(1, fraction)), savedAt: Date.now() })); } catch {}
 }
 function readPlaybackResume(gig) {
   try {
     const saved = JSON.parse(localStorage.getItem(playbackResumeKey(gig.id)) || 'null');
     if (!saved || Date.now() - Number(saved.savedAt || 0) > 1000 * 60 * 60 * 24 * 30 || Number(saved.fraction) >= .98) return null;
-    const index = setQueue.findIndex((entry) => entry.songIndex === Number(saved.songIndex) && (entry.sources || []).some((source) => source.media?.id === saved.mediaId));
+    const index = setQueue.findIndex((entry) => (saved.entryKey ? setQueueEntryKey(entry) === saved.entryKey : entry.songIndex === Number(saved.songIndex)) && (entry.sources || []).some((source) => source.media?.id === saved.mediaId));
     if (index < 0) return null;
     const sourceIndex = setQueue[index].sources.findIndex((source) => source.media?.id === saved.mediaId);
     return { index, sourceIndex: Math.max(0, sourceIndex), fraction: Math.max(0, Math.min(1, Number(saved.fraction) || 0)) };
@@ -471,8 +472,9 @@ function playbackPlanLengths(gig) {
     if (bounds.length) return bounds.length;
     const nextSameSource = entry.media ? setQueue.slice(index + 1).find((candidate) => candidate.media?.id === entry.media.id && playbackBounds(candidate).start > bounds.start) : null;
     if (nextSameSource) return playbackBounds(nextSameSource).start - bounds.start;
-    const chapterStart = validChapterStart(gig.songs[entry.songIndex]);
-    const nextChapterStart = index < setQueue.length - 1 ? validChapterStart(gig.songs[setQueue[index + 1].songIndex]) : null;
+    const chapterStart = entry.isUnknown ? null : validChapterStart(gig.songs[entry.songIndex]);
+    const nextEntry = index < setQueue.length - 1 ? setQueue[index + 1] : null;
+    const nextChapterStart = nextEntry && !nextEntry.isUnknown ? validChapterStart(gig.songs[nextEntry.songIndex]) : null;
     return chapterStart !== null && nextChapterStart !== null && nextChapterStart > chapterStart ? nextChapterStart - chapterStart : null;
   });
   const known = lengths.filter((length) => Number.isFinite(length) && length > 0).sort((a, b) => a - b);
@@ -522,8 +524,8 @@ function setTimelineProgress(gig, mediaFraction = 0, currentSeconds = 0, duratio
 function renderSetTimeline(gig) {
   const fullModel = playbackTimelineModel(gig);
   const model = focusedPlaybackTimelineModel(gig);
-  setPlayerOverviewMarkers.innerHTML = fullModel.map(({ entry, index, marker }) => `<button class="set-overview-marker${index === setQueueIndex ? ' active' : ''}${entry.media ? '' : ' is-gap'}${marker <= 0 ? ' marker-first' : ''}${marker >= .999999 ? ' marker-last' : ''}" type="button" style="left:${marker * 100}%" title="${index + 1}. ${escapeHtml(gig.songs[entry.songIndex].title)}${entry.media ? '' : ' · no video'}" aria-label="${entry.media ? 'Play' : 'Show gap for'} ${escapeHtml(gig.songs[entry.songIndex].title)}"></button>`).join('');
-  setPlayerMarkers.innerHTML = model.map(({ entry, index, marker }) => `<button class="set-marker${index === setQueueIndex ? ' active' : ''}${entry.media ? '' : ' is-gap'}${marker <= 0 ? ' marker-first' : ''}${marker >= .999999 ? ' marker-last' : ''}" type="button" style="left:${marker * 100}%" title="${escapeHtml(gig.songs[entry.songIndex].title)}${entry.media ? '' : ' · no video'}" aria-label="${entry.media ? 'Play' : 'Skip to next video after'} ${escapeHtml(gig.songs[entry.songIndex].title)}"><span class="set-marker-label">${entry.songIndex + 1} · ${escapeHtml(gig.songs[entry.songIndex].title)}</span></button>`).join('');
+  setPlayerOverviewMarkers.innerHTML = fullModel.map(({ entry, index, marker }) => { const title = setQueueEntryTitle(gig, entry); return `<button class="set-overview-marker${index === setQueueIndex ? ' active' : ''}${entry.media ? '' : ' is-gap'}${entry.isUnknown ? ' is-unknown' : ''}${marker <= 0 ? ' marker-first' : ''}${marker >= .999999 ? ' marker-last' : ''}" type="button" style="left:${marker * 100}%" title="${escapeHtml(title)}${entry.media ? '' : ' · no video'}" aria-label="Play ${escapeHtml(title)}"></button>`; }).join('');
+  setPlayerMarkers.innerHTML = model.map(({ entry, index, marker }) => { const title = setQueueEntryTitle(gig, entry); const label = entry.isUnknown ? title : `${entry.songIndex + 1} · ${title}`; return `<button class="set-marker${index === setQueueIndex ? ' active' : ''}${entry.media ? '' : ' is-gap'}${entry.isUnknown ? ' is-unknown' : ''}${marker <= 0 ? ' marker-first' : ''}${marker >= .999999 ? ' marker-last' : ''}" type="button" style="left:${marker * 100}%" title="${escapeHtml(title)}${entry.media ? '' : ' · no video'}" aria-label="${entry.media ? 'Play' : 'Skip to next video after'} ${escapeHtml(title)}"><span class="set-marker-label">${escapeHtml(label)}</span></button>`; }).join('');
   setPlayerOverviewMarkers.querySelectorAll('.set-overview-marker').forEach((marker, index) => marker.addEventListener('click', (event) => { event.stopPropagation(); setQueueIndex = index; pendingSetSeek = { index, fraction: 0 }; playSetTrack(); }));
   setPlayerMarkers.querySelectorAll('.set-marker').forEach((marker, localIndex) => marker.addEventListener('click', (event) => { event.stopPropagation(); const index = model[localIndex].index; setQueueIndex = index; pendingSetSeek = { index, fraction: 0 }; playSetTrack(); }));
   setPlayer.dataset.timelineZoom = String(setTimelineZoom);
@@ -1375,6 +1377,49 @@ function openPlaybackEditorPreview(gig, row) {
 }
 
 let playbackSuggestionState = { gigId: '', suggestions: [], metadataWarning: '' };
+let playbackEditorRenderedGigId = '';
+function capturePlaybackEditorDraft(gigId) {
+  if (playbackEditorRenderedGigId !== gigId || !playbackEditorList?.querySelector('.playback-editor-row')) return null;
+  return [...playbackEditorList.querySelectorAll('.playback-editor-row')].map((row) => ({
+    songIndex: Number(row.dataset.songIndex),
+    sources: playbackEditorRowSources({ media: activeEditGig?.media || [] }, row).filter((source) => source.media).map((source) => ({
+      mediaId: source.media.id,
+      startValue: source.startValue,
+      endValue: source.endValue,
+      priority: source.priority
+    }))
+  }));
+}
+function restorePlaybackEditorDraft(gig, draft) {
+  if (!draft) return;
+  draft.forEach((entry) => {
+    const row = playbackEditorList.querySelector(`.playback-editor-row[data-song-index="${entry.songIndex}"]`);
+    const primary = entry.sources.find((source) => source.priority === 0);
+    if (!row) return;
+    const select = row.querySelector('.playback-source');
+    const fallbackList = row.querySelector('.playback-fallback-list');
+    fallbackList.replaceChildren();
+    if (!primary) {
+      select.value = '';
+      select.dispatchEvent(new Event('change'));
+      refreshPlaybackFallbacks(row);
+      return;
+    }
+    if (![...select.options].some((option) => option.value === primary.mediaId)) return;
+    select.value = primary.mediaId;
+    select.dispatchEvent(new Event('change'));
+    row.querySelector('.playback-start').value = primary.startValue;
+    row.querySelector('.playback-end').value = primary.endValue;
+    entry.sources.filter((source) => source.priority > 0).sort((a, b) => a.priority - b.priority).forEach((source) => {
+      const media = (gig.media || []).find((item) => item.id === source.mediaId);
+      if (!media) return;
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = playbackFallbackMarkup(gig, { media, clip: { startSeconds: source.startValue, endSeconds: source.endValue } });
+      fallbackList.append(wrapper.firstElementChild);
+    });
+    refreshPlaybackFallbacks(row);
+  });
+}
 function playbackSuggestionConfidence(suggestion) {
   const value = Number(suggestion?.confidence) || 0;
   if (value >= .9) return 'High confidence';
@@ -1471,9 +1516,10 @@ function renderPlaybackSuggestions(gig) {
 
 function renderPlaybackEditor(gig) {
   if (!playbackEditorList) return;
+  const playbackDraft = capturePlaybackEditorDraft(gig.id);
   closePlaybackEditorPreview();
   const songs = gig.songs || [];
-  if (!songs.length) { playbackEditorHealth.innerHTML = ''; playbackEditorList.innerHTML = '<p class="empty-state">Add a setlist before building the playback plan.</p>'; savePlaybackPlan.disabled = true; return; }
+  if (!songs.length) { playbackEditorRenderedGigId = gig.id; playbackEditorHealth.innerHTML = ''; playbackEditorList.innerHTML = '<p class="empty-state">Add a setlist before building the playback plan.</p>'; savePlaybackPlan.disabled = true; return; }
   savePlaybackPlan.disabled = false;
   playbackEditorList.innerHTML = songs.map((song, songIndex) => {
     const candidates = playbackCandidates(gig, songIndex);
@@ -1504,6 +1550,8 @@ function renderPlaybackEditor(gig) {
     row.classList.toggle('is-gap', !item);
     playbackEditorHealthCheck(gig);
   }));
+  restorePlaybackEditorDraft(gig, playbackDraft);
+  playbackEditorRenderedGigId = gig.id;
   playbackEditorList.querySelectorAll('.playback-editor-row').forEach((row) => setupPlaybackFallbackEditor(gig, row));
   playbackEditorList.querySelectorAll('.playback-preview-toggle').forEach((button) => button.addEventListener('click', () => openPlaybackEditorPreview(gig, button.closest('.playback-editor-row'))));
   playbackEditorList.querySelectorAll('.playback-start, .playback-end').forEach((input) => input.addEventListener('input', () => playbackEditorHealthCheck(gig)));
@@ -1530,7 +1578,10 @@ function renderPlaybackEditor(gig) {
       const updated = await fetchJson(`/api/gigs/${gig.id}/playback-plan`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clips }) });
       gig.media = updated.media;
       gigs = gigs.map((entry) => entry.id === gig.id ? gig : entry);
-      playbackSuggestionState = { gigId: gig.id, suggestions: [], metadataWarning: '' };
+      if (playbackSuggestionState.gigId === gig.id) {
+        const savedSongIndexes = new Set(clips.map((clip) => clip.songIndex));
+        playbackSuggestionState.suggestions = playbackSuggestionState.suggestions.filter((suggestion) => !savedSongIndexes.has(suggestion.songIndex));
+      }
       playbackEditorMessage.textContent = 'Playback plan saved.';
       renderPlaybackEditor(gig);
     } catch (error) { playbackEditorMessage.textContent = error.message; playbackEditorMessage.classList.add('error'); }
@@ -2229,6 +2280,46 @@ function activateSetSource(entry, sourceIndex = 0) {
   entry.clip = source?.clip || null;
   return source;
 }
+function setQueueEntryTitle(gig, entry) {
+  return entry?.isUnknown ? 'Unknown' : gig?.songs?.[entry?.songIndex]?.title || 'Unknown';
+}
+function setQueueEntryKey(entry) {
+  if (!entry?.isUnknown) return `song:${entry?.songIndex}`;
+  const bounds = playbackBounds(entry);
+  return `unknown:${entry.media?.id || ''}:${bounds.start}:${bounds.end ?? ''}`;
+}
+function unknownSetQueueEntry(media, startSeconds, endSeconds) {
+  const clip = { songIndex: null, startSeconds, endSeconds, priority: 0 };
+  const source = { media, clip };
+  return { isUnknown: true, songIndex: null, sources: [source], sourceIndex: 0, media, clip };
+}
+function buildSetPlaybackQueue(gig) {
+  const baseQueue = (gig?.songs || []).map((song, songIndex) => {
+    const entry = { songIndex, sources: playbackSourcesForSong(gig, songIndex), sourceIndex: 0, media: null, clip: null };
+    activateSetSource(entry, 0);
+    return entry;
+  });
+  const queue = [];
+  let previousPlayable = null;
+  baseQueue.forEach((entry) => {
+    if (entry.media) {
+      const currentBounds = playbackBounds(entry);
+      if (!previousPlayable && currentBounds.start > .5) queue.push(unknownSetQueueEntry(entry.media, 0, currentBounds.start));
+      if (previousPlayable?.media?.id === entry.media.id) {
+        const previousBounds = playbackBounds(previousPlayable);
+        if (previousBounds.end !== null && currentBounds.start > previousBounds.end + .5) queue.push(unknownSetQueueEntry(entry.media, previousBounds.end, currentBounds.start));
+      }
+      previousPlayable = entry;
+    }
+    queue.push(entry);
+  });
+  if (previousPlayable) {
+    const bounds = playbackBounds(previousPlayable);
+    const sourceDuration = Number(previousPlayable.media?.sourceDuration) || 0;
+    if (bounds.end !== null && sourceDuration > bounds.end + .5) queue.push(unknownSetQueueEntry(previousPlayable.media, bounds.end, sourceDuration));
+  }
+  return queue;
+}
 function failSetSource(reason = 'Source unavailable') {
   if (setFallbackPending) return;
   const entry = setQueue[setQueueIndex];
@@ -2266,7 +2357,7 @@ function finishSetPlayback(gig) {
   releaseSetPlaybackWakeLock();
   setPlayerStatus.textContent = 'End of available set.';
   setPlayerSourceKind.textContent = 'Set complete';
-  setPlayerSourceLabel.textContent = `${setQueue.length} tracks in this playback plan`;
+  setPlayerSourceLabel.textContent = `${gig.songs.length} tracks in this playback plan`;
   setPlayerProgress.style.width = '100%';
   setPlayerOverviewProgress.style.width = '100%';
   revealTheatreControls({ schedule: false });
@@ -2276,7 +2367,7 @@ function continueSameSetSource(gig, index) {
   setQueueIndex = index;
   pendingSetSeek = null;
   setTrackAdvancePending = false;
-  setPlayerTitle.textContent = `${entry.songIndex + 1}. ${gig.songs[entry.songIndex].title}`;
+  setPlayerTitle.textContent = entry.isUnknown ? 'Unknown' : `${entry.songIndex + 1}. ${setQueueEntryTitle(gig, entry)}`;
   updateSetTheatreMeta(gig, entry);
   renderSetTimeline(gig);
   setPlayerStatus.textContent = `${setQueueIndex + 1} of ${setQueue.length} · continuous video`;
@@ -2370,9 +2461,9 @@ function playSetTrack() {
   setFallbackPending = false;
   setTrackAdvancePending = false;
   if (!gig || !entry) { if (gig) finishSetPlayback(gig); return; }
-  const song = gig.songs[entry.songIndex];
+  const song = entry.isUnknown ? { title: 'Unknown' } : gig.songs[entry.songIndex];
   setPlayer.hidden = false;
-  setPlayerTitle.textContent = `${entry.songIndex + 1}. ${song.title}`;
+  setPlayerTitle.textContent = entry.isUnknown ? 'Unknown' : `${entry.songIndex + 1}. ${song.title}`;
   updateSetTheatreMeta(gig, entry);
   renderSetTimeline(gig);
   if (!entry.media) {
@@ -2442,11 +2533,7 @@ function playSetTrack() {
 
 playWholeSet?.addEventListener('click', () => {
   const gig = gigs.find((entry) => entry.id === showDetailId);
-  setQueue = (gig?.songs || []).map((song, songIndex) => {
-    const entry = { songIndex, sources: playbackSourcesForSong(gig, songIndex), sourceIndex: 0, media: null, clip: null };
-    activateSetSource(entry, 0);
-    return entry;
-  });
+  setQueue = buildSetPlaybackQueue(gig);
   if (!setQueue.some((entry) => entry.media)) { setPlayer.hidden = false; setPlayerStatus.textContent = 'Assign media to setlist tracks first.'; return; }
   const resume = readPlaybackResume(gig);
   setQueueIndex = resume?.index ?? nextPlayableSetIndex(0, 1);
