@@ -1134,17 +1134,18 @@ function decorateMediaWorkspace(container, media, gig) {
       });
       actions.append(retryEncode);
     }
-    if (uploadedVideo && item.originalExists !== false && item.recognitionStatus === 'error') {
-      const retryRecognition = document.createElement('button');
-      retryRecognition.type = 'button'; retryRecognition.textContent = 'Retry track detection';
-      retryRecognition.addEventListener('click', async () => {
-        retryRecognition.disabled = true; retryRecognition.textContent = 'Detecting…';
+    if (uploadedVideo && item.originalExists !== false && !['queued', 'running'].includes(item.recognitionStatus)) {
+      const detectRecognition = document.createElement('button');
+      const detectionLabel = item.recognitionStatus === 'error' ? 'Retry audio detection' : item.recognitionTitle ? 'Detect audio again' : 'Detect audio';
+      detectRecognition.type = 'button'; detectRecognition.textContent = detectionLabel;
+      detectRecognition.addEventListener('click', async () => {
+        detectRecognition.disabled = true; detectRecognition.textContent = 'Detecting…';
         try {
           await fetchJson(`/api/media/${item.id}/retry-recognition`, { method: 'POST' });
           await pollMediaRecognition(gig.id, (refreshed) => { gig.media = refreshed; renderEditMediaWorkspace(gig, refreshed); });
-        } catch (error) { retryRecognition.disabled = false; retryRecognition.textContent = error.message; }
+        } catch (error) { detectRecognition.disabled = false; detectRecognition.textContent = error.message; }
       });
-      actions.append(retryRecognition);
+      actions.append(detectRecognition);
     }
     if (!actions.childElementCount) actions.remove();
     card.querySelector('figcaption')?.insertAdjacentElement('afterend', health);
@@ -1995,13 +1996,124 @@ function renderEditPage() {
   editForm.elements.venue.value = gig.venue;
   editForm.elements.city.value = gig.city;
   showDuplicateWarning(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), gig.id);
-  const tracks = [...(gig.songs || [])];
+  let tracks = [...(gig.songs || [])];
+  const syncTracksFromInputs = () => {
+    tracks = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row, index) => ({
+      ...(tracks[index] || {}),
+      title: row.querySelector('.edit-track-title').value,
+      artist: row.querySelector('.edit-track-artist').value,
+      album: row.querySelector('.edit-track-album').value
+    }));
+  };
+  const clearTrackDropIndicators = () => editSetlistTracks.querySelectorAll('.edit-track').forEach((row) => row.classList.remove('is-dragging', 'drop-before', 'drop-after'));
+  const moveTrack = (sourceIndex, targetIndex, placeAfter = false) => {
+    syncTracksFromInputs();
+    let insertionIndex = targetIndex + (placeAfter ? 1 : 0);
+    const [movedTrack] = tracks.splice(sourceIndex, 1);
+    if (sourceIndex < insertionIndex) insertionIndex -= 1;
+    insertionIndex = Math.max(0, Math.min(tracks.length, insertionIndex));
+    tracks.splice(insertionIndex, 0, movedTrack);
+    renderTracks();
+    editSetlistTracks.querySelectorAll('.edit-track-drag')[insertionIndex]?.focus();
+  };
+  const wireTrackReordering = () => {
+    let draggedIndex = null;
+    let nativeDropTarget = null;
+    let nativeDropCompleted = false;
+    let pointerTarget = null;
+    let pointerMoved = false;
+    const showDropTarget = (row, placeAfter) => {
+      editSetlistTracks.querySelectorAll('.edit-track').forEach((entry) => entry.classList.remove('drop-before', 'drop-after'));
+      row?.classList.add(placeAfter ? 'drop-after' : 'drop-before');
+      return row ? { index: Number(row.dataset.trackIndex), placeAfter } : null;
+    };
+    editSetlistTracks.querySelectorAll('.edit-track').forEach((row) => {
+      const handle = row.querySelector('.edit-track-drag');
+      handle.addEventListener('dragstart', (event) => {
+        draggedIndex = Number(row.dataset.trackIndex);
+        nativeDropTarget = null;
+        nativeDropCompleted = false;
+        row.classList.add('is-dragging');
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', String(draggedIndex));
+      });
+      row.addEventListener('dragover', (event) => {
+        if (draggedIndex === null) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        const placeAfter = event.clientY > row.getBoundingClientRect().top + row.offsetHeight / 2;
+        nativeDropTarget = showDropTarget(row, placeAfter);
+      });
+      row.addEventListener('drop', (event) => {
+        if (draggedIndex === null) return;
+        event.preventDefault();
+        const sourceIndex = draggedIndex;
+        const placeAfter = event.clientY > row.getBoundingClientRect().top + row.offsetHeight / 2;
+        const targetIndex = Number(row.dataset.trackIndex);
+        nativeDropCompleted = true;
+        clearTrackDropIndicators();
+        draggedIndex = null;
+        moveTrack(sourceIndex, targetIndex, placeAfter);
+      });
+      handle.addEventListener('dragend', () => {
+        const sourceIndex = draggedIndex;
+        const destination = nativeDropTarget;
+        draggedIndex = null;
+        nativeDropTarget = null;
+        clearTrackDropIndicators();
+        if (!nativeDropCompleted && sourceIndex !== null && destination) moveTrack(sourceIndex, destination.index, destination.placeAfter);
+      });
+      handle.addEventListener('pointerdown', (event) => {
+        if (event.pointerType === 'mouse') return;
+        draggedIndex = Number(row.dataset.trackIndex);
+        pointerTarget = null;
+        pointerMoved = false;
+        handle.setPointerCapture(event.pointerId);
+        row.classList.add('is-dragging');
+      });
+      handle.addEventListener('pointermove', (event) => {
+        if (draggedIndex === null || event.pointerType === 'mouse') return;
+        pointerMoved = true;
+        const targetRow = document.elementFromPoint(event.clientX, event.clientY)?.closest('.edit-track');
+        if (!targetRow || !editSetlistTracks.contains(targetRow)) { pointerTarget = null; return; }
+        const placeAfter = event.clientY > targetRow.getBoundingClientRect().top + targetRow.offsetHeight / 2;
+        pointerTarget = showDropTarget(targetRow, placeAfter);
+      });
+      const finishPointerDrag = (event, cancelled = false) => {
+        if (draggedIndex === null || event.pointerType === 'mouse') return;
+        const sourceIndex = draggedIndex;
+        const destination = pointerTarget;
+        draggedIndex = null;
+        pointerTarget = null;
+        clearTrackDropIndicators();
+        if (!cancelled && pointerMoved && destination) moveTrack(sourceIndex, destination.index, destination.placeAfter);
+      };
+      handle.addEventListener('pointerup', (event) => finishPointerDrag(event));
+      handle.addEventListener('pointercancel', (event) => finishPointerDrag(event, true));
+      handle.addEventListener('keydown', (event) => {
+        const sourceIndex = Number(row.dataset.trackIndex);
+        if (event.key === 'ArrowUp' && sourceIndex > 0) { event.preventDefault(); moveTrack(sourceIndex, sourceIndex - 1); }
+        if (event.key === 'ArrowDown' && sourceIndex < tracks.length - 1) { event.preventDefault(); moveTrack(sourceIndex, sourceIndex + 1, true); }
+      });
+    });
+  };
   const renderTracks = () => {
-    editSetlistTracks.innerHTML = tracks.map((song, index) => `<div class="edit-track" data-track-index="${index}"><span class="edit-track-number">${index + 1}</span><input class="edit-track-title" value="${escapeHtml(song.title || '')}" placeholder="Track title" /><input class="edit-track-artist" value="${escapeHtml(song.artist || '')}" placeholder="Artist (optional)" /><input class="edit-track-album" value="${escapeHtml(song.album || '')}" placeholder="Album (optional)" /><button class="icon-button edit-track-remove" type="button" aria-label="Remove track">×</button></div>`).join('');
-    editSetlistTracks.querySelectorAll('.edit-track-remove').forEach((button) => button.addEventListener('click', () => { tracks.splice(Number(button.closest('.edit-track').dataset.trackIndex), 1); renderTracks(); }));
+    editSetlistTracks.innerHTML = tracks.map((song, index) => `<div class="edit-track" data-track-index="${index}"><button class="edit-track-drag" type="button" draggable="true" aria-label="Reorder track ${index + 1}. Drag or use arrow keys" title="Drag to reorder · arrow keys also work">⠿</button><span class="edit-track-number">${index + 1}</span><input class="edit-track-title" value="${escapeHtml(song.title || '')}" placeholder="Track title" /><input class="edit-track-artist" value="${escapeHtml(song.artist || '')}" placeholder="Artist (optional)" /><input class="edit-track-album" value="${escapeHtml(song.album || '')}" placeholder="Album (optional)" /><button class="icon-button edit-track-remove" type="button" aria-label="Remove track">×</button></div>`).join('');
+    editSetlistTracks.querySelectorAll('.edit-track-remove').forEach((button) => button.addEventListener('click', () => {
+      const trackIndex = Number(button.closest('.edit-track').dataset.trackIndex);
+      syncTracksFromInputs();
+      tracks.splice(trackIndex, 1);
+      renderTracks();
+    }));
+    wireTrackReordering();
   };
   renderTracks();
-  addEditTrack.onclick = () => { tracks.push({ title: '', artist: gig.artist, album: '' }); renderTracks(); editSetlistTracks.lastElementChild?.querySelector('.edit-track-title')?.focus(); };
+  addEditTrack.onclick = () => {
+    syncTracksFromInputs();
+    tracks.push({ title: '', artist: editForm.elements.artist.value || gig.artist, album: '' });
+    renderTracks();
+    editSetlistTracks.lastElementChild?.querySelector('.edit-track-title')?.focus();
+  };
   renderEditMediaWorkspace(gig, gig.media);
   renderAttendeePicker(ensureEditAttendeePicker(), gig.attendees || []);
   editForm.addEventListener('submit', async (event) => {
@@ -2012,7 +2124,8 @@ function renderEditPage() {
       submitButton.disabled = true;
       const update = Object.fromEntries(new FormData(editForm).entries());
       update.attendees = readAttendees(ensureEditAttendeePicker());
-      update.songs = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row, index) => ({ ...tracks[index], title: row.querySelector('.edit-track-title').value, artist: row.querySelector('.edit-track-artist').value, album: row.querySelector('.edit-track-album').value }));
+      syncTracksFromInputs();
+      update.songs = tracks;
       const saved = await fetchJson(`/api/gigs/${gig.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
       const files = pendingMedia.get(editMediaInput) || [...(editMediaInput?.files || [])];
       if (files.length) await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; });
