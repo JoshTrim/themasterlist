@@ -53,6 +53,8 @@ database.exec(`
     description TEXT NOT NULL DEFAULT '',
     bio TEXT NOT NULL DEFAULT '',
     image TEXT,
+    image_position TEXT NOT NULL DEFAULT 'center',
+    is_manual INTEGER NOT NULL DEFAULT 0,
     source TEXT,
     updated_at TEXT NOT NULL
   )
@@ -64,6 +66,8 @@ database.exec(`
     description TEXT NOT NULL DEFAULT '',
     bio TEXT NOT NULL DEFAULT '',
     image TEXT,
+    image_position TEXT NOT NULL DEFAULT 'center',
+    is_manual INTEGER NOT NULL DEFAULT 0,
     source TEXT,
     updated_at TEXT NOT NULL
   )
@@ -100,6 +104,10 @@ database.exec(`CREATE TABLE IF NOT EXISTS api_usage (
 )`);
 database.exec('CREATE INDEX IF NOT EXISTS api_usage_day_provider ON api_usage (usage_day, provider)');
 database.prepare("UPDATE background_jobs SET status = 'error', error = 'Interrupted by server restart', updated_at = ? WHERE status = 'running'").run(new Date().toISOString());
+addColumnIfMissing('artist_info', 'image_position', "TEXT NOT NULL DEFAULT 'center'");
+addColumnIfMissing('venue_info', 'image_position', "TEXT NOT NULL DEFAULT 'center'");
+addColumnIfMissing('artist_info', 'is_manual', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('venue_info', 'is_manual', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('gig_media', 'caption', "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing('gig_media', 'is_cover', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('gig_media', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
@@ -567,7 +575,7 @@ async function fetchArtistInfo(name) {
   const requestedName = String(name || '').trim();
   if (!requestedName) throw new Error('An artist name is required.');
   const lookupName = requestedName.toLowerCase();
-  const cached = database.prepare('SELECT title, description, bio, image, source FROM artist_info WHERE lookup_name = ?').get(lookupName);
+  const cached = database.prepare('SELECT title, description, bio, image, image_position AS imagePosition, is_manual AS isManual, source FROM artist_info WHERE lookup_name = ?').get(lookupName);
   if (cached) return { name: requestedName, ...cached };
   const headers = { 'User-Agent': 'TheMasterList/0.1 personal-live-music-archive', 'Accept-Language': 'en' };
   let title = requestedName;
@@ -596,8 +604,8 @@ async function fetchVenueInfo(name, city = '') {
   if (!requestedName) throw new Error('A venue name is required.');
   const lookupName = `${requestedName}|${requestedCity}`.toLowerCase();
   const venueWords = requestedName.toLowerCase().split(/\s+/).filter((word) => word.length > 3);
-  const cached = database.prepare('SELECT title, description, bio, image, source FROM venue_info WHERE lookup_name = ?').get(lookupName);
-  if (cached && venueWords.every((word) => cached.title.toLowerCase().includes(word)) && (cached.bio || cached.description || cached.image)) return { name: requestedName, city: requestedCity, ...cached };
+  const cached = database.prepare('SELECT title, description, bio, image, image_position AS imagePosition, is_manual AS isManual, source FROM venue_info WHERE lookup_name = ?').get(lookupName);
+  if (cached && (cached.isManual || (venueWords.every((word) => cached.title.toLowerCase().includes(word)) && (cached.bio || cached.description || cached.image)))) return { name: requestedName, city: requestedCity, ...cached };
   if (cached) database.prepare('DELETE FROM venue_info WHERE lookup_name = ?').run(lookupName);
   const headers = { 'User-Agent': 'TheMasterList/0.1 personal-live-music-archive', 'Accept-Language': 'en' };
   const officialSources = { 'fortitude music hall|brisbane': 'https://www.thefortitude.com.au/venue-history' };
@@ -1272,6 +1280,41 @@ async function readBody(request) {
     if (body.length > 30_000_000) throw new Error('Request body is too large.');
   }
   return body ? JSON.parse(body) : {};
+}
+
+function normaliseImagePosition(value) {
+  const position = String(value || 'center').toLowerCase();
+  return ['top', 'center', 'bottom'].includes(position) ? position : 'center';
+}
+
+function localProfileImageFilename(value) {
+  const match = String(value || '').match(/^\/api\/profile-images\/(profile-[a-f0-9-]+\.(?:jpe?g|png|webp|gif))$/i);
+  return match?.[1] || '';
+}
+
+async function saveProfileImageUpload(upload) {
+  if (!upload) return null;
+  const mimeType = String(upload.mimeType || '').toLowerCase();
+  const extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' })[mimeType];
+  if (!extension) throw new Error('Profile photos must be JPEG, PNG, WebP or GIF images.');
+  const encoded = String(upload.data || '').replace(/^data:[^,]+,/, '');
+  const file = Buffer.from(encoded, 'base64');
+  if (!file.length) throw new Error('The selected profile photo is empty.');
+  if (file.length > 8 * 1024 * 1024) throw new Error('Profile photos must be 8 MB or smaller.');
+  const validImage = mimeType === 'image/jpeg' ? file[0] === 0xff && file[1] === 0xd8 && file[2] === 0xff
+    : mimeType === 'image/png' ? file.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+      : mimeType === 'image/gif' ? ['GIF87a', 'GIF89a'].includes(file.subarray(0, 6).toString('ascii'))
+        : file.subarray(0, 4).toString('ascii') === 'RIFF' && file.subarray(8, 12).toString('ascii') === 'WEBP';
+  if (!validImage) throw new Error('The selected file does not appear to be a valid image.');
+  const filename = `profile-${randomUUID()}.${extension}`;
+  await fs.mkdir(MEDIA_DIR, { recursive: true });
+  await fs.writeFile(path.join(MEDIA_DIR, filename), file);
+  return `/api/profile-images/${filename}`;
+}
+
+async function removeReplacedProfileImage(previousImage, nextImage) {
+  const previousFilename = localProfileImageFilename(previousImage);
+  if (previousFilename && previousImage !== nextImage) await fs.rm(path.join(MEDIA_DIR, previousFilename), { force: true });
 }
 
 function normaliseSongs(setlist) {
@@ -2064,6 +2107,10 @@ async function handleApi(request, response, url) {
     for (const item of media) {
       try { files.push({ ...item, data: (await fs.readFile(path.join(MEDIA_DIR, item.filename))).toString('base64') }); } catch { /* keep manifest entry if a file is missing */ }
     }
+    const profileImages = [...new Set([...database.prepare('SELECT image FROM artist_info').all(), ...database.prepare('SELECT image FROM venue_info').all()].map((row) => localProfileImageFilename(row.image)).filter(Boolean))];
+    for (const filename of profileImages) {
+      try { files.push({ kind: 'profile-image', filename, data: (await fs.readFile(path.join(MEDIA_DIR, filename))).toString('base64') }); } catch { /* database backup still retains the missing image reference */ }
+    }
     return sendJson(response, 200, { format: 'the-master-list-backup-v1', createdAt: new Date().toISOString(), database: (await fs.readFile(DB_FILE)).toString('base64'), media: files });
   }
 
@@ -2130,40 +2177,80 @@ async function handleApi(request, response, url) {
   }
   if (request.method === 'POST' && url.pathname === '/api/media/cleanup') {
     requireAccount(request);
-    const referenced = new Set(database.prepare('SELECT filename, playback_filename, background_filename FROM gig_media').all().flatMap((row) => [row.filename, row.playback_filename, row.background_filename].filter(Boolean)));
+    const profileImages = [...database.prepare('SELECT image FROM artist_info').all(), ...database.prepare('SELECT image FROM venue_info').all()].map((row) => localProfileImageFilename(row.image)).filter(Boolean);
+    const referenced = new Set([...database.prepare('SELECT filename, playback_filename, background_filename FROM gig_media').all().flatMap((row) => [row.filename, row.playback_filename, row.background_filename].filter(Boolean)), ...profileImages]);
     const entries = await fs.readdir(MEDIA_DIR, { withFileTypes: true }); let removed = 0;
     for (const entry of entries) { if (!entry.isFile() || referenced.has(entry.name)) continue; await fs.rm(path.join(MEDIA_DIR, entry.name), { force: true }); removed += 1; }
     return sendJson(response, 200, { removed });
   }
 
+  const profileImageMatch = url.pathname.match(/^\/api\/profile-images\/(profile-[a-f0-9-]+\.(?:jpe?g|png|webp|gif))$/i);
+  if (request.method === 'GET' && profileImageMatch) {
+    requireAccount(request);
+    const filename = profileImageMatch[1];
+    try {
+      const filePath = path.join(MEDIA_DIR, filename);
+      const stat = await fs.stat(filePath);
+      const mimeType = ({ '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' })[path.extname(filename).toLowerCase()] || 'application/octet-stream';
+      response.writeHead(200, { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': 'private, max-age=86400' });
+      return legacyFs.createReadStream(filePath).pipe(response);
+    } catch { return sendError(response, 404, 'Profile image not found.'); }
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/directory/metadata') {
     requireAccount(request);
-    const artists = database.prepare('SELECT lookup_name AS lookupName, title, description, image FROM artist_info').all();
-    const venues = database.prepare('SELECT lookup_name AS lookupName, title, description, image FROM venue_info').all();
+    const artists = database.prepare('SELECT lookup_name AS lookupName, title, description, image, image_position AS imagePosition FROM artist_info').all();
+    const venues = database.prepare('SELECT lookup_name AS lookupName, title, description, image, image_position AS imagePosition FROM venue_info').all();
     return sendJson(response, 200, { artists, venues });
   }
 
   if (request.method === 'GET' && url.pathname === '/api/artists') {
-    return sendJson(response, 200, await fetchArtistInfo(url.searchParams.get('name')));
+    const info = await fetchArtistInfo(url.searchParams.get('name'));
+    return sendJson(response, 200, { ...info, imagePosition: normaliseImagePosition(info.imagePosition) });
   }
   if (request.method === 'GET' && url.pathname === '/api/venues') {
-    return sendJson(response, 200, await fetchVenueInfo(url.searchParams.get('name'), url.searchParams.get('city')));
+    const info = await fetchVenueInfo(url.searchParams.get('name'), url.searchParams.get('city'));
+    return sendJson(response, 200, { ...info, imagePosition: normaliseImagePosition(info.imagePosition) });
+  }
+  if (request.method === 'PATCH' && url.pathname === '/api/artists') {
+    requireAccount(request);
+    const name = String(url.searchParams.get('name') || '').trim();
+    if (!name) return sendError(response, 400, 'An artist name is required.');
+    const body = await readBody(request);
+    const lookupName = name.toLowerCase();
+    const existing = database.prepare('SELECT title, description, bio, image, image_position AS imagePosition, source FROM artist_info WHERE lookup_name = ?').get(lookupName);
+    const uploadedImage = await saveProfileImageUpload(body.imageUpload);
+    const info = {
+      title: String(body.title ?? existing?.title ?? name).trim(),
+      description: String(body.description ?? existing?.description ?? '').trim(),
+      bio: String(body.bio ?? existing?.bio ?? '').trim(),
+      image: uploadedImage || String(body.image ?? existing?.image ?? '').trim() || null,
+      imagePosition: normaliseImagePosition(body.imagePosition ?? existing?.imagePosition),
+      source: String(body.source ?? existing?.source ?? '').trim() || null
+    };
+    database.prepare('INSERT OR REPLACE INTO artist_info (lookup_name, title, description, bio, image, image_position, is_manual, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.imagePosition, info.source, new Date().toISOString());
+    await removeReplacedProfileImage(existing?.image, info.image);
+    return sendJson(response, 200, { name, ...info });
   }
   if (request.method === 'PATCH' && url.pathname === '/api/venues') {
+    requireAccount(request);
     const name = String(url.searchParams.get('name') || '').trim();
     const city = String(url.searchParams.get('city') || '').trim();
     if (!name) return sendError(response, 400, 'A venue name is required.');
     const body = await readBody(request);
     const lookupName = `${name}|${city}`.toLowerCase();
-    const existing = database.prepare('SELECT title, description, bio, image, source FROM venue_info WHERE lookup_name = ?').get(lookupName);
+    const existing = database.prepare('SELECT title, description, bio, image, image_position AS imagePosition, source FROM venue_info WHERE lookup_name = ?').get(lookupName);
+    const uploadedImage = await saveProfileImageUpload(body.imageUpload);
     const info = {
       title: String(body.title ?? existing?.title ?? name).trim(),
       description: String(body.description ?? existing?.description ?? '').trim(),
       bio: String(body.bio ?? existing?.bio ?? '').trim(),
-      image: String(body.image ?? existing?.image ?? '').trim() || null,
+      image: uploadedImage || String(body.image ?? existing?.image ?? '').trim() || null,
+      imagePosition: normaliseImagePosition(body.imagePosition ?? existing?.imagePosition),
       source: String(body.source ?? existing?.source ?? '').trim() || null
     };
-    database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
+    database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, image_position, is_manual, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.imagePosition, info.source, new Date().toISOString());
+    await removeReplacedProfileImage(existing?.image, info.image);
     return sendJson(response, 200, { name, city, ...info });
   }
 
@@ -2175,12 +2262,16 @@ async function handleApi(request, response, url) {
     else if (type === 'artist') {
       const name = String(body.key || '').trim();
       if (!name) return sendError(response, 400, 'Artist name is required.');
+      const existing = database.prepare('SELECT image FROM artist_info WHERE lookup_name = ?').get(name.toLowerCase());
       database.prepare('DELETE FROM artist_info WHERE lookup_name = ?').run(name.toLowerCase());
+      await removeReplacedProfileImage(existing?.image, null);
       await fetchArtistInfo(name);
     } else if (type === 'venue') {
       const name = String(body.name || '').trim(); const city = String(body.city || '').trim();
       if (!name) return sendError(response, 400, 'Venue name is required.');
+      const existing = database.prepare('SELECT image FROM venue_info WHERE lookup_name = ?').get(`${name}|${city}`.toLowerCase());
       database.prepare('DELETE FROM venue_info WHERE lookup_name = ?').run(`${name}|${city}`.toLowerCase());
+      await removeReplacedProfileImage(existing?.image, null);
       await fetchVenueInfo(name, city);
     } else if (type === 'location') {
       const key = String(body.key || '').toLowerCase();
@@ -2197,19 +2288,25 @@ async function handleApi(request, response, url) {
     if (type === 'artist') {
       const name = String(body.key || '').trim();
       if (!name) return sendError(response, 400, 'Artist name is required.');
+      const lookupName = name.toLowerCase();
+      const existing = database.prepare('SELECT image, image_position AS imagePosition FROM artist_info WHERE lookup_name = ?').get(lookupName);
       const info = {
         title: String(body.title || name).trim(), description: String(body.description || '').trim(), bio: String(body.bio || '').trim(),
-        image: String(body.image || '').trim() || null, source: String(body.source || '').trim() || null
+        image: String(body.image || '').trim() || null, imagePosition: normaliseImagePosition(existing?.imagePosition), source: String(body.source || '').trim() || null
       };
-      database.prepare('INSERT OR REPLACE INTO artist_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(name.toLowerCase(), info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
+      database.prepare('INSERT OR REPLACE INTO artist_info (lookup_name, title, description, bio, image, image_position, is_manual, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.imagePosition, info.source, new Date().toISOString());
+      await removeReplacedProfileImage(existing?.image, info.image);
     } else if (type === 'venue') {
       const name = String(body.name || '').trim(); const city = String(body.city || '').trim();
       if (!name) return sendError(response, 400, 'Venue name is required.');
+      const lookupName = `${name}|${city}`.toLowerCase();
+      const existing = database.prepare('SELECT image, image_position AS imagePosition FROM venue_info WHERE lookup_name = ?').get(lookupName);
       const info = {
         title: String(body.title || name).trim(), description: String(body.description || '').trim(), bio: String(body.bio || '').trim(),
-        image: String(body.image || '').trim() || null, source: String(body.source || '').trim() || null
+        image: String(body.image || '').trim() || null, imagePosition: normaliseImagePosition(existing?.imagePosition), source: String(body.source || '').trim() || null
       };
-      database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(`${name}|${city}`.toLowerCase(), info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
+      database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, image_position, is_manual, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.imagePosition, info.source, new Date().toISOString());
+      await removeReplacedProfileImage(existing?.image, info.image);
     } else if (type === 'location') {
       const key = String(body.key || '').toLowerCase(); const address = String(body.address || '').trim();
       let lat = Number(body.lat); let lng = Number(body.lng);

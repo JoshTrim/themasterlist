@@ -141,6 +141,7 @@ const routeSections = {
   shared: ['shows-archive'],
   login: ['shows-shared'],
   artist: ['artist-page'],
+  'artist-edit': ['artist-edit-page'],
   show: ['show-page'],
   playback: ['show-page'],
   city: ['city-page'],
@@ -150,7 +151,7 @@ const routeSections = {
   map: ['map-page'],
   account: ['account-page']
 };
-for (const id of ['home-page', 'overview-page', 'artists-page', 'venues-page', 'timeline-page', 'search-page', 'health-page', 'api-limits-page', 'add-page', 'shows-archive', 'artist-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
+for (const id of ['home-page', 'overview-page', 'artists-page', 'venues-page', 'timeline-page', 'search-page', 'health-page', 'api-limits-page', 'add-page', 'shows-archive', 'artist-page', 'artist-edit-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
   document.querySelector(`#${id}`).hidden = !routeSections[page].includes(id);
 }
 const chestButton = document.querySelector('#open-chest');
@@ -162,6 +163,10 @@ const artistDescription = document.querySelector('#artist-description');
 const artistBio = document.querySelector('#artist-bio');
 const artistImage = document.querySelector('#artist-image');
 const artistSource = document.querySelector('#artist-source');
+const artistEditLink = document.querySelector('#artist-edit-link');
+const artistEditForm = document.querySelector('#artist-edit-form');
+const artistEditPreview = document.querySelector('#artist-edit-preview');
+const artistEditMessage = document.querySelector('#artist-edit-message');
 const artistShows = document.querySelector('#artist-shows');
 const artistEmpty = document.querySelector('#artist-empty');
 const artistStats = document.querySelector('#artist-stats');
@@ -637,6 +642,7 @@ const venueImage = document.querySelector('#venue-image');
 const venueSource = document.querySelector('#venue-source');
 const venueEditLink = document.querySelector('#venue-edit-link');
 const venueEditForm = document.querySelector('#venue-edit-form');
+const venueEditPreview = document.querySelector('#venue-edit-preview');
 const venueEditMessage = document.querySelector('#venue-edit-message');
 
 const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
@@ -1689,6 +1695,7 @@ async function renderArtistPage() {
     artistDescription.textContent = 'Choose an artist from your shows archive.';
     return;
   }
+  artistEditLink.href = `/artist/edit?name=${encodeURIComponent(artistNameFromUrl)}`;
   artistHeading.textContent = artistNameFromUrl;
   const artistRecords = gigs.filter((gig) => gig.artist.toLowerCase() === artistNameFromUrl.toLowerCase());
   renderArtistShows(artistRecords);
@@ -1699,7 +1706,7 @@ async function renderArtistPage() {
     artistDescription.textContent = info.description || '';
     artistBio.textContent = info.bio || 'No biography was found for this artist yet.';
     artistImage.hidden = !info.image;
-    if (info.image) { artistImage.src = info.image; artistImage.alt = `${info.title || artistNameFromUrl} portrait`; }
+    if (info.image) { artistImage.src = info.image; artistImage.alt = `${info.title || artistNameFromUrl} portrait`; artistImage.style.objectPosition = info.imagePosition || 'center'; }
     artistSource.hidden = !info.source;
     if (info.source) artistSource.href = info.source;
   } catch (error) {
@@ -1707,6 +1714,87 @@ async function renderArtistPage() {
     artistBio.textContent = error.message;
   }
 }
+
+function updateMetadataPreview(preview, imageUrl, imagePosition = 'center') {
+  const frame = preview.closest('.metadata-image-preview');
+  preview.style.objectPosition = imagePosition;
+  preview.hidden = !imageUrl;
+  if (imageUrl) preview.src = imageUrl;
+  else preview.removeAttribute('src');
+  frame?.classList.toggle('has-image', Boolean(imageUrl));
+}
+
+function bindMetadataEditorPreview(form, preview) {
+  if (!form || form.dataset.previewBound) return;
+  form.dataset.previewBound = 'true';
+  let objectUrl = '';
+  const position = () => form.elements.imagePosition.value || 'center';
+  form.elements.imagePosition.addEventListener('change', () => { preview.style.objectPosition = position(); });
+  form.elements.image.addEventListener('input', () => {
+    if (form.elements.imageFile.files.length) return;
+    updateMetadataPreview(preview, form.elements.image.value.trim(), position());
+  });
+  form.elements.imageFile.addEventListener('change', () => {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    const file = form.elements.imageFile.files[0];
+    objectUrl = file ? URL.createObjectURL(file) : '';
+    updateMetadataPreview(preview, objectUrl || form.elements.image.value.trim(), position());
+  });
+}
+
+function imageUploadPayload(file) {
+  if (!file) return Promise.resolve(null);
+  if (file.size > 8 * 1024 * 1024) return Promise.reject(new Error('Profile photos must be 8 MB or smaller.'));
+  if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) return Promise.reject(new Error('Choose a JPEG, PNG, WebP or GIF image.'));
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('The selected image could not be read.'));
+    reader.onload = () => resolve({ filename: file.name, mimeType: file.type, data: String(reader.result).split(',')[1] || '' });
+    reader.readAsDataURL(file);
+  });
+}
+
+async function metadataFormPayload(form) {
+  const payload = Object.fromEntries(new FormData(form).entries());
+  delete payload.imageFile;
+  const imageUpload = await imageUploadPayload(form.elements.imageFile.files[0]);
+  if (imageUpload) payload.imageUpload = imageUpload;
+  return payload;
+}
+
+function populateMetadataForm(form, preview, info) {
+  form.elements.title.value = info.title || '';
+  form.elements.description.value = info.description || '';
+  form.elements.bio.value = info.bio || '';
+  form.elements.image.value = info.image || '';
+  form.elements.source.value = info.source || '';
+  form.elements.imagePosition.value = info.imagePosition || 'center';
+  form.elements.imageFile.value = '';
+  updateMetadataPreview(preview, info.image || '', info.imagePosition || 'center');
+  bindMetadataEditorPreview(form, preview);
+}
+
+async function renderArtistEditPage() {
+  if (page !== 'artist-edit') return;
+  if (!artistNameFromUrl) { artistEditMessage.textContent = 'Choose an artist to edit.'; artistEditMessage.classList.add('error'); return; }
+  const info = await fetchJson(`/api/artists?name=${encodeURIComponent(artistNameFromUrl)}`);
+  document.querySelector('#artist-edit-heading').textContent = `Edit ${info.title || artistNameFromUrl}`;
+  document.querySelector('#artist-edit-back').href = `/artist?name=${encodeURIComponent(artistNameFromUrl)}`;
+  populateMetadataForm(artistEditForm, artistEditPreview, info);
+}
+
+artistEditForm.addEventListener('submit', async (event) => {
+  if (page !== 'artist-edit') return;
+  event.preventDefault();
+  const submit = artistEditForm.querySelector('button[type="submit"]');
+  submit.disabled = true; artistEditMessage.textContent = 'Saving artist info…'; artistEditMessage.classList.remove('error');
+  try {
+    const info = await fetchJson(`/api/artists?name=${encodeURIComponent(artistNameFromUrl)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(await metadataFormPayload(artistEditForm)) });
+    populateMetadataForm(artistEditForm, artistEditPreview, info);
+    artistEditMessage.textContent = 'Artist info saved.';
+  } catch (error) { artistEditMessage.textContent = error.message; artistEditMessage.classList.add('error'); }
+  finally { submit.disabled = false; }
+});
 
 async function renderDashboardStats() {
   if (page !== 'overview' || !dashboardStats) return;
@@ -1770,6 +1858,7 @@ function runDirectoryHydrationQueue() {
       image.alt = '';
       image.loading = 'lazy';
       image.decoding = 'async';
+      image.style.objectPosition = info.imagePosition || 'center';
       image.addEventListener('error', () => { task.card.querySelector('.entity-card-image')?.classList.add('is-missing'); image.remove(); }, { once: true });
       image.src = info.image;
       task.card.querySelector('.entity-card-image')?.append(image);
@@ -1821,7 +1910,7 @@ async function renderEntityDirectories() {
     }
     const artists = [...records.values()].map((record) => {
       const info = artistMetadata.get(record.key) || {};
-      return { ...record, image: info.image || '', description: info.description || '', averageRating: record.ratings.length ? record.ratings.reduce((sum, rating) => sum + rating, 0) / record.ratings.length : 0 };
+      return { ...record, image: info.image || '', imagePosition: info.imagePosition || 'center', description: info.description || '', averageRating: record.ratings.length ? record.ratings.reduce((sum, rating) => sum + rating, 0) / record.ratings.length : 0 };
     });
     const drawArtists = () => {
       const query = artistsFilter.value.trim().toLocaleLowerCase();
@@ -1832,7 +1921,7 @@ async function renderEntityDirectories() {
         return b.shows - a.shows || (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
       });
       artistsSummary.textContent = `${visible.length} of ${artists.length} artist${artists.length === 1 ? '' : 's'}`;
-      artistsGrid.innerHTML = visible.map((artist) => `<a class="entity-card entity-card-artist" data-entity-name="${escapeHtml(artist.name)}" href="/artist?name=${encodeURIComponent(artist.name)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(artist.name))}</span>${artist.image ? `<img src="${escapeHtml(artist.image)}" alt="" loading="lazy" decoding="async" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${artist.shows} show${artist.shows === 1 ? '' : 's'} · ${artist.venues.size} venue${artist.venues.size === 1 ? '' : 's'}</p><h2>${escapeHtml(artist.name)}</h2><p>${escapeHtml(artist.description || (artist.latestDate ? `Last seen ${formatGigDate(artist.latestDate)}` : 'An undated archive memory'))}</p><div class="entity-card-stats"><span><strong>${artist.averageRating ? artist.averageRating.toFixed(1) : '—'}</strong>Avg rating</span><span><strong>${artist.favourites}</strong>Favourite${artist.favourites === 1 ? '' : 's'}</span><span><strong>${artist.latestDate ? artist.latestDate.slice(0, 4) : '—'}</strong>Last seen</span></div></div></a>`).join('') || '<p class="empty-state entity-directory-empty">No artists match that search.</p>';
+      artistsGrid.innerHTML = visible.map((artist) => `<a class="entity-card entity-card-artist" data-entity-name="${escapeHtml(artist.name)}" href="/artist?name=${encodeURIComponent(artist.name)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(artist.name))}</span>${artist.image ? `<img src="${escapeHtml(artist.image)}" alt="" loading="lazy" decoding="async" style="object-position:${escapeHtml(artist.imagePosition)}" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${artist.shows} show${artist.shows === 1 ? '' : 's'} · ${artist.venues.size} venue${artist.venues.size === 1 ? '' : 's'}</p><h2>${escapeHtml(artist.name)}</h2><p>${escapeHtml(artist.description || (artist.latestDate ? `Last seen ${formatGigDate(artist.latestDate)}` : 'An undated archive memory'))}</p><div class="entity-card-stats"><span><strong>${artist.averageRating ? artist.averageRating.toFixed(1) : '—'}</strong>Avg rating</span><span><strong>${artist.favourites}</strong>Favourite${artist.favourites === 1 ? '' : 's'}</span><span><strong>${artist.latestDate ? artist.latestDate.slice(0, 4) : '—'}</strong>Last seen</span></div></div></a>`).join('') || '<p class="empty-state entity-directory-empty">No artists match that search.</p>';
       bindDirectoryImageFallbacks(artistsGrid);
       hydrateMissingDirectoryCards(artistsGrid, 'artist');
     };
@@ -1852,7 +1941,7 @@ async function renderEntityDirectories() {
       if (show.date > record.latestDate) record.latestDate = show.date;
       if (show.favorite || show.contributions?.some((entry) => entry.favorite)) record.favourites += 1;
     }
-    const venues = [...records.values()].map((record) => { const info = venueMetadata.get(record.key) || {}; return { ...record, image: info.image || '', description: info.description || '' }; });
+    const venues = [...records.values()].map((record) => { const info = venueMetadata.get(record.key) || {}; return { ...record, image: info.image || '', imagePosition: info.imagePosition || 'center', description: info.description || '' }; });
     const drawVenues = () => {
       const query = venuesFilter.value.trim().toLocaleLowerCase();
       const visible = venues.filter((venue) => !query || `${venue.name} ${venue.city}`.toLocaleLowerCase().includes(query)).sort((a, b) => {
@@ -1861,7 +1950,7 @@ async function renderEntityDirectories() {
         return b.shows - a.shows || (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
       });
       venuesSummary.textContent = `${visible.length} of ${venues.length} venue${venues.length === 1 ? '' : 's'}`;
-      venuesGrid.innerHTML = visible.map((venue) => `<a class="entity-card entity-card-venue" data-entity-name="${escapeHtml(venue.name)}" data-entity-city="${escapeHtml(venue.city)}" href="/venue?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(venue.name))}</span>${venue.image ? `<img src="${escapeHtml(venue.image)}" alt="" loading="lazy" decoding="async" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${escapeHtml(venue.city || 'Location unknown')}</p><h2>${escapeHtml(venue.name)}</h2><p>${escapeHtml(venue.description || (venue.latestDate ? `Last visited ${formatGigDate(venue.latestDate)}` : 'An undated archive location'))}</p><div class="entity-card-stats"><span><strong>${venue.shows}</strong>Visit${venue.shows === 1 ? '' : 's'}</span><span><strong>${venue.artists.size}</strong>Artist${venue.artists.size === 1 ? '' : 's'}</span><span><strong>${venue.latestDate ? venue.latestDate.slice(0, 4) : '—'}</strong>Last visit</span></div></div></a>`).join('') || '<p class="empty-state entity-directory-empty">No venues match that search.</p>';
+      venuesGrid.innerHTML = visible.map((venue) => `<a class="entity-card entity-card-venue" data-entity-name="${escapeHtml(venue.name)}" data-entity-city="${escapeHtml(venue.city)}" href="/venue?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(venue.name))}</span>${venue.image ? `<img src="${escapeHtml(venue.image)}" alt="" loading="lazy" decoding="async" style="object-position:${escapeHtml(venue.imagePosition)}" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${escapeHtml(venue.city || 'Location unknown')}</p><h2>${escapeHtml(venue.name)}</h2><p>${escapeHtml(venue.description || (venue.latestDate ? `Last visited ${formatGigDate(venue.latestDate)}` : 'An undated archive location'))}</p><div class="entity-card-stats"><span><strong>${venue.shows}</strong>Visit${venue.shows === 1 ? '' : 's'}</span><span><strong>${venue.artists.size}</strong>Artist${venue.artists.size === 1 ? '' : 's'}</span><span><strong>${venue.latestDate ? venue.latestDate.slice(0, 4) : '—'}</strong>Last visit</span></div></div></a>`).join('') || '<p class="empty-state entity-directory-empty">No venues match that search.</p>';
       bindDirectoryImageFallbacks(venuesGrid);
       hydrateMissingDirectoryCards(venuesGrid, 'venue');
     };
@@ -2164,7 +2253,7 @@ async function renderVenuePage() {
     venueDescription.textContent = info.description || '';
     venueBio.textContent = info.bio || 'No venue biography was found yet.';
     venueImage.hidden = !info.image;
-    if (info.image) { venueImage.src = info.image; venueImage.alt = `${info.title || venueNameFromUrl} photo`; }
+    if (info.image) { venueImage.src = info.image; venueImage.alt = `${info.title || venueNameFromUrl} photo`; venueImage.style.objectPosition = info.imagePosition || 'center'; }
     venueSource.hidden = !info.source;
     if (info.source) venueSource.href = info.source;
     venueEditLink.href = `/venue/edit?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`;
@@ -2176,23 +2265,23 @@ async function renderVenueEditPage() {
   const info = await fetchJson(`/api/venues?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`);
   document.querySelector('#venue-edit-heading').textContent = `Edit ${info.title || venueNameFromUrl}`;
   document.querySelector('#venue-edit-back').href = `/venue?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`;
-  venueEditForm.elements.title.value = info.title || '';
-  venueEditForm.elements.description.value = info.description || '';
-  venueEditForm.elements.bio.value = info.bio || '';
-  venueEditForm.elements.image.value = info.image || '';
-  venueEditForm.elements.source.value = info.source || '';
+  populateMetadataForm(venueEditForm, venueEditPreview, info);
 }
 
 venueEditForm.addEventListener('submit', async (event) => {
   if (page !== 'venue-edit') return;
   event.preventDefault();
+  const submit = venueEditForm.querySelector('button[type="submit"]');
+  submit.disabled = true; venueEditMessage.textContent = 'Saving venue info…'; venueEditMessage.classList.remove('error');
   try {
-    const info = await fetchJson(`/api/venues?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(venueEditForm).entries())) });
+    const info = await fetchJson(`/api/venues?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(await metadataFormPayload(venueEditForm)) });
+    populateMetadataForm(venueEditForm, venueEditPreview, info);
     venueHeading.textContent = info.title; venueDescription.textContent = info.description; venueBio.textContent = info.bio;
-    venueImage.hidden = !info.image; if (info.image) { venueImage.src = info.image; venueImage.alt = `${info.title} photo`; }
+    venueImage.hidden = !info.image; if (info.image) { venueImage.src = info.image; venueImage.alt = `${info.title} photo`; venueImage.style.objectPosition = info.imagePosition || 'center'; }
     venueSource.hidden = !info.source; if (info.source) venueSource.href = info.source;
     venueEditMessage.textContent = 'Venue info saved.'; venueEditMessage.classList.remove('error');
   } catch (error) { venueEditMessage.textContent = error.message; venueEditMessage.classList.add('error'); }
+  finally { submit.disabled = false; }
 });
 
 function renderEditPage() {
@@ -3492,6 +3581,7 @@ async function initializeApp() {
     renderSharedShows();
     await renderInstanceSettings();
     await renderArtistPage();
+    await renderArtistEditPage();
     renderShowPage();
     renderCityPage();
     await renderVenuePage();

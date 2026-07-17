@@ -115,6 +115,31 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     assert.equal(anonymous.response.status, 401);
   });
 
+  test('artist and venue metadata overrides persist with local profile images and focus positions', async () => {
+    const editor = await api('/artist/edit?name=Test%20Artist');
+    assert.equal(editor.response.status, 200);
+    assert.match(editor.body, /id="artist-edit-page"/);
+    const artist = await jsonApi('/api/artists?name=Test%20Artist', 'PATCH', {
+      title: 'Test Artist Display', description: 'Edited locally', bio: 'A manual artist biography.', imagePosition: 'top',
+      imageUpload: { filename: 'portrait.png', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z7eQAAAAASUVORK5CYII=' }
+    });
+    assert.equal(artist.response.status, 200);
+    assert.equal(artist.body.imagePosition, 'top');
+    assert.match(artist.body.image, /^\/api\/profile-images\/profile-/);
+    const image = await api(artist.body.image);
+    assert.equal(image.response.status, 200);
+    assert.match(image.response.headers.get('content-type'), /^image\/png/);
+    const venue = await jsonApi('/api/venues?name=Test%20Venue&city=Brisbane', 'PATCH', { title: 'Test Venue', description: 'Edited venue', imagePosition: 'bottom' });
+    assert.equal(venue.response.status, 200);
+    assert.equal(venue.body.imagePosition, 'bottom');
+    const reloadedVenue = await api('/api/venues?name=Test%20Venue&city=Brisbane');
+    assert.equal(reloadedVenue.body.description, 'Edited venue');
+    assert.equal(reloadedVenue.body.imagePosition, 'bottom');
+    const reloaded = await api('/api/artists?name=Test%20Artist');
+    assert.equal(reloaded.body.title, 'Test Artist Display');
+    assert.equal(reloaded.body.imagePosition, 'top');
+  });
+
   test('editing show fields preserves attached media and omitted album metadata', async () => {
     const updated = await jsonApi(`/api/gigs/${gig.id}`, 'PATCH', {
       artist: 'Test Artist Updated',

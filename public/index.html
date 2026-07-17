@@ -15,17 +15,18 @@
       body[data-page="api-limits"] #api-limits-page, body[data-page="add"] #add-page,
       body[data-page="shows"] #shows-archive, body[data-page="shared"] #shows-archive,
       body[data-page="login"] #shows-shared, body[data-page="artist"] #artist-page,
+      body[data-page="artist-edit"] #artist-edit-page,
       body[data-page="show"] #show-page, body[data-page="playback"] #show-page,
       body[data-page="city"] #city-page, body[data-page="venue"] #venue-page,
       body[data-page="venue-edit"] #venue-edit-page, body[data-page="edit"] #edit-page,
       body[data-page="map"] #map-page, body[data-page="account"] #account-page { display: block; }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=auth-upload-polish-2" />
+    <link rel="stylesheet" href="/styles.css?v=metadata-editors-1" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   </head>
   <body>
     <script>
-      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/artists': 'artists', '/venues': 'venues', '/timeline': 'timeline', '/search': 'search', '/health': 'health', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
+      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/artists': 'artists', '/venues': 'venues', '/timeline': 'timeline', '/search': 'search', '/health': 'health', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/artist/edit': 'artist-edit', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
     </script>
     <div class="crt-overlay" aria-hidden="true">
       <span class="crt-noise"></span>
@@ -140,12 +141,22 @@
       <section class="artist-page" id="artist-page" aria-labelledby="artist-heading">
         <a class="text-button artist-back" href="/shows">← Back to shows</a>
         <div class="artist-profile" id="artist-profile">
-          <div class="artist-copy"><p class="eyebrow">Artist dossier</p><h1 id="artist-heading">Loading artist…</h1><p class="artist-description" id="artist-description"></p><p class="artist-bio" id="artist-bio"></p><a class="artist-source" id="artist-source" target="_blank" rel="noreferrer" hidden>Read more on Wikipedia ↗</a></div>
+          <div class="artist-copy"><p class="eyebrow">Artist dossier</p><h1 id="artist-heading">Loading artist…</h1><p class="artist-description" id="artist-description"></p><p class="artist-bio" id="artist-bio"></p><a class="artist-source" id="artist-source" target="_blank" rel="noreferrer" hidden>Read more on Wikipedia ↗</a><a class="button button-secondary artist-edit-link" id="artist-edit-link" href="#">Edit artist info</a></div>
           <img class="artist-image" id="artist-image" alt="" hidden />
         </div>
         <div class="artist-shows-heading"><p class="eyebrow">From your archive</p><h2>Shows attended</h2></div><div class="artist-stats" id="artist-stats"></div>
         <div class="gig-list" id="artist-shows"></div>
         <p class="empty-state" id="artist-empty" hidden>No shows by this artist yet.</p>
+      </section>
+
+      <section class="metadata-edit-page" id="artist-edit-page" aria-labelledby="artist-edit-heading">
+        <a class="text-button" id="artist-edit-back" href="/artists">← Back to artist</a>
+        <div class="section-heading"><p class="eyebrow">Artist metadata</p><h1 id="artist-edit-heading">Edit artist info</h1><p class="lede">Override scraped details and choose how this artist appears throughout your archive.</p></div>
+        <form class="metadata-edit-form" id="artist-edit-form">
+          <div class="metadata-edit-fields"><label>Display name<input name="title" required /></label><label>Short description<input name="description" /></label><label class="metadata-edit-wide">Biography<textarea name="bio" rows="7"></textarea></label><label>Photo URL<input name="image" type="text" inputmode="url" placeholder="https://…" /></label><label>Source URL<input name="source" type="url" placeholder="https://…" /></label></div>
+          <aside class="metadata-image-editor"><div class="metadata-image-preview"><span>No photo</span><img id="artist-edit-preview" alt="Artist preview" hidden /></div><label class="metadata-file-picker">Upload local photo<input name="imageFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif" /><small>JPEG, PNG, WebP or GIF · maximum 8 MB</small></label><label>Image focus<select name="imagePosition"><option value="top">Top</option><option value="center">Centre</option><option value="bottom">Bottom</option></select></label></aside>
+          <div class="metadata-edit-actions"><button class="button" type="submit">Save artist info</button><p class="form-message" id="artist-edit-message" role="status"></p></div>
+        </form>
       </section>
 
       <section class="show-page" id="show-page" aria-labelledby="show-heading">
@@ -166,7 +177,15 @@
         <div class="artist-shows-heading"><p class="eyebrow">Your history here</p><h2>Shows attended</h2></div><div class="gig-list" id="venue-shows"></div><p class="empty-state" id="venue-empty" hidden>No shows at this venue yet.</p>
       </section>
 
-      <section class="venue-edit-page" id="venue-edit-page" aria-labelledby="venue-edit-heading"><a class="text-button" id="venue-edit-back" href="/shows">← Back to shows</a><div class="section-heading"><p class="eyebrow">Venue edit</p><h1 id="venue-edit-heading">Edit venue info</h1></div><form class="venue-edit-form" id="venue-edit-form"><label>Display name<input name="title" /></label><label>Short description<input name="description" /></label><label>Bio<textarea name="bio"></textarea></label><label>Photo URL<input name="image" type="url" /></label><label>Source URL<input name="source" type="url" /></label><button class="button" type="submit">Save venue info</button><p class="form-message" id="venue-edit-message" role="status"></p></form></section>
+      <section class="metadata-edit-page venue-edit-page" id="venue-edit-page" aria-labelledby="venue-edit-heading">
+        <a class="text-button" id="venue-edit-back" href="/venues">← Back to venue</a>
+        <div class="section-heading"><p class="eyebrow">Venue metadata</p><h1 id="venue-edit-heading">Edit venue info</h1><p class="lede">Correct venue details and control the photograph used across your archive.</p></div>
+        <form class="metadata-edit-form" id="venue-edit-form">
+          <div class="metadata-edit-fields"><label>Display name<input name="title" required /></label><label>Short description<input name="description" /></label><label class="metadata-edit-wide">Biography<textarea name="bio" rows="7"></textarea></label><label>Photo URL<input name="image" type="text" inputmode="url" placeholder="https://…" /></label><label>Source URL<input name="source" type="url" placeholder="https://…" /></label></div>
+          <aside class="metadata-image-editor"><div class="metadata-image-preview"><span>No photo</span><img id="venue-edit-preview" alt="Venue preview" hidden /></div><label class="metadata-file-picker">Upload local photo<input name="imageFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif" /><small>JPEG, PNG, WebP or GIF · maximum 8 MB</small></label><label>Image focus<select name="imagePosition"><option value="top">Top</option><option value="center">Centre</option><option value="bottom">Bottom</option></select></label></aside>
+          <div class="metadata-edit-actions"><button class="button" type="submit">Save venue info</button><p class="form-message" id="venue-edit-message" role="status"></p></div>
+        </form>
+      </section>
 
       <section class="edit-page" id="edit-page" aria-labelledby="edit-heading">
         <a class="text-button" href="/shows">← Back to shows</a>
@@ -253,6 +272,6 @@
     <div class="media-lightbox" id="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Media viewer"><button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Close media viewer">×</button><img id="media-lightbox-image" alt="" /><video id="media-lightbox-video" controls></video><p id="media-lightbox-caption"></p></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="/app.js?v=auth-upload-polish-1"></script>
+    <script src="/app.js?v=metadata-editors-1"></script>
   </body>
 </html>
