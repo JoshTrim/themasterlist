@@ -331,6 +331,11 @@ const setPlayerOverviewProgress = document.querySelector('#set-player-overview-p
 const setPlayerOverviewMarkers = document.querySelector('#set-player-overview-markers');
 const setPlayerElapsed = document.querySelector('#set-player-elapsed');
 const setPlayerTotal = document.querySelector('#set-player-total');
+const setPlayerSourceKind = document.querySelector('#set-player-source-kind');
+const setPlayerSourceLabel = document.querySelector('#set-player-source-label');
+const setPlayerContextPrevious = document.querySelector('#set-player-context-previous');
+const setPlayerContextCurrent = document.querySelector('#set-player-context-current');
+const setPlayerContextNext = document.querySelector('#set-player-context-next');
 let setQueue = [];
 let setQueueIndex = 0;
 let youtubeApiPromise;
@@ -342,10 +347,74 @@ let setFallbackPending = false;
 let pendingSetSeek = null;
 let setTrackAdvancePending = false;
 let resumeSaveAt = 0;
+let theatreControlsTimer;
+let setPlaybackWakeLock;
 const setTimelineMedia = matchMedia('(max-width: 640px)');
 let setTimelineZoom = setTimelineMedia.matches ? 3 : 5;
 const formatPlaybackTime = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 const playbackResumeKey = (gigId) => `master-list:playback:${gigId}`;
+function updateSetTheatreMeta(gig, entry) {
+  const media = entry?.media;
+  const sourceType = media?.mimeType === 'video/youtube' ? 'YouTube' : media ? 'Your upload' : 'No source';
+  const sourceNumber = Number(entry?.sourceIndex || 0);
+  setPlayerSourceKind.textContent = sourceNumber ? `${sourceType} · Backup ${sourceNumber}` : sourceType;
+  setPlayerSourceLabel.textContent = media ? (media.caption || media.filename || 'Untitled video') : 'This track will be skipped';
+  const previousSong = setQueueIndex > 0 ? gig?.songs?.[setQueue[setQueueIndex - 1]?.songIndex] : null;
+  const nextSong = setQueueIndex < setQueue.length - 1 ? gig?.songs?.[setQueue[setQueueIndex + 1]?.songIndex] : null;
+  setPlayerContextPrevious.textContent = previousSong ? `← ${previousSong.title}` : 'Start of set';
+  setPlayerContextCurrent.textContent = `${setQueueIndex + 1} / ${setQueue.length}`;
+  setPlayerContextNext.textContent = nextSong ? `${nextSong.title} →` : 'End of set';
+}
+function setPlaybackIsPlaying() {
+  const video = setPlayerStage.querySelector('video.set-player-current');
+  if (video) return !video.paused && !video.ended;
+  try { return activeYoutubePlayer?.getPlayerState?.() === 1; } catch { return false; }
+}
+function scheduleTheatreControls() {
+  clearTimeout(theatreControlsTimer);
+  if (document.fullscreenElement !== setPlayer || !setPlaybackIsPlaying()) return;
+  theatreControlsTimer = setTimeout(() => {
+    if (document.fullscreenElement === setPlayer && !timelinePointer && setPlaybackIsPlaying()) setPlayer.classList.add('theatre-idle');
+  }, 3400);
+}
+function revealTheatreControls({ schedule = true } = {}) {
+  setPlayer.classList.remove('theatre-idle', 'controls-hidden');
+  clearTimeout(theatreControlsTimer);
+  if (schedule) scheduleTheatreControls();
+}
+async function requestSetPlaybackWakeLock() {
+  if (!navigator.wakeLock || setPlaybackWakeLock || document.fullscreenElement !== setPlayer) return;
+  try {
+    setPlaybackWakeLock = await navigator.wakeLock.request('screen');
+    setPlaybackWakeLock.addEventListener?.('release', () => { setPlaybackWakeLock = null; });
+  } catch { setPlaybackWakeLock = null; }
+}
+async function releaseSetPlaybackWakeLock() {
+  if (!setPlaybackWakeLock) return;
+  const lock = setPlaybackWakeLock;
+  setPlaybackWakeLock = null;
+  try { await lock.release(); } catch {}
+}
+function toggleSetPlayback() {
+  const video = setPlayerStage.querySelector('video.set-player-current');
+  if (video) {
+    if (video.paused) video.play().catch(() => {}); else video.pause();
+    if (video.paused) revealTheatreControls({ schedule: false }); else scheduleTheatreControls();
+    return;
+  }
+  try {
+    if (activeYoutubePlayer?.getPlayerState?.() === 1) { activeYoutubePlayer.pauseVideo(); revealTheatreControls({ schedule: false }); }
+    else { activeYoutubePlayer?.playVideo?.(); scheduleTheatreControls(); }
+  } catch {}
+}
+function toggleSetMute() {
+  const video = setPlayerStage.querySelector('video.set-player-current');
+  if (video) { video.muted = !video.muted; setPlayerStatus.textContent = video.muted ? 'Muted' : 'Sound on'; return; }
+  try {
+    if (activeYoutubePlayer?.isMuted?.()) { activeYoutubePlayer.unMute(); setPlayerStatus.textContent = 'Sound on'; }
+    else { activeYoutubePlayer?.mute?.(); setPlayerStatus.textContent = 'Muted'; }
+  } catch {}
+}
 function playbackBounds(source, duration = 0) {
   const media = source?.media || source;
   const clip = source?.clip || null;
@@ -1964,9 +2033,13 @@ function finishSetPlayback(gig) {
   stopYoutubeTimelinePolling();
   clearSetSourceLoadTimer();
   clearPlaybackResume(gig);
+  releaseSetPlaybackWakeLock();
   setPlayerStatus.textContent = 'End of available set.';
+  setPlayerSourceKind.textContent = 'Set complete';
+  setPlayerSourceLabel.textContent = `${setQueue.length} tracks in this playback plan`;
   setPlayerProgress.style.width = '100%';
   setPlayerOverviewProgress.style.width = '100%';
+  revealTheatreControls({ schedule: false });
 }
 function continueSameSetSource(gig, index) {
   const entry = setQueue[index];
@@ -1974,6 +2047,7 @@ function continueSameSetSource(gig, index) {
   pendingSetSeek = null;
   setTrackAdvancePending = false;
   setPlayerTitle.textContent = `${entry.songIndex + 1}. ${gig.songs[entry.songIndex].title}`;
+  updateSetTheatreMeta(gig, entry);
   renderSetTimeline(gig);
   setPlayerStatus.textContent = `${setQueueIndex + 1} of ${setQueue.length} · continuous video`;
   const requestedStart = entry.clip?.startSeconds ?? entry.media?.playbackStart;
@@ -2046,7 +2120,7 @@ function installPlayerStageNavigation() {
   reveal.setAttribute('aria-label', 'Show playback controls');
   previous.textContent = '‹'; next.textContent = '›';
   reveal.textContent = 'Show controls';
-  reveal.addEventListener('click', () => setPlayer.classList.remove('controls-hidden'));
+  reveal.addEventListener('click', () => revealTheatreControls());
   setPlayerStage.append(previous, next, reveal);
   [previous, next].forEach((zone) => {
     let startX = 0; let swiped = false;
@@ -2069,6 +2143,7 @@ function playSetTrack() {
   const song = gig.songs[entry.songIndex];
   setPlayer.hidden = false;
   setPlayerTitle.textContent = `${entry.songIndex + 1}. ${song.title}`;
+  updateSetTheatreMeta(gig, entry);
   renderSetTimeline(gig);
   if (!entry.media) {
     setPlayerStage.innerHTML = `<div class="set-player-gap"><span>◇</span><strong>No video for this track</strong><small>Skipping to the next available song…</small></div>`;
@@ -2103,7 +2178,8 @@ function playSetTrack() {
   armSetSourceLoadTimer();
   const video = setPlayerStage.querySelector('video.set-player-current');
   if (video) video.addEventListener('loadedmetadata', () => { clearSetSourceLoadTimer(); applySetSeek(gig, seekFraction); }, { once: true });
-  if (video) video.addEventListener('playing', clearSetSourceLoadTimer, { once: true });
+  if (video) video.addEventListener('playing', () => { clearSetSourceLoadTimer(); scheduleTheatreControls(); });
+  if (video) video.addEventListener('pause', () => revealTheatreControls({ schedule: false }));
   if (video) video.addEventListener('error', () => failSetSource('Uploaded video failed'), { once: true });
   if (video) video.addEventListener('timeupdate', () => {
     if (!video.duration) return;
@@ -2124,7 +2200,8 @@ function playSetTrack() {
       activeYoutubePlayer = new YT.Player(youtubeFrame.id, { events: {
         onReady: (event) => { clearSetSourceLoadTimer(); applySetSeek(gig, seekFraction); event.target.playVideo(); startYoutubeTimelinePolling(gig); },
         onStateChange: (event) => {
-          if (event.data === YT.PlayerState.PLAYING) { clearSetSourceLoadTimer(); if (pendingSetSeek?.index === setQueueIndex) applySetSeek(gig, pendingSetSeek.fraction); startYoutubeTimelinePolling(gig); }
+          if (event.data === YT.PlayerState.PLAYING) { clearSetSourceLoadTimer(); if (pendingSetSeek?.index === setQueueIndex) applySetSeek(gig, pendingSetSeek.fraction); startYoutubeTimelinePolling(gig); scheduleTheatreControls(); }
+          if (event.data === YT.PlayerState.PAUSED) revealTheatreControls({ schedule: false });
           if (event.data === YT.PlayerState.ENDED && !setTrackAdvancePending) { setTrackAdvancePending = true; moveToPlayableTrack(1, true); }
         },
         onError: () => failSetSource('YouTube source unavailable')
@@ -2159,14 +2236,40 @@ setPlayerRestart.addEventListener('click', () => {
   pendingSetSeek = { index: setQueueIndex, fraction: 0 };
   playSetTrack();
 });
-setPlayerFullscreen?.addEventListener('click', async () => {
+async function toggleSetTheatre() {
   if (!document.fullscreenElement) await setPlayer.requestFullscreen?.();
   else await document.exitFullscreen?.();
+}
+setPlayerFullscreen?.addEventListener('click', toggleSetTheatre);
+setPlayerControlsToggle.addEventListener('click', () => {
+  if (setPlayer.classList.contains('theatre-idle')) revealTheatreControls();
+  else setPlayer.classList.add('theatre-idle');
 });
-setPlayerControlsToggle.addEventListener('click', () => setPlayer.classList.toggle('controls-hidden'));
+setPlayer.addEventListener('pointermove', () => revealTheatreControls());
+setPlayer.addEventListener('pointerdown', () => revealTheatreControls());
+setPlayer.addEventListener('focusin', () => revealTheatreControls({ schedule: false }));
 document.addEventListener('fullscreenchange', () => {
-  setPlayer.classList.remove('controls-hidden');
-  setPlayerControlsToggle.setAttribute('aria-label', document.fullscreenElement === setPlayer ? 'Show or hide playback controls' : 'Playback controls');
+  const inTheatre = document.fullscreenElement === setPlayer;
+  revealTheatreControls();
+  setPlayerFullscreen.textContent = inTheatre ? '↙ Exit theatre' : '⛶ Theatre';
+  setPlayerControlsToggle.setAttribute('aria-label', inTheatre ? 'Show or hide playback controls' : 'Playback controls');
+  if (inTheatre) requestSetPlaybackWakeLock(); else releaseSetPlaybackWakeLock();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && document.fullscreenElement === setPlayer) requestSetPlaybackWakeLock();
+});
+window.addEventListener('pagehide', releaseSetPlaybackWakeLock);
+document.addEventListener('keydown', (event) => {
+  if (setPlayer.hidden || event.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+  const key = event.key.toLowerCase();
+  const inTheatre = document.fullscreenElement === setPlayer;
+  if (!inTheatre && key !== 'f') return;
+  if (key === 'arrowright') { event.preventDefault(); moveToPlayableTrack(1); }
+  else if (key === 'arrowleft') { event.preventDefault(); moveToPlayableTrack(-1); }
+  else if (key === ' ' || key === 'k') { event.preventDefault(); toggleSetPlayback(); }
+  else if (key === 'm') { event.preventDefault(); toggleSetMute(); }
+  else if (key === 'f') { event.preventDefault(); toggleSetTheatre(); }
+  revealTheatreControls();
 });
 
 findYouTubeSet.addEventListener('click', async () => {
