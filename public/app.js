@@ -1366,9 +1366,12 @@ function openPlaybackEditorPreview(gig, row) {
 }
 
 let playbackSuggestionState = { gigId: '', suggestions: [], metadataWarning: '' };
-function playbackSuggestionConfidence(value) {
+function playbackSuggestionConfidence(suggestion) {
+  const value = Number(suggestion?.confidence) || 0;
   if (value >= .9) return 'High confidence';
   if (value >= .75) return 'Good confidence';
+  if (/interpolated/i.test(suggestion?.reason || '')) return 'Timing estimate';
+  if (/estimated/i.test(suggestion?.reason || '')) return 'Rough timing';
   return 'Possible match';
 }
 function playbackSuggestionTiming(suggestion) {
@@ -1427,14 +1430,15 @@ function renderPlaybackSuggestions(gig) {
     if (suggestion.fallbackOnly) return Boolean(selected) && !playbackEditorRowSources(gig, row).some((source) => source.media?.id === suggestion.mediaId);
     return !selected || (selected === suggestion.mediaId && !hasTiming);
   });
-  playbackEditorSuggestions.innerHTML = `<div><strong>${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} ready to review</strong><small>${playbackSuggestionState.metadataWarning ? escapeHtml(playbackSuggestionState.metadataWarning) : 'Manual clips have been left untouched.'}</small></div>${safeSuggestions.length ? `<button type="button" class="button button-secondary apply-safe-suggestions">Apply ${safeSuggestions.length} safe suggestion${safeSuggestions.length === 1 ? '' : 's'}</button>` : ''}`;
+  const timingEstimates = suggestions.filter((suggestion) => /estimated|interpolated/i.test(suggestion.reason || ''));
+  playbackEditorSuggestions.innerHTML = `<div><strong>${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} ready to review</strong><small>${playbackSuggestionState.metadataWarning ? escapeHtml(playbackSuggestionState.metadataWarning) : 'Manual clips have been left untouched. Timing estimates remain editable until you save.'}</small></div>${timingEstimates.length ? `<button type="button" class="button button-secondary apply-timing-estimates">Apply ${timingEstimates.length} timing estimate${timingEstimates.length === 1 ? '' : 's'}</button>` : ''}${safeSuggestions.length ? `<button type="button" class="button button-secondary apply-safe-suggestions">Apply ${safeSuggestions.length} safe suggestion${safeSuggestions.length === 1 ? '' : 's'}</button>` : ''}`;
   suggestions.forEach((suggestion) => {
     const row = playbackEditorList.querySelector(`.playback-editor-row[data-song-index="${suggestion.songIndex}"]`);
     if (!row) return;
     const suggestionElement = document.createElement('div');
     suggestionElement.className = 'playback-suggestion';
     const alternatives = (suggestion.alternatives || []).filter((item) => item.confidence >= .65);
-    suggestionElement.innerHTML = `<div><span>${suggestion.fallbackOnly ? 'Fallback candidate' : playbackSuggestionConfidence(suggestion.confidence)} · ${Math.round(suggestion.confidence * 100)}%</span><strong>${escapeHtml(suggestion.sourceLabel)}</strong><small>${escapeHtml(playbackSuggestionTiming(suggestion))} · ${escapeHtml(suggestion.reason)}${alternatives.length ? ` · ${alternatives.length} additional source${alternatives.length === 1 ? '' : 's'}` : ''}</small></div><div><button type="button" class="apply-playback-suggestion">${suggestion.fallbackOnly ? 'Add backup' : 'Apply'}</button>${alternatives.length ? `<button type="button" class="apply-playback-suggestion-all">${suggestion.fallbackOnly ? 'Add all' : 'Apply + backups'}</button>` : ''}<button type="button" class="dismiss-playback-suggestion">Dismiss</button></div>`;
+    suggestionElement.innerHTML = `<div><span>${suggestion.fallbackOnly ? 'Fallback candidate' : playbackSuggestionConfidence(suggestion)} · ${Math.round(suggestion.confidence * 100)}%</span><strong>${escapeHtml(suggestion.sourceLabel)}</strong><small>${escapeHtml(playbackSuggestionTiming(suggestion))} · ${escapeHtml(suggestion.reason)}${alternatives.length ? ` · ${alternatives.length} additional source${alternatives.length === 1 ? '' : 's'}` : ''}</small></div><div><button type="button" class="apply-playback-suggestion">${suggestion.fallbackOnly ? 'Add backup' : 'Apply'}</button>${alternatives.length ? `<button type="button" class="apply-playback-suggestion-all">${suggestion.fallbackOnly ? 'Add all' : 'Apply + backups'}</button>` : ''}<button type="button" class="dismiss-playback-suggestion">Dismiss</button></div>`;
     row.querySelector('.playback-preview').insertAdjacentElement('beforebegin', suggestionElement);
     suggestionElement.querySelector('.apply-playback-suggestion').addEventListener('click', () => { applyPlaybackSuggestion(gig, suggestion); renderPlaybackSuggestions(gig); });
     suggestionElement.querySelector('.apply-playback-suggestion-all')?.addEventListener('click', () => { applyPlaybackSuggestion(gig, suggestion, true); renderPlaybackSuggestions(gig); });
@@ -1444,6 +1448,13 @@ function renderPlaybackSuggestions(gig) {
     let applied = 0;
     safeSuggestions.forEach((suggestion) => { if (applyPlaybackSuggestion(gig, suggestion)) applied += 1; });
     playbackEditorMessage.textContent = `${applied} suggestion${applied === 1 ? '' : 's'} applied. Review the plan, then save it.`;
+    playbackEditorMessage.classList.remove('error');
+    renderPlaybackSuggestions(gig);
+  });
+  playbackEditorSuggestions.querySelector('.apply-timing-estimates')?.addEventListener('click', () => {
+    let applied = 0;
+    timingEstimates.forEach((suggestion) => { if (applyPlaybackSuggestion(gig, suggestion)) applied += 1; });
+    playbackEditorMessage.textContent = `${applied} full-show timing estimate${applied === 1 ? '' : 's'} applied. Preview the boundaries, then save the plan.`;
     playbackEditorMessage.classList.remove('error');
     renderPlaybackSuggestions(gig);
   });
@@ -1523,7 +1534,7 @@ autoBuildPlaybackPlan?.addEventListener('click', async () => {
   if (!gig) return;
   autoBuildPlaybackPlan.disabled = true;
   autoBuildPlaybackPlan.textContent = 'Inspecting videos…';
-  playbackEditorSuggestions.innerHTML = '<p>Reading chapters, titles and track detections…</p>';
+  playbackEditorSuggestions.innerHTML = '<p>Reading chapters, full-show durations, titles and track detections…</p>';
   playbackEditorMessage.textContent = '';
   try {
     const result = await fetchJson(`/api/gigs/${gig.id}/playback-plan/suggest`, { method: 'POST' });

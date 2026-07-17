@@ -1530,6 +1530,47 @@ function bestPlaybackSong(gig, value, minimum = .55) {
   return best;
 }
 
+function estimateFullShowTimings(songCount, duration, anchors = [], terminalSeconds = null) {
+  const count = Number(songCount);
+  const naturalEnd = Number(duration);
+  if (!Number.isInteger(count) || count < 1 || !Number.isFinite(naturalEnd) || naturalEnd <= 0) return [];
+  const requestedEnd = Number(terminalSeconds);
+  const end = Number.isFinite(requestedEnd) && requestedEnd > 0 && requestedEnd <= naturalEnd ? requestedEnd : naturalEnd;
+  const bySong = new Map();
+  anchors.forEach((anchor) => {
+    const songIndex = Number(anchor.songIndex);
+    const seconds = Number(anchor.seconds);
+    if (!Number.isInteger(songIndex) || songIndex < 0 || songIndex >= count || !Number.isFinite(seconds) || seconds < 0 || seconds >= end) return;
+    const current = bySong.get(songIndex);
+    if (!current || Number(anchor.weight || 0) >= Number(current.weight || 0)) bySong.set(songIndex, { ...anchor, songIndex, seconds });
+  });
+  const detected = [...bySong.values()].sort((a, b) => a.songIndex - b.songIndex);
+  const monotonic = [];
+  detected.forEach((anchor) => { if (!monotonic.length || anchor.seconds > monotonic[monotonic.length - 1].seconds) monotonic.push(anchor); });
+  const realAnchorCount = monotonic.length;
+  if (!monotonic.length || monotonic[0].songIndex > 0) monotonic.unshift({ songIndex: 0, seconds: 0, synthetic: true });
+  monotonic.push({ songIndex: count, seconds: end, synthetic: true });
+  const confidence = realAnchorCount >= 2 ? .68 : realAnchorCount === 1 ? .58 : .48;
+  const reason = realAnchorCount >= 2 ? 'Interpolated between detected full-show timestamps'
+    : realAnchorCount === 1 ? 'Estimated around one detected timestamp — review timing'
+      : 'Estimated evenly across the full-show duration — review timing';
+  const estimates = [];
+  for (let anchorIndex = 0; anchorIndex < monotonic.length - 1; anchorIndex += 1) {
+    const startAnchor = monotonic[anchorIndex];
+    const endAnchor = monotonic[anchorIndex + 1];
+    const trackSpan = endAnchor.songIndex - startAnchor.songIndex;
+    const timeSpan = endAnchor.seconds - startAnchor.seconds;
+    if (trackSpan <= 0 || timeSpan <= 0) continue;
+    for (let songIndex = startAnchor.songIndex; songIndex < endAnchor.songIndex; songIndex += 1) {
+      const offset = songIndex - startAnchor.songIndex;
+      const startSeconds = startAnchor.seconds + ((timeSpan * offset) / trackSpan);
+      const endSeconds = startAnchor.seconds + ((timeSpan * (offset + 1)) / trackSpan);
+      estimates.push({ songIndex, startSeconds: Math.round(startSeconds * 10) / 10, endSeconds: Math.round(endSeconds * 10) / 10, confidence, reason });
+    }
+  }
+  return estimates;
+}
+
 async function refreshYouTubePlaybackMetadata(gigId, media) {
   const staleBefore = Date.now() - (30 * 24 * 60 * 60 * 1000);
   const pending = media.filter((item) => item.mimeType === 'video/youtube' && youtubeVideoId(item.externalUrl || item.url) && (!item.sourceMetadataAt || Date.parse(item.sourceMetadataAt) < staleBefore));
@@ -1566,7 +1607,6 @@ function suggestPlaybackPlan(gig, media) {
     const value = Number(song.startSeconds);
     return Number.isFinite(value) && value >= 0 ? value : null;
   });
-  const timedSongs = setlistStarts.filter((value) => value !== null).length;
   const offer = (songIndex, item, startSeconds, endSeconds, confidence, reason) => {
     if (!Number.isInteger(songIndex) || existingBySong.get(songIndex)?.has(item.id)) return;
     if (!suggestionBuckets.has(songIndex)) suggestionBuckets.set(songIndex, new Map());
@@ -1581,21 +1621,41 @@ function suggestPlaybackPlan(gig, media) {
       if (match) offer(match.songIndex, item, item.playbackStart, item.playbackEnd, .9 + (.08 * match.score), `AudD matched “${item.recognitionTitle}”`);
     }
     const chapters = item.mimeType === 'video/youtube' ? parsePlaybackChapters(item.sourceDescription) : [];
-    chapters.forEach((chapter, index) => {
+    const chapterMatches = [];
+    chapters.forEach((chapter, chapterIndex) => {
       const match = bestPlaybackSong(gig, chapter.title, .5);
-      if (!match) return;
-      const next = chapters[index + 1];
-      const end = next?.seconds ?? item.sourceDuration ?? null;
-      offer(match.songIndex, item, chapter.seconds, end, .74 + (.24 * match.score), `YouTube chapter “${chapter.title}”`);
+      if (!match || (chapterMatches.length && match.songIndex <= chapterMatches[chapterMatches.length - 1].songIndex)) return;
+      chapterMatches.push({ ...chapter, ...match, chapterIndex });
     });
     const sourceText = `${item.caption || ''} ${item.sourceDescription || ''}`.toLowerCase();
     const artistWords = String(gig.artist || '').toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2);
     const venueWords = String(gig.venue || '').toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 3);
-    const looksLikeFullShow = timedSongs >= 2 && artistWords.some((word) => sourceText.includes(word)) && (/full\s+(?:set|show)|complete\s+(?:set|show)|whole\s+(?:set|show)|concert|live\s+at/.test(sourceText) || venueWords.some((word) => sourceText.includes(word)));
+    const duration = Number(item.sourceDuration);
+    const explicitFullShow = /(?:full|complete|whole|entire)\s+(?:set|show|concert)|concert\s+(?:film|video)/.test(sourceText);
+    const venueConcert = venueWords.some((word) => sourceText.includes(word)) && /concert|live\s+at|full\s+performance/.test(sourceText);
+    const plausibleDuration = Number.isFinite(duration) && duration >= Math.max(8 * 60, (gig.songs || []).length * 75);
+    const artistMatches = artistWords.some((word) => sourceText.includes(word));
+    const looksLikeFullShow = Number.isFinite(duration) && duration > 0 && (chapterMatches.length >= 2 || (artistMatches && (explicitFullShow || (plausibleDuration && venueConcert))));
+    const lastChapterMatch = chapterMatches[chapterMatches.length - 1];
+    const followingChapter = lastChapterMatch ? chapters[lastChapterMatch.chapterIndex + 1] : null;
+    const terminalSeconds = lastChapterMatch?.songIndex === (gig.songs || []).length - 1 ? followingChapter?.seconds : null;
+    const timingAnchors = [
+      ...setlistStarts.map((seconds, songIndex) => seconds === null ? null : ({ songIndex, seconds, weight: 1 })).filter(Boolean),
+      ...chapterMatches.map((match) => ({ songIndex: match.songIndex, seconds: match.seconds, weight: 2 }))
+    ];
+    const estimates = looksLikeFullShow ? estimateFullShowTimings((gig.songs || []).length, duration, timingAnchors, terminalSeconds) : [];
+    const estimateBySong = new Map(estimates.map((estimate) => [estimate.songIndex, estimate]));
+    estimates.forEach((estimate) => offer(estimate.songIndex, item, estimate.startSeconds, estimate.endSeconds, estimate.confidence, estimate.reason));
+    chapterMatches.forEach((match) => {
+      const estimate = estimateBySong.get(match.songIndex);
+      const nextChapter = chapters[match.chapterIndex + 1];
+      offer(match.songIndex, item, match.seconds, estimate?.endSeconds ?? nextChapter?.seconds ?? item.sourceDuration ?? null, .74 + (.24 * match.score), `YouTube chapter “${match.title}”`);
+    });
     if (looksLikeFullShow) setlistStarts.forEach((start, songIndex) => {
       if (start === null) return;
+      const estimate = estimateBySong.get(songIndex);
       const next = setlistStarts.slice(songIndex + 1).find((value) => value !== null && value > start);
-      offer(songIndex, item, start, next ?? item.sourceDuration ?? null, .72, 'Setlist timestamp matched to a full-show video');
+      offer(songIndex, item, start, estimate?.endSeconds ?? next ?? item.sourceDuration ?? null, .72, 'Setlist timestamp matched to a full-show video');
     });
     const titleMatch = bestPlaybackSong(gig, item.caption, .62);
     if (titleMatch) offer(titleMatch.songIndex, item, item.playbackStart, item.playbackEnd, .58 + (.28 * titleMatch.score), 'Video title matches the setlist');
@@ -2630,7 +2690,7 @@ module.exports = {
   server,
   database,
   paths: { data: DATA_DIR, database: DB_FILE, media: MEDIA_DIR },
-  testables: { parsePlaybackChapters, suggestPlaybackPlan, youtubeVideoId }
+  testables: { estimateFullShowTimings, parsePlaybackChapters, suggestPlaybackPlan, youtubeVideoId }
 };
 
 function loadEnvFile() {

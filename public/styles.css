@@ -299,7 +299,8 @@ body[data-page="shows"] h1, body[data-page="shows"] h2, body[data-page="shows"] 
 .playback-editor { margin-top: 24px; padding: 20px; border: 1px solid #5e2a78; background: linear-gradient(135deg, rgba(25, 10, 42, .9), rgba(9, 5, 18, .95)); }
 .playback-editor-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .playback-editor-actions .button { margin: 0; }
-.playback-editor-suggestions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 11px; border: 1px solid #8b45b0; background: linear-gradient(90deg, rgba(68, 20, 92, .72), rgba(22, 8, 36, .82)); }
+.playback-editor-suggestions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; margin-top: 16px; padding: 11px; border: 1px solid #8b45b0; background: linear-gradient(90deg, rgba(68, 20, 92, .72), rgba(22, 8, 36, .82)); }
+.playback-editor-suggestions > div:first-child { flex: 1 1 300px; }
 .playback-editor-suggestions:empty { display: none; }
 .playback-editor-suggestions p { margin: 0; color: #d6a9e2; font: 15px "VT323", monospace; }
 .playback-editor-suggestions strong, .playback-editor-suggestions small { display: block; }

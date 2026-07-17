@@ -181,4 +181,35 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     ]);
     assert.equal(testables.youtubeVideoId('https://youtu.be/abc123?t=4'), 'abc123');
   });
+
+  test('full-show videos without chapters receive editable whole-set timing estimates', () => {
+    const suggestions = testables.suggestPlaybackPlan({
+      artist: 'Test Artist', venue: 'Test Venue',
+      songs: [{ title: 'One' }, { title: 'Two' }, { title: 'Three' }, { title: 'Four' }]
+    }, [{
+      id: 'full-show', mimeType: 'video/youtube', category: 'other', caption: 'Test Artist — Full Concert',
+      sourceDescription: '', sourceDuration: 1200, playbackClips: [], songIndex: null, recognitionTitle: ''
+    }]);
+    assert.deepEqual(suggestions.map(({ songIndex, startSeconds, endSeconds }) => ({ songIndex, startSeconds, endSeconds })), [
+      { songIndex: 0, startSeconds: 0, endSeconds: 300 },
+      { songIndex: 1, startSeconds: 300, endSeconds: 600 },
+      { songIndex: 2, startSeconds: 600, endSeconds: 900 },
+      { songIndex: 3, startSeconds: 900, endSeconds: 1200 }
+    ]);
+    assert.ok(suggestions.every((suggestion) => suggestion.confidence === .48));
+    assert.ok(suggestions.every((suggestion) => /review timing/i.test(suggestion.reason)));
+  });
+
+  test('detected chapter anchors interpolate missing tracks without overlaps', () => {
+    const estimates = testables.estimateFullShowTimings(3, 900, [
+      { songIndex: 0, seconds: 0, weight: 2 },
+      { songIndex: 2, seconds: 600, weight: 2 }
+    ]);
+    assert.deepEqual(estimates.map(({ songIndex, startSeconds, endSeconds }) => ({ songIndex, startSeconds, endSeconds })), [
+      { songIndex: 0, startSeconds: 0, endSeconds: 300 },
+      { songIndex: 1, startSeconds: 300, endSeconds: 600 },
+      { songIndex: 2, startSeconds: 600, endSeconds: 900 }
+    ]);
+    estimates.forEach((estimate, index) => { if (index) assert.equal(estimates[index - 1].endSeconds, estimate.startSeconds); });
+  });
 });
