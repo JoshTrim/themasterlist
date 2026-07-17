@@ -20,7 +20,7 @@
       body[data-page="venue-edit"] #venue-edit-page, body[data-page="edit"] #edit-page,
       body[data-page="map"] #map-page, body[data-page="account"] #account-page { display: block; }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=entity-directories-2" />
+    <link rel="stylesheet" href="/styles.css?v=auth-upload-polish-2" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   </head>
   <body>
@@ -32,7 +32,7 @@
     </div>
     <header class="site-header">
       <a class="brand" href="/">The<br /><em>Master</em> List</a>
-      <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">☰</button><nav class="site-nav" id="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/overview">Overview</a><a href="/artists">Artists</a><a href="/venues">Venues</a><a href="/timeline">Timeline</a><a href="/search">Search</a><a href="/health">Health</a><a href="/api-limits">API limits</a><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a><a href="/login">Sign in</a></nav>
+      <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">☰</button><nav class="site-nav" id="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/overview">Overview</a><a href="/artists">Artists</a><a href="/venues">Venues</a><a href="/timeline">Timeline</a><a href="/search">Search</a><a href="/health">Health</a><a href="/api-limits">API limits</a><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a><a id="nav-sign-in" href="/login" hidden>Sign in</a></nav>
       <span class="record-count" id="record-count">0 shows</span>
     </header>
 
@@ -253,6 +253,6 @@
     <div class="media-lightbox" id="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Media viewer"><button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Close media viewer">×</button><img id="media-lightbox-image" alt="" /><video id="media-lightbox-video" controls></video><p id="media-lightbox-caption"></p></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="/app.js?v=entity-directories-2"></script>
+    <script src="/app.js?v=auth-upload-polish-1"></script>
   </body>
 </html>

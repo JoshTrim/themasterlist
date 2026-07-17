@@ -1,6 +1,7 @@
 const form = document.querySelector('#gig-form');
 const mobileMenuToggle = document.querySelector('#mobile-menu-toggle');
 const siteNav = document.querySelector('#site-nav');
+const navSignIn = document.querySelector('#nav-sign-in');
 mobileMenuToggle?.addEventListener('click', () => { const open = siteNav.classList.toggle('is-open'); mobileMenuToggle.setAttribute('aria-expanded', String(open)); });
 const jobQueue = new Map();
 const jobPanel = document.createElement('aside'); jobPanel.className = 'job-queue'; jobPanel.hidden = true; jobPanel.innerHTML = '<p class="eyebrow">Background jobs</p><div class="job-queue-list"></div>'; document.body.append(jobPanel);
@@ -3457,6 +3458,7 @@ async function initializeApp() {
   if (page === 'shared') { window.location.replace('/shows'); return; }
   const auth = await fetchJson('/api/auth/status');
   account = auth.account;
+  if (navSignIn) navSignIn.hidden = Boolean(account);
   if (accountForm && account) accountForm.elements.name.value = account.name;
   if (!account) {
     if (page === 'home') { window.location.replace('/login'); return; }
