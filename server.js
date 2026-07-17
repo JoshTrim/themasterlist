@@ -2304,6 +2304,17 @@ async function handleApi(request, response, url) {
       if (startSeconds !== null && endSeconds !== null && endSeconds <= startSeconds) return sendError(response, 400, `Playback end must follow the start for track ${songIndex + 1}.`);
       clipsBySong.set(songIndex, { mediaId, songIndex, startSeconds, endSeconds });
     }
+    const clipsByMedia = new Map();
+    clipsBySong.forEach((clip) => { if (!clipsByMedia.has(clip.mediaId)) clipsByMedia.set(clip.mediaId, []); clipsByMedia.get(clip.mediaId).push(clip); });
+    for (const clips of clipsByMedia.values()) {
+      clips.sort((a, b) => a.songIndex - b.songIndex);
+      for (let index = 1; index < clips.length; index += 1) {
+        const previous = clips[index - 1];
+        const current = clips[index];
+        if (previous.startSeconds !== null && current.startSeconds !== null && current.startSeconds < previous.startSeconds) return sendError(response, 400, `Track ${current.songIndex + 1} starts before an earlier clip from the same video.`);
+        if (previous.endSeconds !== null && current.startSeconds !== null && current.startSeconds < previous.endSeconds) return sendError(response, 400, `Track ${current.songIndex + 1} overlaps the previous clip from the same video.`);
+      }
+    }
     const savePlan = database.transaction((clips) => {
       database.prepare('DELETE FROM media_playback_clips WHERE media_id IN (SELECT id FROM gig_media WHERE gig_id = ?)').run(gig.id);
       database.prepare("UPDATE gig_media SET playback_clips_initialized = 1 WHERE gig_id = ? AND mime_type LIKE 'video/%'").run(gig.id);
