@@ -110,6 +110,7 @@ let integrations = {};
 let profiles = [];
 let peers = [];
 let sharedShows = [];
+const archiveArtistImageCache = new Map();
 let activeProfileId = '';
 let account = null;
 let musicKitConfigured = false;
@@ -1699,8 +1700,18 @@ async function renderArtistPage() {
 async function renderDashboardStats() {
   if (page !== 'overview' || !dashboardStats) return;
   const countBy = (values) => Object.entries(values.reduce((result, value) => { result[value] = (result[value] || 0) + 1; return result; }, {})).sort((a, b) => b[1] - a[1]);
-  const localStats = { shows: gigs.length, artists: new Set(gigs.map((gig) => gig.artist.toLowerCase())).size, venues: new Set(gigs.map((gig) => `${gig.venue}|${gig.city}`.toLowerCase())).size, cities: new Set(gigs.map((gig) => gig.city.toLowerCase())).size, songs: gigs.reduce((sum, gig) => sum + (gig.songs?.length || 0), 0), favourites: gigs.filter((gig) => gig.favorite).length, topArtists: countBy(gigs.map((gig) => gig.artist)).slice(0, 5), topVenues: countBy(gigs.map((gig) => gig.venue)).slice(0, 5) };
-  const render = (stats) => { dashboardStats.innerHTML = `<p class="eyebrow">Archive snapshot</p><div class="dashboard-stat-grid"><span><strong>${stats.shows}</strong> shows</span><span><strong>${stats.artists}</strong> artists</span><span><strong>${stats.venues}</strong> venues</span><span><strong>${stats.cities}</strong> cities</span><span><strong>${stats.songs}</strong> songs</span><span><strong>${stats.favourites}</strong> favourites</span></div><div class="dashboard-stat-columns"><div><b>Most seen artists</b>${stats.topArtists.map(([name, count]) => `<span>${escapeHtml(name)} · ${count}</span>`).join('') || '<span>None yet</span>'}</div><div><b>Most visited venues</b>${stats.topVenues.map(([name, count]) => `<span>${escapeHtml(name)} · ${count}</span>`).join('') || '<span>None yet</span>'}</div></div>`; };
+  const topVenues = countBy(gigs.map((gig) => `${gig.venue}\u001f${gig.city}`)).slice(0, 5).map(([key, count]) => { const [name, city] = key.split('\u001f'); return [name, city, count]; });
+  const localStats = { shows: gigs.length, artists: new Set(gigs.map((gig) => gig.artist.toLowerCase())).size, venues: new Set(gigs.map((gig) => `${gig.venue}|${gig.city}`.toLowerCase())).size, cities: new Set(gigs.map((gig) => gig.city.toLowerCase())).size, songs: gigs.reduce((sum, gig) => sum + (gig.songs?.length || 0), 0), favourites: gigs.filter((gig) => gig.favorite).length, topArtists: countBy(gigs.map((gig) => gig.artist)).slice(0, 5), topVenues };
+  const render = (stats) => {
+    const artistLinks = stats.topArtists.map(([name, count]) => `<a class="dashboard-stat-link" href="/artist?name=${encodeURIComponent(name)}"><span>${escapeHtml(name)}</span><small>${count} show${count === 1 ? '' : 's'}</small></a>`).join('') || '<span>None yet</span>';
+    const venueLinks = stats.topVenues.map(([name, cityOrCount, possibleCount]) => {
+      const legacyEntry = possibleCount === undefined;
+      const city = legacyEntry ? gigs.find((gig) => gig.venue === name)?.city || '' : cityOrCount;
+      const count = legacyEntry ? cityOrCount : possibleCount;
+      return `<a class="dashboard-stat-link" href="/venue?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}"><span>${escapeHtml(name)}</span><small>${escapeHtml(city)}${city ? ' · ' : ''}${count} show${count === 1 ? '' : 's'}</small></a>`;
+    }).join('') || '<span>None yet</span>';
+    dashboardStats.innerHTML = `<p class="eyebrow">Archive snapshot</p><div class="dashboard-stat-grid"><span><strong>${stats.shows}</strong> shows</span><span><strong>${stats.artists}</strong> artists</span><span><strong>${stats.venues}</strong> venues</span><span><strong>${stats.cities}</strong> cities</span><span><strong>${stats.songs}</strong> songs</span><span><strong>${stats.favourites}</strong> favourites</span></div><div class="dashboard-stat-columns"><div><b>Most seen artists</b>${artistLinks}</div><div><b>Most visited venues</b>${venueLinks}</div></div>`;
+  };
   render(localStats);
   try { render(await fetchJson('/api/stats')); } catch { /* local snapshot remains visible */ }
 }
@@ -2945,6 +2956,62 @@ function setupArtifactSection(card, gig) {
   renderArtifacts();
 }
 
+function setupArchiveArtistVisual(card, artist) {
+  const article = card.querySelector('.gig-card');
+  const date = card.querySelector('.gig-date');
+  if (!article || !date) return;
+  const visual = document.createElement('div');
+  visual.className = 'gig-artist-visual';
+  const link = document.createElement('a');
+  link.className = 'gig-artist-image';
+  link.href = `/artist?name=${encodeURIComponent(artist)}`;
+  link.setAttribute('aria-label', `View ${artist}`);
+  const initials = artist.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '♪';
+  link.innerHTML = `<span aria-hidden="true">${escapeHtml(initials)}</span><img alt="" loading="lazy" decoding="async" hidden>`;
+  visual.append(link, date);
+  article.prepend(visual);
+  article.dataset.artistName = artist;
+}
+
+async function artistImageForArchive(artist) {
+  const key = artist.trim().toLocaleLowerCase();
+  if (!archiveArtistImageCache.has(key)) {
+    archiveArtistImageCache.set(key, fetchJson(`/api/artists?name=${encodeURIComponent(artist)}`)
+      .then((info) => info.image || '')
+      .catch(() => ''));
+  }
+  return archiveArtistImageCache.get(key);
+}
+
+function hydrateArchiveArtistImages() {
+  const visuals = [...gigList.querySelectorAll('.gig-card[data-artist-name] .gig-artist-image')];
+  const artists = new Map();
+  for (const visual of visuals) {
+    const artist = visual.closest('.gig-card')?.dataset.artistName;
+    if (!artist) continue;
+    const key = artist.trim().toLocaleLowerCase();
+    if (!artists.has(key)) artists.set(key, { artist, visuals: [] });
+    artists.get(key).visuals.push(visual);
+  }
+  for (const { artist, visuals: artistVisuals } of artists.values()) {
+    artistImageForArchive(artist).then((imageUrl) => {
+      if (!imageUrl) return;
+      for (const visual of artistVisuals) {
+        if (!visual.isConnected) continue;
+        const image = visual.querySelector('img');
+        image.addEventListener('load', () => visual.classList.add('has-image'), { once: true });
+        image.addEventListener('error', () => {
+          visual.classList.remove('has-image');
+          image.hidden = true;
+          image.removeAttribute('src');
+        }, { once: true });
+        image.hidden = false;
+        image.src = imageUrl;
+      }
+    });
+  }
+}
+
 function renderRemoteSharedGig(show) {
   const card = document.querySelector('#gig-template').content.cloneNode(true);
   const article = card.querySelector('.gig-card');
@@ -2953,6 +3020,7 @@ function renderRemoteSharedGig(show) {
   article.dataset.showDate = show.date || '';
   article.dataset.showRating = String(Math.max(0, ...show.contributions.map((entry) => Number(entry.performanceRating || 0))));
   article.dataset.showFavorite = show.contributions.some((entry) => entry.favorite) ? '1' : '0';
+  setupArchiveArtistVisual(card, show.artist);
   card.querySelectorAll('.artifact-section, .add-artifact-gig').forEach((element) => element.remove());
   card.querySelector('.gig-date').textContent = formatGigDate(show.date);
   card.querySelector('h3').innerHTML = `<a class="artist-link" href="/artist?name=${encodeURIComponent(show.artist)}">${escapeHtml(show.artist)}</a>`;
@@ -2994,10 +3062,12 @@ function renderGigs() {
   const orderedGigs = [...filtered].sort((a, b) => sort === 'oldest' ? a.date.localeCompare(b.date) : sort === 'rating' ? (Number(b.performanceRating || 0) - Number(a.performanceRating || 0)) || b.date.localeCompare(a.date) : Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || b.date.localeCompare(a.date));
   for (const gig of orderedGigs) {
     const card = document.querySelector('#gig-template').content.cloneNode(true);
-    card.querySelector('.gig-card').id = `gig-${gig.id}`;
-    card.querySelector('.gig-card').dataset.showDate = gig.date || '';
-    card.querySelector('.gig-card').dataset.showRating = String(Number(gig.performanceRating || 0));
-    card.querySelector('.gig-card').dataset.showFavorite = gig.favorite ? '1' : '0';
+    const article = card.querySelector('.gig-card');
+    article.id = `gig-${gig.id}`;
+    article.dataset.showDate = gig.date || '';
+    article.dataset.showRating = String(Number(gig.performanceRating || 0));
+    article.dataset.showFavorite = gig.favorite ? '1' : '0';
+    setupArchiveArtistVisual(card, gig.artist);
     card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
     card.querySelector('.show-detail-link').href = `/show?id=${encodeURIComponent(gig.id)}`;
     card.querySelector('.play-gig').href = `/playback?id=${encodeURIComponent(gig.id)}`;
@@ -3070,6 +3140,7 @@ function renderGigs() {
       ? Number(b.dataset.showRating || 0) - Number(a.dataset.showRating || 0) || b.dataset.showDate.localeCompare(a.dataset.showDate)
       : Number(b.dataset.showFavorite || 0) - Number(a.dataset.showFavorite || 0) || b.dataset.showDate.localeCompare(a.dataset.showDate));
   gigList.append(...cards);
+  hydrateArchiveArtistImages();
   if (window.location.hash.startsWith('#shared-')) requestAnimationFrame(() => document.querySelector(window.location.hash)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
 }
 
