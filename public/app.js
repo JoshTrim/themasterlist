@@ -337,6 +337,8 @@ let youtubeApiPromise;
 let activeYoutubePlayer;
 let activeYoutubeVideoId = '';
 let youtubeTimelineTimer;
+let setSourceLoadTimer;
+let setFallbackPending = false;
 let pendingSetSeek = null;
 let setTrackAdvancePending = false;
 let resumeSaveAt = 0;
@@ -374,8 +376,10 @@ function readPlaybackResume(gig) {
   try {
     const saved = JSON.parse(localStorage.getItem(playbackResumeKey(gig.id)) || 'null');
     if (!saved || Date.now() - Number(saved.savedAt || 0) > 1000 * 60 * 60 * 24 * 30 || Number(saved.fraction) >= .98) return null;
-    const index = setQueue.findIndex((entry) => entry.media?.id === saved.mediaId && entry.songIndex === Number(saved.songIndex));
-    return index >= 0 ? { index, fraction: Math.max(0, Math.min(1, Number(saved.fraction) || 0)) } : null;
+    const index = setQueue.findIndex((entry) => entry.songIndex === Number(saved.songIndex) && (entry.sources || []).some((source) => source.media?.id === saved.mediaId));
+    if (index < 0) return null;
+    const sourceIndex = setQueue[index].sources.findIndex((source) => source.media?.id === saved.mediaId);
+    return { index, sourceIndex: Math.max(0, sourceIndex), fraction: Math.max(0, Math.min(1, Number(saved.fraction) || 0)) };
   } catch { return null; }
 }
 function clearPlaybackResume(gig) { try { localStorage.removeItem(playbackResumeKey(gig.id)); } catch {} }
@@ -834,11 +838,11 @@ async function addYouTubeMedia(gigId, input) {
   input.value = '';
 }
 
-function youtubeEmbedUrl(url) {
+function youtubeEmbedUrl(url, { autoplay = false } = {}) {
   try {
     const parsed = new URL(url);
     const id = parsed.hostname === 'youtu.be' ? parsed.pathname.slice(1) : parsed.searchParams.get('v') || parsed.pathname.split('/').filter(Boolean).pop();
-    return id ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?enablejsapi=1&autoplay=1&origin=${encodeURIComponent(window.location.origin)}` : url;
+    return id ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?enablejsapi=1&autoplay=${autoplay ? 1 : 0}&origin=${encodeURIComponent(window.location.origin)}` : url;
   } catch { return url; }
 }
 
@@ -1093,7 +1097,56 @@ function playbackCandidates(gig, songIndex) {
 }
 
 function playbackClipFor(item, songIndex) {
-  return (item?.playbackClips || []).find((clip) => clip.songIndex === songIndex) || null;
+  return (item?.playbackClips || []).filter((clip) => clip.songIndex === songIndex).sort((a, b) => (a.priority || 0) - (b.priority || 0))[0] || null;
+}
+
+function playbackSourcesForSong(gig, songIndex) {
+  const videos = playbackCandidates(gig, songIndex);
+  const planned = videos.flatMap((media) => (media.playbackClips || []).filter((clip) => clip.songIndex === songIndex).map((clip) => ({ media, clip }))).sort((a, b) => (a.clip.priority || 0) - (b.clip.priority || 0));
+  if (planned.length) return planned;
+  const legacy = videos.find((item) => !(item.playbackClips || []).length && item.songIndex === songIndex);
+  return legacy ? [{ media: legacy, clip: { songIndex, startSeconds: legacy.playbackStart ?? null, endSeconds: legacy.playbackEnd ?? null, priority: 0 } }] : [];
+}
+
+function playbackFallbackOptions(gig, selectedId = '') {
+  return `<option value="">Choose backup…</option>${playbackCandidates(gig).map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(playbackSourceLabel(item))}</option>`).join('')}`;
+}
+
+function playbackFallbackMarkup(gig, entry = {}) {
+  return `<div class="playback-fallback-row"><span class="playback-fallback-rank"></span><select class="playback-fallback-source">${playbackFallbackOptions(gig, entry.media?.id || '')}</select><input class="playback-fallback-start" type="number" min="0" step="0.1" inputmode="decimal" aria-label="Fallback start" placeholder="Start" value="${entry.clip?.startSeconds ?? ''}" /><input class="playback-fallback-end" type="number" min="0" step="0.1" inputmode="decimal" aria-label="Fallback end" placeholder="End" value="${entry.clip?.endSeconds ?? ''}" /><div class="playback-fallback-actions"><button type="button" data-fallback-action="up" aria-label="Move fallback up">↑</button><button type="button" data-fallback-action="down" aria-label="Move fallback down">↓</button><button type="button" data-fallback-action="remove" aria-label="Remove fallback">×</button></div></div>`;
+}
+
+function refreshPlaybackFallbacks(row) {
+  const fallbacks = [...row.querySelectorAll('.playback-fallback-row')];
+  fallbacks.forEach((fallback, index) => { fallback.querySelector('.playback-fallback-rank').textContent = `Backup ${index + 1}`; });
+  row.querySelector('.playback-fallback-count').textContent = fallbacks.length ? String(fallbacks.length) : 'None';
+  const primary = row.querySelector('.playback-source');
+  row.querySelector('.add-playback-fallback').disabled = !primary.value || primary.options.length <= 2 || fallbacks.length >= 7;
+}
+
+function setupPlaybackFallbackEditor(gig, row) {
+  const list = row.querySelector('.playback-fallback-list');
+  const add = row.querySelector('.add-playback-fallback');
+  const changed = () => { refreshPlaybackFallbacks(row); playbackEditorHealthCheck(gig); };
+  add.addEventListener('click', () => {
+    if (!row.querySelector('.playback-source').value) return;
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = playbackFallbackMarkup(gig);
+    list.append(wrapper.firstElementChild);
+    changed();
+  });
+  list.addEventListener('input', changed);
+  list.addEventListener('change', changed);
+  list.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-fallback-action]');
+    if (!button) return;
+    const fallback = button.closest('.playback-fallback-row');
+    if (button.dataset.fallbackAction === 'remove') fallback.remove();
+    if (button.dataset.fallbackAction === 'up' && fallback.previousElementSibling) list.insertBefore(fallback, fallback.previousElementSibling);
+    if (button.dataset.fallbackAction === 'down' && fallback.nextElementSibling) list.insertBefore(fallback.nextElementSibling, fallback);
+    changed();
+  });
+  refreshPlaybackFallbacks(row);
 }
 
 let activePlaybackEditorPreview = null;
@@ -1108,6 +1161,29 @@ function closePlaybackEditorPreview() {
   activePlaybackEditorPreview = null;
 }
 
+function playbackEditorRowSources(gig, row) {
+  const sources = [];
+  const primaryId = row.querySelector('.playback-source').value;
+  if (primaryId) sources.push({
+    media: (gig.media || []).find((item) => item.id === primaryId),
+    startValue: row.querySelector('.playback-start').value,
+    endValue: row.querySelector('.playback-end').value,
+    priority: 0,
+    element: row
+  });
+  row.querySelectorAll('.playback-fallback-row').forEach((fallback, index) => {
+    const mediaId = fallback.querySelector('.playback-fallback-source').value;
+    if (mediaId) sources.push({
+      media: (gig.media || []).find((item) => item.id === mediaId),
+      startValue: fallback.querySelector('.playback-fallback-start').value,
+      endValue: fallback.querySelector('.playback-fallback-end').value,
+      priority: index + 1,
+      element: fallback
+    });
+  });
+  return sources;
+}
+
 function playbackEditorHealthCheck(gig) {
   const rows = [...playbackEditorList.querySelectorAll('.playback-editor-row')];
   const errors = [];
@@ -1119,28 +1195,38 @@ function playbackEditorHealthCheck(gig) {
     const rowHealth = row.querySelector('.playback-row-health');
     rowHealth.textContent = '';
     const songIndex = Number(row.dataset.songIndex);
-    const mediaId = row.querySelector('.playback-source').value;
-    const media = (gig.media || []).find((item) => item.id === mediaId);
-    const startValue = row.querySelector('.playback-start').value;
-    const endValue = row.querySelector('.playback-end').value;
-    const start = startValue === '' ? null : Number(startValue);
-    const end = endValue === '' ? null : Number(endValue);
-    const duration = Number(row.dataset.mediaDuration) || null;
     const rowErrors = [];
     const rowWarnings = [];
-    if (!media) return;
+    const sources = playbackEditorRowSources(gig, row);
+    const primaryId = row.querySelector('.playback-source').value;
+    if (!primaryId && sources.length) rowErrors.push('Choose a primary source before adding fallbacks.');
+    if (!primaryId) {
+      if (rowErrors.length) { row.classList.add('is-invalid'); rowHealth.textContent = rowErrors.join(' '); errors.push(...rowErrors.map((message) => `${gig.songs[songIndex].title}: ${message}`)); }
+      return;
+    }
     assigned += 1;
-    if (media.originalExists === false) rowErrors.push('Source file is missing from disk.');
-    if (row.dataset.previewUnavailable === 'true') rowErrors.push('Source could not be loaded in the preview player.');
-    if (media.mimeType !== 'video/youtube' && media.playbackStatus === 'encoding') rowWarnings.push('Mobile playback copy is still encoding.');
-    if (media.mimeType !== 'video/youtube' && media.playbackStatus === 'error') rowWarnings.push('Playback copy failed; the original file will be used.');
-    if (start !== null && (!Number.isFinite(start) || start < 0)) rowErrors.push('Start must be zero or greater.');
-    if (end !== null && (!Number.isFinite(end) || end <= 0)) rowErrors.push('End must be greater than zero.');
-    if (start !== null && end !== null && end <= start) rowErrors.push('End must be after start.');
-    if (duration && start !== null && start >= duration) rowErrors.push('Start is beyond the end of the video.');
-    if (duration && end !== null && end > duration + .1) rowErrors.push('End is beyond the end of the video.');
-    if (!clipsByMedia.has(mediaId)) clipsByMedia.set(mediaId, []);
-    clipsByMedia.get(mediaId).push({ row, songIndex, start, end, title: gig.songs[songIndex].title });
+    const seenMedia = new Set();
+    sources.forEach((source) => {
+      const { media } = source;
+      const start = source.startValue === '' ? null : Number(source.startValue);
+      const end = source.endValue === '' ? null : Number(source.endValue);
+      const duration = source.priority === 0 ? Number(row.dataset.mediaDuration) || null : null;
+      const prefix = source.priority ? `Backup ${source.priority}: ` : '';
+      if (!media) { rowErrors.push(`${prefix}Source is unavailable.`); return; }
+      if (seenMedia.has(media.id)) rowErrors.push(`${prefix}Source is already used for this track.`);
+      seenMedia.add(media.id);
+      if (media.originalExists === false) rowErrors.push(`${prefix}Source file is missing from disk.`);
+      if (source.priority === 0 && row.dataset.previewUnavailable === 'true') rowErrors.push('Primary source could not be loaded in the preview player.');
+      if (media.mimeType !== 'video/youtube' && media.playbackStatus === 'encoding') rowWarnings.push(`${prefix}Mobile playback copy is still encoding.`);
+      if (media.mimeType !== 'video/youtube' && media.playbackStatus === 'error') rowWarnings.push(`${prefix}Playback copy failed; the original file will be used.`);
+      if (start !== null && (!Number.isFinite(start) || start < 0)) rowErrors.push(`${prefix}Start must be zero or greater.`);
+      if (end !== null && (!Number.isFinite(end) || end <= 0)) rowErrors.push(`${prefix}End must be greater than zero.`);
+      if (start !== null && end !== null && end <= start) rowErrors.push(`${prefix}End must be after start.`);
+      if (duration && start !== null && start >= duration) rowErrors.push('Start is beyond the end of the primary video.');
+      if (duration && end !== null && end > duration + .1) rowErrors.push('End is beyond the end of the primary video.');
+      if (!clipsByMedia.has(media.id)) clipsByMedia.set(media.id, []);
+      clipsByMedia.get(media.id).push({ row, songIndex, start, end, title: gig.songs[songIndex].title });
+    });
     if (rowErrors.length) { row.classList.add('is-invalid'); rowHealth.textContent = rowErrors.join(' '); errors.push(...rowErrors.map((message) => `${gig.songs[songIndex].title}: ${message}`)); }
     else if (rowWarnings.length) { row.classList.add('has-warning'); rowHealth.textContent = rowWarnings.join(' '); warnings.push(...rowWarnings.map((message) => `${gig.songs[songIndex].title}: ${message}`)); }
   });
@@ -1222,19 +1308,38 @@ function playbackSuggestionTiming(suggestion) {
   const end = suggestion.endSeconds === null || suggestion.endSeconds === undefined ? 'video end' : formatPlaybackTime(suggestion.endSeconds);
   return `${start}–${end}`;
 }
-function applyPlaybackSuggestion(gig, suggestion) {
+function addSuggestedPlaybackFallback(gig, row, suggestion) {
+  const media = (gig.media || []).find((item) => item.id === suggestion.mediaId);
+  if (!media || !row.querySelector('.playback-source').value || row.querySelectorAll('.playback-fallback-row').length >= 7) return false;
+  const used = new Set([row.querySelector('.playback-source').value, ...[...row.querySelectorAll('.playback-fallback-source')].map((select) => select.value)]);
+  if (used.has(media.id)) return false;
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = playbackFallbackMarkup(gig, { media, clip: suggestion });
+  row.querySelector('.playback-fallback-list').append(wrapper.firstElementChild);
+  row.querySelector('.playback-fallback-editor').open = true;
+  refreshPlaybackFallbacks(row);
+  return true;
+}
+function applyPlaybackSuggestion(gig, suggestion, withAlternatives = false) {
   const row = playbackEditorList.querySelector(`.playback-editor-row[data-song-index="${suggestion.songIndex}"]`);
   if (!row) return false;
-  const select = row.querySelector('.playback-source');
-  if (![...select.options].some((option) => option.value === suggestion.mediaId)) return false;
-  select.value = suggestion.mediaId;
-  select.dispatchEvent(new Event('change'));
-  row.querySelector('.playback-start').value = suggestion.startSeconds ?? '';
-  row.querySelector('.playback-end').value = suggestion.endSeconds ?? '';
+  let applied = false;
+  if (suggestion.fallbackOnly) applied = addSuggestedPlaybackFallback(gig, row, suggestion);
+  else {
+    const select = row.querySelector('.playback-source');
+    if (![...select.options].some((option) => option.value === suggestion.mediaId)) return false;
+    select.value = suggestion.mediaId;
+    select.dispatchEvent(new Event('change'));
+    row.querySelector('.playback-start').value = suggestion.startSeconds ?? '';
+    row.querySelector('.playback-end').value = suggestion.endSeconds ?? '';
+    applied = true;
+  }
+  if (withAlternatives) (suggestion.alternatives || []).filter((item) => item.confidence >= .65).forEach((item) => { if (addSuggestedPlaybackFallback(gig, row, item)) applied = true; });
+  if (!applied) return false;
   row.classList.add('suggestion-applied');
   playbackSuggestionState.suggestions = playbackSuggestionState.suggestions.filter((item) => item.songIndex !== suggestion.songIndex);
   playbackEditorHealthCheck(gig);
-  return true;
+  return applied;
 }
 function renderPlaybackSuggestions(gig) {
   playbackEditorList.querySelectorAll('.playback-suggestion').forEach((element) => element.remove());
@@ -1250,6 +1355,7 @@ function renderPlaybackSuggestions(gig) {
     if (!row) return false;
     const selected = row.querySelector('.playback-source').value;
     const hasTiming = row.querySelector('.playback-start').value !== '' || row.querySelector('.playback-end').value !== '';
+    if (suggestion.fallbackOnly) return Boolean(selected) && !playbackEditorRowSources(gig, row).some((source) => source.media?.id === suggestion.mediaId);
     return !selected || (selected === suggestion.mediaId && !hasTiming);
   });
   playbackEditorSuggestions.innerHTML = `<div><strong>${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} ready to review</strong><small>${playbackSuggestionState.metadataWarning ? escapeHtml(playbackSuggestionState.metadataWarning) : 'Manual clips have been left untouched.'}</small></div>${safeSuggestions.length ? `<button type="button" class="button button-secondary apply-safe-suggestions">Apply ${safeSuggestions.length} safe suggestion${safeSuggestions.length === 1 ? '' : 's'}</button>` : ''}`;
@@ -1258,9 +1364,11 @@ function renderPlaybackSuggestions(gig) {
     if (!row) return;
     const suggestionElement = document.createElement('div');
     suggestionElement.className = 'playback-suggestion';
-    suggestionElement.innerHTML = `<div><span>${playbackSuggestionConfidence(suggestion.confidence)} · ${Math.round(suggestion.confidence * 100)}%</span><strong>${escapeHtml(suggestion.sourceLabel)}</strong><small>${escapeHtml(playbackSuggestionTiming(suggestion))} · ${escapeHtml(suggestion.reason)}</small></div><div><button type="button" class="apply-playback-suggestion">Apply</button><button type="button" class="dismiss-playback-suggestion">Dismiss</button></div>`;
+    const alternatives = (suggestion.alternatives || []).filter((item) => item.confidence >= .65);
+    suggestionElement.innerHTML = `<div><span>${suggestion.fallbackOnly ? 'Fallback candidate' : playbackSuggestionConfidence(suggestion.confidence)} · ${Math.round(suggestion.confidence * 100)}%</span><strong>${escapeHtml(suggestion.sourceLabel)}</strong><small>${escapeHtml(playbackSuggestionTiming(suggestion))} · ${escapeHtml(suggestion.reason)}${alternatives.length ? ` · ${alternatives.length} additional source${alternatives.length === 1 ? '' : 's'}` : ''}</small></div><div><button type="button" class="apply-playback-suggestion">${suggestion.fallbackOnly ? 'Add backup' : 'Apply'}</button>${alternatives.length ? `<button type="button" class="apply-playback-suggestion-all">${suggestion.fallbackOnly ? 'Add all' : 'Apply + backups'}</button>` : ''}<button type="button" class="dismiss-playback-suggestion">Dismiss</button></div>`;
     row.querySelector('.playback-preview').insertAdjacentElement('beforebegin', suggestionElement);
     suggestionElement.querySelector('.apply-playback-suggestion').addEventListener('click', () => { applyPlaybackSuggestion(gig, suggestion); renderPlaybackSuggestions(gig); });
+    suggestionElement.querySelector('.apply-playback-suggestion-all')?.addEventListener('click', () => { applyPlaybackSuggestion(gig, suggestion, true); renderPlaybackSuggestions(gig); });
     suggestionElement.querySelector('.dismiss-playback-suggestion').addEventListener('click', () => { playbackSuggestionState.suggestions = playbackSuggestionState.suggestions.filter((item) => item.songIndex !== suggestion.songIndex); renderPlaybackSuggestions(gig); });
   });
   playbackEditorSuggestions.querySelector('.apply-safe-suggestions')?.addEventListener('click', () => {
@@ -1280,9 +1388,12 @@ function renderPlaybackEditor(gig) {
   savePlaybackPlan.disabled = false;
   playbackEditorList.innerHTML = songs.map((song, songIndex) => {
     const candidates = playbackCandidates(gig, songIndex);
-    const selected = candidates.find((item) => playbackClipFor(item, songIndex)) || candidates.find((item) => !(item.playbackClips || []).length && item.songIndex === songIndex) || null;
-    const clip = playbackClipFor(selected, songIndex);
-    return `<div class="playback-editor-row${selected ? '' : ' is-gap'}" data-song-index="${songIndex}"><span class="playback-editor-number">${songIndex + 1}</span><div class="playback-editor-track"><strong>${escapeHtml(song.title)}</strong><small>${selected ? escapeHtml(playbackSourceLabel(selected)) : 'Missing video · skipped during playback'}</small><button class="playback-preview-toggle" type="button" aria-expanded="false" ${selected ? '' : 'disabled'}>▶ Preview &amp; set points</button></div><label class="playback-source-field">Source<select class="playback-source" ${candidates.length ? '' : 'disabled'}><option value="">No video · skip track</option>${candidates.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === selected?.id ? 'selected' : ''}>${escapeHtml(playbackSourceLabel(item))}</option>`).join('')}</select></label><label class="playback-start-field">Start<input class="playback-start" type="number" min="0" step="0.1" inputmode="decimal" value="${clip?.startSeconds ?? selected?.playbackStart ?? ''}" placeholder="0:00" ${selected ? '' : 'disabled'} /></label><label class="playback-end-field">End<input class="playback-end" type="number" min="0" step="0.1" inputmode="decimal" value="${clip?.endSeconds ?? selected?.playbackEnd ?? ''}" placeholder="Video end" ${selected ? '' : 'disabled'} /></label><p class="playback-row-health" aria-live="polite"></p><div class="playback-preview" hidden><div class="playback-preview-stage"></div><div class="playback-preview-toolbar"><output class="playback-preview-time">0:00</output><button type="button" class="set-preview-start">Set start here</button><button type="button" class="set-preview-end">Set end here</button><button type="button" class="jump-preview-start">Jump to start</button><button type="button" class="jump-preview-end">Jump to end</button></div></div></div>`;
+    const sources = playbackSourcesForSong(gig, songIndex);
+    const selectedEntry = sources[0] || null;
+    const selected = selectedEntry?.media || null;
+    const clip = selectedEntry?.clip || null;
+    const fallbacks = sources.slice(1);
+    return `<div class="playback-editor-row${selected ? '' : ' is-gap'}" data-song-index="${songIndex}"><span class="playback-editor-number">${songIndex + 1}</span><div class="playback-editor-track"><strong>${escapeHtml(song.title)}</strong><small>${selected ? escapeHtml(playbackSourceLabel(selected)) : 'Missing video · skipped during playback'}</small><button class="playback-preview-toggle" type="button" aria-expanded="false" ${selected ? '' : 'disabled'}>▶ Preview &amp; set points</button></div><label class="playback-source-field">Primary source<select class="playback-source" ${candidates.length ? '' : 'disabled'}><option value="">No video · skip track</option>${candidates.map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === selected?.id ? 'selected' : ''}>${escapeHtml(playbackSourceLabel(item))}</option>`).join('')}</select></label><label class="playback-start-field">Start<input class="playback-start" type="number" min="0" step="0.1" inputmode="decimal" value="${clip?.startSeconds ?? selected?.playbackStart ?? ''}" placeholder="0:00" ${selected ? '' : 'disabled'} /></label><label class="playback-end-field">End<input class="playback-end" type="number" min="0" step="0.1" inputmode="decimal" value="${clip?.endSeconds ?? selected?.playbackEnd ?? ''}" placeholder="Video end" ${selected ? '' : 'disabled'} /></label><details class="playback-fallback-editor"><summary>Fallback sources <span class="playback-fallback-count">${fallbacks.length || 'None'}</span></summary><div class="playback-fallback-list">${fallbacks.map((entry) => playbackFallbackMarkup(gig, entry)).join('')}</div><button class="add-playback-fallback" type="button" ${candidates.length > 1 ? '' : 'disabled'}>+ Add fallback</button></details><p class="playback-row-health" aria-live="polite"></p><div class="playback-preview" hidden><div class="playback-preview-stage"></div><div class="playback-preview-toolbar"><output class="playback-preview-time">0:00</output><button type="button" class="set-preview-start">Set start here</button><button type="button" class="set-preview-end">Set end here</button><button type="button" class="jump-preview-start">Jump to start</button><button type="button" class="jump-preview-end">Jump to end</button></div></div></div>`;
   }).join('');
   playbackEditorList.querySelectorAll('.playback-source').forEach((select) => select.addEventListener('change', () => {
     const row = select.closest('.playback-editor-row');
@@ -1297,10 +1408,14 @@ function renderPlaybackEditor(gig) {
     row.querySelector('.playback-start').disabled = !item;
     row.querySelector('.playback-end').disabled = !item;
     row.querySelector('.playback-preview-toggle').disabled = !item;
+    row.querySelector('.add-playback-fallback').disabled = !item || playbackCandidates(gig).length <= 1;
+    row.querySelectorAll('.playback-fallback-row').forEach((fallback) => { if (fallback.querySelector('.playback-fallback-source').value === item?.id) fallback.remove(); });
+    refreshPlaybackFallbacks(row);
     row.querySelector('.playback-editor-track small').textContent = item ? playbackSourceLabel(item) : 'Missing video · skipped during playback';
     row.classList.toggle('is-gap', !item);
     playbackEditorHealthCheck(gig);
   }));
+  playbackEditorList.querySelectorAll('.playback-editor-row').forEach((row) => setupPlaybackFallbackEditor(gig, row));
   playbackEditorList.querySelectorAll('.playback-preview-toggle').forEach((button) => button.addEventListener('click', () => openPlaybackEditorPreview(gig, button.closest('.playback-editor-row'))));
   playbackEditorList.querySelectorAll('.playback-start, .playback-end').forEach((input) => input.addEventListener('input', () => playbackEditorHealthCheck(gig)));
   playbackEditorHealthCheck(gig);
@@ -1314,15 +1429,14 @@ function renderPlaybackEditor(gig) {
       const clips = [];
       for (const row of playbackEditorList.querySelectorAll('.playback-editor-row')) {
         const songIndex = Number(row.dataset.songIndex);
-        const selectedId = row.querySelector('.playback-source').value;
-        const startValue = row.querySelector('.playback-start').value;
-        const endValue = row.querySelector('.playback-end').value;
-        const start = startValue === '' ? null : Number(startValue);
-        const end = endValue === '' ? null : Number(endValue);
-        if (start !== null && (!Number.isFinite(start) || start < 0)) throw new Error(`Invalid start point for ${gig.songs[songIndex].title}.`);
-        if (end !== null && (!Number.isFinite(end) || end <= 0)) throw new Error(`Invalid end point for ${gig.songs[songIndex].title}.`);
-        if (start !== null && end !== null && end <= start) throw new Error(`End must be after start for ${gig.songs[songIndex].title}.`);
-        if (selectedId) clips.push({ mediaId: selectedId, songIndex, startSeconds: start, endSeconds: end });
+        for (const source of playbackEditorRowSources(gig, row)) {
+          const start = source.startValue === '' ? null : Number(source.startValue);
+          const end = source.endValue === '' ? null : Number(source.endValue);
+          if (start !== null && (!Number.isFinite(start) || start < 0)) throw new Error(`Invalid start point for ${gig.songs[songIndex].title}.`);
+          if (end !== null && (!Number.isFinite(end) || end <= 0)) throw new Error(`Invalid end point for ${gig.songs[songIndex].title}.`);
+          if (start !== null && end !== null && end <= start) throw new Error(`End must be after start for ${gig.songs[songIndex].title}.`);
+          clips.push({ mediaId: source.media.id, songIndex, startSeconds: start, endSeconds: end, priority: source.priority });
+        }
       }
       const updated = await fetchJson(`/api/gigs/${gig.id}/playback-plan`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clips }) });
       gig.media = updated.media;
@@ -1697,7 +1811,7 @@ function renderEditPage() {
   showDuplicateWarning(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), gig.id);
   const tracks = [...(gig.songs || [])];
   const renderTracks = () => {
-    editSetlistTracks.innerHTML = tracks.map((song, index) => `<div class="edit-track" data-track-index="${index}"><span class="edit-track-number">${index + 1}</span><input class="edit-track-title" value="${escapeHtml(song.title || '')}" placeholder="Track title" /><input class="edit-track-artist" value="${escapeHtml(song.artist || '')}" placeholder="Artist (optional)" /><input class="edit-track-album" value="${escapeHtml(song.album || '')}" placeholder="Album (optional)" /><input class="edit-track-start" type="number" min="0" step="1" value="${song.startSeconds ?? ''}" placeholder="Start s" aria-label="Start time in seconds" /><input class="edit-track-end" type="number" min="0" step="1" value="${song.endSeconds ?? ''}" placeholder="End s" aria-label="End time in seconds" /><button class="icon-button edit-track-remove" type="button" aria-label="Remove track">×</button></div>`).join('');
+    editSetlistTracks.innerHTML = tracks.map((song, index) => `<div class="edit-track" data-track-index="${index}"><span class="edit-track-number">${index + 1}</span><input class="edit-track-title" value="${escapeHtml(song.title || '')}" placeholder="Track title" /><input class="edit-track-artist" value="${escapeHtml(song.artist || '')}" placeholder="Artist (optional)" /><input class="edit-track-album" value="${escapeHtml(song.album || '')}" placeholder="Album (optional)" /><button class="icon-button edit-track-remove" type="button" aria-label="Remove track">×</button></div>`).join('');
     editSetlistTracks.querySelectorAll('.edit-track-remove').forEach((button) => button.addEventListener('click', () => { tracks.splice(Number(button.closest('.edit-track').dataset.trackIndex), 1); renderTracks(); }));
   };
   renderTracks();
@@ -1712,7 +1826,7 @@ function renderEditPage() {
       submitButton.disabled = true;
       const update = Object.fromEntries(new FormData(editForm).entries());
       update.attendees = readAttendees(ensureEditAttendeePicker());
-      update.songs = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row, index) => ({ ...tracks[index], title: row.querySelector('.edit-track-title').value, artist: row.querySelector('.edit-track-artist').value, album: row.querySelector('.edit-track-album').value, startSeconds: row.querySelector('.edit-track-start').value === '' ? null : Number(row.querySelector('.edit-track-start').value), endSeconds: row.querySelector('.edit-track-end').value === '' ? null : Number(row.querySelector('.edit-track-end').value) }));
+      update.songs = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row, index) => ({ ...tracks[index], title: row.querySelector('.edit-track-title').value, artist: row.querySelector('.edit-track-artist').value, album: row.querySelector('.edit-track-album').value }));
       const saved = await fetchJson(`/api/gigs/${gig.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
       const files = pendingMedia.get(editMediaInput) || [...(editMediaInput?.files || [])];
       if (files.length) await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; });
@@ -1808,12 +1922,47 @@ document.addEventListener('keydown', (event) => {
 });
 
 function stopYoutubeTimelinePolling() { if (youtubeTimelineTimer) { clearInterval(youtubeTimelineTimer); youtubeTimelineTimer = null; } }
+function clearSetSourceLoadTimer() { if (setSourceLoadTimer) { clearTimeout(setSourceLoadTimer); setSourceLoadTimer = null; } }
+function activateSetSource(entry, sourceIndex = 0) {
+  entry.sourceIndex = Math.max(0, Math.min(sourceIndex, Math.max(0, (entry.sources || []).length - 1)));
+  const source = entry.sources?.[entry.sourceIndex] || null;
+  entry.media = source?.media || null;
+  entry.clip = source?.clip || null;
+  return source;
+}
+function failSetSource(reason = 'Source unavailable') {
+  if (setFallbackPending) return;
+  const entry = setQueue[setQueueIndex];
+  if (!entry?.media) return;
+  clearSetSourceLoadTimer();
+  stopYoutubeTimelinePolling();
+  const nextSourceIndex = (entry.sourceIndex || 0) + 1;
+  if (nextSourceIndex < (entry.sources || []).length) {
+    setFallbackPending = true;
+    activateSetSource(entry, nextSourceIndex);
+    entry.fallbackNotice = `${reason}; using backup ${nextSourceIndex}`;
+    pendingSetSeek = { index: setQueueIndex, fraction: 0 };
+    playSetTrack();
+    return;
+  }
+  setFallbackPending = true;
+  setPlayerStatus.textContent = `${reason}; no backups remain. Skipping…`;
+  const failedEntry = entry;
+  setTimeout(() => { if (setQueue[setQueueIndex] === failedEntry) { setFallbackPending = false; moveToPlayableTrack(1); } }, 900);
+}
+function armSetSourceLoadTimer() {
+  clearSetSourceLoadTimer();
+  const entry = setQueue[setQueueIndex];
+  const mediaId = entry?.media?.id;
+  setSourceLoadTimer = setTimeout(() => { if (setQueue[setQueueIndex] === entry && entry.media?.id === mediaId) failSetSource('Video timed out'); }, 12000);
+}
 function nextPlayableSetIndex(start, direction = 1) {
   for (let index = start; index >= 0 && index < setQueue.length; index += direction) if (setQueue[index]?.media) return index;
   return -1;
 }
 function finishSetPlayback(gig) {
   stopYoutubeTimelinePolling();
+  clearSetSourceLoadTimer();
   clearPlaybackResume(gig);
   setPlayerStatus.textContent = 'End of available set.';
   setPlayerProgress.style.width = '100%';
@@ -1837,6 +1986,7 @@ function continueSameSetSource(gig, index) {
   if (entry.media?.mimeType === 'video/youtube') startYoutubeTimelinePolling(gig);
 }
 function moveToPlayableTrack(direction = 1, continuous = false) {
+  clearSetSourceLoadTimer();
   const gig = gigs.find((entry) => entry.id === showDetailId);
   const expected = setQueueIndex + direction;
   const index = nextPlayableSetIndex(expected, direction);
@@ -1912,6 +2062,8 @@ function playSetTrack() {
   const gig = gigs.find((entry) => entry.id === showDetailId);
   const entry = setQueue[setQueueIndex];
   stopYoutubeTimelinePolling();
+  clearSetSourceLoadTimer();
+  setFallbackPending = false;
   setTrackAdvancePending = false;
   if (!gig || !entry) { if (gig) finishSetPlayback(gig); return; }
   const song = gig.songs[entry.songIndex];
@@ -1924,7 +2076,8 @@ function playSetTrack() {
     setTimeout(() => { if (setQueue[setQueueIndex] === entry) moveToPlayableTrack(1); }, 700);
     return;
   }
-  setPlayerStatus.textContent = `${setQueueIndex + 1} of ${setQueue.length}`;
+  setPlayerStatus.textContent = entry.fallbackNotice ? `${setQueueIndex + 1} of ${setQueue.length} · ${entry.fallbackNotice}` : `${setQueueIndex + 1} of ${setQueue.length}${entry.sourceIndex ? ` · backup ${entry.sourceIndex}` : ''}`;
+  entry.fallbackNotice = '';
   const seekFraction = pendingSetSeek?.index === setQueueIndex ? pendingSetSeek.fraction : 0;
   pendingSetSeek = { index: setQueueIndex, fraction: seekFraction };
   const youtubeIframe = activeYoutubePlayer?.getIframe?.();
@@ -1932,6 +2085,7 @@ function playSetTrack() {
     const parsed = new URL(entry.media.url);
     const videoId = parsed.searchParams.get('v') || parsed.pathname.split('/').filter(Boolean).pop();
     activeYoutubeVideoId = videoId;
+    armSetSourceLoadTimer();
     activeYoutubePlayer.loadVideoById({ videoId, startSeconds: playbackBounds(entry).start });
     return;
   }
@@ -1946,8 +2100,11 @@ function playSetTrack() {
     : next?.media ? `<video class="set-player-preload" src="${next.media.url}" preload="auto" muted playsinline></video>` : '';
   setPlayerStage.innerHTML = `${currentMarkup}${preloadMarkup}`;
   installPlayerStageNavigation();
+  armSetSourceLoadTimer();
   const video = setPlayerStage.querySelector('video.set-player-current');
-  if (video) video.addEventListener('loadedmetadata', () => applySetSeek(gig, seekFraction), { once: true });
+  if (video) video.addEventListener('loadedmetadata', () => { clearSetSourceLoadTimer(); applySetSeek(gig, seekFraction); }, { once: true });
+  if (video) video.addEventListener('playing', clearSetSourceLoadTimer, { once: true });
+  if (video) video.addEventListener('error', () => failSetSource('Uploaded video failed'), { once: true });
   if (video) video.addEventListener('timeupdate', () => {
     if (!video.duration) return;
     const activeEntry = setQueue[setQueueIndex];
@@ -1965,26 +2122,28 @@ function playSetTrack() {
     youtubeFrame.id = `set-player-youtube-${Date.now()}`;
     loadYouTubeApi().then((YT) => {
       activeYoutubePlayer = new YT.Player(youtubeFrame.id, { events: {
-        onReady: (event) => { applySetSeek(gig, seekFraction); event.target.playVideo(); startYoutubeTimelinePolling(gig); },
+        onReady: (event) => { clearSetSourceLoadTimer(); applySetSeek(gig, seekFraction); event.target.playVideo(); startYoutubeTimelinePolling(gig); },
         onStateChange: (event) => {
-          if (event.data === YT.PlayerState.PLAYING) { if (pendingSetSeek?.index === setQueueIndex) applySetSeek(gig, pendingSetSeek.fraction); startYoutubeTimelinePolling(gig); }
+          if (event.data === YT.PlayerState.PLAYING) { clearSetSourceLoadTimer(); if (pendingSetSeek?.index === setQueueIndex) applySetSeek(gig, pendingSetSeek.fraction); startYoutubeTimelinePolling(gig); }
           if (event.data === YT.PlayerState.ENDED && !setTrackAdvancePending) { setTrackAdvancePending = true; moveToPlayableTrack(1, true); }
-        }
+        },
+        onError: () => failSetSource('YouTube source unavailable')
       } });
-    }).catch(() => {});
+    }).catch(() => failSetSource('YouTube player unavailable'));
   }
 }
 
 playWholeSet?.addEventListener('click', () => {
   const gig = gigs.find((entry) => entry.id === showDetailId);
   setQueue = (gig?.songs || []).map((song, songIndex) => {
-    const videos = (gig.media || []).filter((media) => media.category !== 'artifact' && String(media.mimeType || '').startsWith('video/'));
-    const media = videos.find((item) => playbackClipFor(item, songIndex)) || videos.find((item) => !(item.playbackClips || []).length && item.songIndex === songIndex) || null;
-    return { songIndex, media, clip: playbackClipFor(media, songIndex) };
+    const entry = { songIndex, sources: playbackSourcesForSong(gig, songIndex), sourceIndex: 0, media: null, clip: null };
+    activateSetSource(entry, 0);
+    return entry;
   });
   if (!setQueue.some((entry) => entry.media)) { setPlayer.hidden = false; setPlayerStatus.textContent = 'Assign media to setlist tracks first.'; return; }
   const resume = readPlaybackResume(gig);
   setQueueIndex = resume?.index ?? nextPlayableSetIndex(0, 1);
+  if (resume) activateSetSource(setQueue[setQueueIndex], resume.sourceIndex);
   pendingSetSeek = { index: setQueueIndex, fraction: resume?.fraction ?? 0 };
   playSetTrack();
   if (resume) setPlayerStatus.textContent = `${setQueueIndex + 1} of ${setQueue.length} · resumed`;
@@ -1995,6 +2154,7 @@ setPlayerRestart.addEventListener('click', () => {
   const gig = gigs.find((entry) => entry.id === showDetailId);
   if (!gig) return;
   clearPlaybackResume(gig);
+  setQueue.forEach((entry) => activateSetSource(entry, 0));
   setQueueIndex = nextPlayableSetIndex(0, 1);
   pendingSetSeek = { index: setQueueIndex, fraction: 0 };
   playSetTrack();

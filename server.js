@@ -135,12 +135,14 @@ database.exec(`
     song_index INTEGER NOT NULL,
     start_seconds REAL,
     end_seconds REAL,
+    priority INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (media_id, song_index),
     FOREIGN KEY (media_id) REFERENCES gig_media(id) ON DELETE CASCADE
   )
 `);
+addColumnIfMissing('media_playback_clips', 'priority', 'INTEGER NOT NULL DEFAULT 0');
 database.prepare(`INSERT OR IGNORE INTO media_playback_clips (media_id, song_index, start_seconds, end_seconds, created_at, updated_at)
   SELECT id, song_index, playback_start, playback_end, created_at, ? FROM gig_media
   WHERE playback_clips_initialized = 0 AND song_index IS NOT NULL AND mime_type LIKE 'video/%' AND category <> 'artifact'`).run(new Date().toISOString());
@@ -1093,10 +1095,10 @@ function formatMediaRow(media) {
 
 function mediaRows(gigId) {
   const rows = database.prepare('SELECT id, filename, playback_filename AS playbackFilename, playback_mime AS playbackMime, playback_status AS playbackStatus, playback_error AS playbackError, mime_type AS mimeType, caption, is_cover AS isCover, sort_order AS sortOrder, rotation, category, external_url AS externalUrl, song_index AS songIndex, playback_preferred AS playbackPreferred, playback_start AS playbackStart, playback_end AS playbackEnd, source_description AS sourceDescription, source_duration AS sourceDuration, source_metadata_at AS sourceMetadataAt, size, created_at AS createdAt, recognition_status AS recognitionStatus, recognition_title AS recognitionTitle, recognition_artist AS recognitionArtist, recognition_album AS recognitionAlbum, recognition_error AS recognitionError, recognition_override AS recognitionOverride, background_filename AS backgroundFilename, background_status AS backgroundStatus, background_error AS backgroundError, use_background_removed AS useBackgroundRemoved FROM gig_media WHERE gig_id = ? ORDER BY sort_order, created_at').all(gigId).map(formatMediaRow);
-  const clips = database.prepare(`SELECT clips.media_id AS mediaId, clips.song_index AS songIndex, clips.start_seconds AS startSeconds, clips.end_seconds AS endSeconds
-    FROM media_playback_clips clips JOIN gig_media media ON media.id = clips.media_id WHERE media.gig_id = ? ORDER BY clips.song_index`).all(gigId);
+  const clips = database.prepare(`SELECT clips.media_id AS mediaId, clips.song_index AS songIndex, clips.start_seconds AS startSeconds, clips.end_seconds AS endSeconds, clips.priority
+    FROM media_playback_clips clips JOIN gig_media media ON media.id = clips.media_id WHERE media.gig_id = ? ORDER BY clips.song_index, clips.priority, clips.created_at`).all(gigId);
   const byMedia = new Map();
-  clips.forEach((clip) => { if (!byMedia.has(clip.mediaId)) byMedia.set(clip.mediaId, []); byMedia.get(clip.mediaId).push({ songIndex: Number(clip.songIndex), startSeconds: clip.startSeconds === null ? null : Number(clip.startSeconds), endSeconds: clip.endSeconds === null ? null : Number(clip.endSeconds) }); });
+  clips.forEach((clip) => { if (!byMedia.has(clip.mediaId)) byMedia.set(clip.mediaId, []); byMedia.get(clip.mediaId).push({ songIndex: Number(clip.songIndex), startSeconds: clip.startSeconds === null ? null : Number(clip.startSeconds), endSeconds: clip.endSeconds === null ? null : Number(clip.endSeconds), priority: Number(clip.priority) || 0 }); });
   rows.forEach((media) => { media.playbackClips = byMedia.get(media.id) || []; });
   return rows;
 }
@@ -1555,8 +1557,9 @@ async function refreshYouTubePlaybackMetadata(gigId, media) {
 }
 
 function suggestPlaybackPlan(gig, media) {
-  const occupied = new Set(media.flatMap((item) => (item.playbackClips || []).map((clip) => clip.songIndex)));
-  const suggestions = new Map();
+  const existingBySong = new Map();
+  media.forEach((item) => (item.playbackClips || []).forEach((clip) => { if (!existingBySong.has(clip.songIndex)) existingBySong.set(clip.songIndex, new Set()); existingBySong.get(clip.songIndex).add(item.id); }));
+  const suggestionBuckets = new Map();
   const setlistStarts = (gig.songs || []).map((song) => {
     if (song.startSeconds === null || song.startSeconds === undefined || song.startSeconds === '') return null;
     const value = Number(song.startSeconds);
@@ -1564,9 +1567,11 @@ function suggestPlaybackPlan(gig, media) {
   });
   const timedSongs = setlistStarts.filter((value) => value !== null).length;
   const offer = (songIndex, item, startSeconds, endSeconds, confidence, reason) => {
-    if (!Number.isInteger(songIndex) || occupied.has(songIndex)) return;
-    const current = suggestions.get(songIndex);
-    if (!current || confidence > current.confidence) suggestions.set(songIndex, { songIndex, mediaId: item.id, startSeconds, endSeconds, confidence: Math.round(confidence * 100) / 100, reason, sourceLabel: item.caption || item.filename || 'Video' });
+    if (!Number.isInteger(songIndex) || existingBySong.get(songIndex)?.has(item.id)) return;
+    if (!suggestionBuckets.has(songIndex)) suggestionBuckets.set(songIndex, new Map());
+    const bucket = suggestionBuckets.get(songIndex);
+    const current = bucket.get(item.id);
+    if (!current || confidence > current.confidence) bucket.set(item.id, { songIndex, mediaId: item.id, startSeconds, endSeconds, confidence: Math.round(confidence * 100) / 100, reason, sourceLabel: item.caption || item.filename || 'Video', localSource: item.mimeType !== 'video/youtube' });
   };
   media.filter((item) => item.category !== 'artifact' && String(item.mimeType || '').startsWith('video/')).forEach((item) => {
     if (Number.isInteger(item.songIndex)) offer(item.songIndex, item, item.playbackStart, item.playbackEnd, .9, 'Existing track assignment');
@@ -1600,7 +1605,11 @@ function suggestPlaybackPlan(gig, media) {
       });
     }
   });
-  return [...suggestions.values()].sort((a, b) => a.songIndex - b.songIndex);
+  return [...suggestionBuckets.entries()].map(([songIndex, bucket]) => {
+    const ranked = [...bucket.values()].sort((a, b) => b.confidence - a.confidence || Number(b.localSource) - Number(a.localSource)).slice(0, 4);
+    const primary = ranked.shift();
+    return { ...primary, fallbackOnly: existingBySong.has(songIndex), alternatives: ranked };
+  }).sort((a, b) => a.songIndex - b.songIndex);
 }
 
 async function exportAppleMusic(gig, musicUserToken) {
@@ -2448,20 +2457,30 @@ async function handleApi(request, response, url) {
     const mediaIds = new Set(media.map((item) => item.id));
     const body = await readBody(request);
     if (!Array.isArray(body.clips)) return sendError(response, 400, 'Playback clips are required.');
-    const clipsBySong = new Map();
-    for (const item of body.clips.slice(0, songs.length)) {
+    if (body.clips.length > songs.length * 8) return sendError(response, 400, 'A track can have at most eight playback sources.');
+    const validatedClips = [];
+    const clipKeys = new Set();
+    for (const [inputIndex, item] of body.clips.entries()) {
       const songIndex = Number(item.songIndex);
       const mediaId = String(item.mediaId || '');
+      const requestedPriority = Number(item.priority);
       const startSeconds = item.startSeconds === '' || item.startSeconds === null || item.startSeconds === undefined ? null : Number(item.startSeconds);
       const endSeconds = item.endSeconds === '' || item.endSeconds === null || item.endSeconds === undefined ? null : Number(item.endSeconds);
       if (!Number.isInteger(songIndex) || songIndex < 0 || songIndex >= songs.length || !mediaIds.has(mediaId)) return sendError(response, 400, 'Playback clip references an invalid song or video.');
       if (startSeconds !== null && (!Number.isFinite(startSeconds) || startSeconds < 0)) return sendError(response, 400, `Invalid start point for track ${songIndex + 1}.`);
       if (endSeconds !== null && (!Number.isFinite(endSeconds) || endSeconds <= 0)) return sendError(response, 400, `Invalid end point for track ${songIndex + 1}.`);
       if (startSeconds !== null && endSeconds !== null && endSeconds <= startSeconds) return sendError(response, 400, `Playback end must follow the start for track ${songIndex + 1}.`);
-      clipsBySong.set(songIndex, { mediaId, songIndex, startSeconds, endSeconds });
+      const key = `${songIndex}:${mediaId}`;
+      if (clipKeys.has(key)) return sendError(response, 400, `Track ${songIndex + 1} contains the same playback source more than once.`);
+      clipKeys.add(key);
+      validatedClips.push({ mediaId, songIndex, startSeconds, endSeconds, requestedPriority: Number.isInteger(requestedPriority) && requestedPriority >= 0 ? requestedPriority : inputIndex, inputIndex });
     }
+    const clipsBySong = new Map();
+    validatedClips.forEach((clip) => { if (!clipsBySong.has(clip.songIndex)) clipsBySong.set(clip.songIndex, []); clipsBySong.get(clip.songIndex).push(clip); });
+    if ([...clipsBySong.values()].some((clips) => clips.length > 8)) return sendError(response, 400, 'A track can have at most eight playback sources.');
+    clipsBySong.forEach((clips) => clips.sort((a, b) => a.requestedPriority - b.requestedPriority || a.inputIndex - b.inputIndex).forEach((clip, priority) => { clip.priority = priority; }));
     const clipsByMedia = new Map();
-    clipsBySong.forEach((clip) => { if (!clipsByMedia.has(clip.mediaId)) clipsByMedia.set(clip.mediaId, []); clipsByMedia.get(clip.mediaId).push(clip); });
+    validatedClips.forEach((clip) => { if (!clipsByMedia.has(clip.mediaId)) clipsByMedia.set(clip.mediaId, []); clipsByMedia.get(clip.mediaId).push(clip); });
     for (const clips of clipsByMedia.values()) {
       clips.sort((a, b) => a.songIndex - b.songIndex);
       for (let index = 1; index < clips.length; index += 1) {
@@ -2474,11 +2493,11 @@ async function handleApi(request, response, url) {
     const savePlan = database.transaction((clips) => {
       database.prepare('DELETE FROM media_playback_clips WHERE media_id IN (SELECT id FROM gig_media WHERE gig_id = ?)').run(gig.id);
       database.prepare("UPDATE gig_media SET playback_clips_initialized = 1 WHERE gig_id = ? AND mime_type LIKE 'video/%'").run(gig.id);
-      const insert = database.prepare('INSERT INTO media_playback_clips (media_id, song_index, start_seconds, end_seconds, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+      const insert = database.prepare('INSERT INTO media_playback_clips (media_id, song_index, start_seconds, end_seconds, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
       const now = new Date().toISOString();
-      clips.forEach((clip) => insert.run(clip.mediaId, clip.songIndex, clip.startSeconds, clip.endSeconds, now, now));
+      clips.forEach((clip) => insert.run(clip.mediaId, clip.songIndex, clip.startSeconds, clip.endSeconds, clip.priority, now, now));
     });
-    savePlan([...clipsBySong.values()]);
+    savePlan(validatedClips);
     return sendJson(response, 200, { media: mediaRows(gig.id) });
   }
   if (request.method === 'PATCH' && gigMatch) {
