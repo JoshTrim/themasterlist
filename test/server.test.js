@@ -88,6 +88,14 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     assert.match(anonymous.body.error, /sign in/i);
   });
 
+  test('timeline route serves the archive timeline shell', async () => {
+    const timeline = await api('/timeline');
+    assert.equal(timeline.response.status, 200);
+    assert.match(timeline.response.headers.get('content-type'), /text\/html/);
+    assert.match(timeline.body, /id="timeline-page"/);
+    assert.match(timeline.body, /href="\/timeline"/);
+  });
+
   test('editing show fields preserves attached media and omitted album metadata', async () => {
     const updated = await jsonApi(`/api/gigs/${gig.id}`, 'PATCH', {
       artist: 'Test Artist Updated',

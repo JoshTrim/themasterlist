@@ -9,6 +9,7 @@
       body { margin: 0; background: #0d0817; color: #f8eaff; font-family: monospace; }
       body[data-page] main > section { display: none; }
       body[data-page="home"] #home-page, body[data-page="overview"] #overview-page,
+      body[data-page="timeline"] #timeline-page,
       body[data-page="search"] #search-page, body[data-page="health"] #health-page,
       body[data-page="api-limits"] #api-limits-page, body[data-page="add"] #add-page,
       body[data-page="shows"] #shows-archive, body[data-page="shared"] #shows-archive,
@@ -18,19 +19,19 @@
       body[data-page="venue-edit"] #venue-edit-page, body[data-page="edit"] #edit-page,
       body[data-page="map"] #map-page, body[data-page="account"] #account-page { display: block; }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=edit-form-polish-2" />
+    <link rel="stylesheet" href="/styles.css?v=timeline-view-1" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   </head>
   <body>
     <script>
-      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/search': 'search', '/health': 'health', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
+      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/timeline': 'timeline', '/search': 'search', '/health': 'health', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
     </script>
     <div class="crt-overlay" aria-hidden="true">
       <span class="crt-noise"></span>
     </div>
     <header class="site-header">
       <a class="brand" href="/">The<br /><em>Master</em> List</a>
-      <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">☰</button><nav class="site-nav" id="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/overview">Overview</a><a href="/search">Search</a><a href="/health">Health</a><a href="/api-limits">API limits</a><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a><a href="/login">Sign in</a></nav>
+      <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">☰</button><nav class="site-nav" id="site-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/overview">Overview</a><a href="/timeline">Timeline</a><a href="/search">Search</a><a href="/health">Health</a><a href="/api-limits">API limits</a><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/map">Map</a><a href="/account">Account</a><a href="/login">Sign in</a></nav>
       <span class="record-count" id="record-count">0 shows</span>
     </header>
 
@@ -101,6 +102,21 @@
       </section>
 
       <section class="overview-page" id="overview-page" aria-labelledby="overview-heading"><div class="section-heading"><p class="eyebrow">05 / Archive intelligence</p><h1 id="overview-heading">Overview</h1><p class="lede">A snapshot of your live-music life.</p></div><div class="dashboard-stats" id="dashboard-stats"></div></section>
+
+      <section class="timeline-page" id="timeline-page" aria-labelledby="timeline-heading">
+        <div class="section-heading timeline-heading"><p class="eyebrow">06 / Through the years</p><h1 id="timeline-heading">Gig timeline</h1><p class="lede">See the rhythm of your archive — the busy years, quiet spells and every show between.</p></div>
+        <div class="timeline-summary" id="timeline-summary" aria-label="Timeline summary"></div>
+        <section class="timeline-chart-shell" aria-labelledby="timeline-chart-heading">
+          <div class="timeline-chart-heading"><div><p class="eyebrow">Shows by year</p><h2 id="timeline-chart-heading">Archive frequency</h2></div><p class="timeline-chart-hint">Choose a year to inspect it</p></div>
+          <div class="timeline-chart-frame"><svg class="timeline-chart" id="timeline-chart" viewBox="0 0 960 380" role="img" aria-labelledby="timeline-chart-title timeline-chart-description"><title id="timeline-chart-title">Shows attended by year</title><desc id="timeline-chart-description">A bar chart of shows attended each year with cumulative archive growth.</desc></svg></div>
+          <div class="timeline-legend" aria-label="Chart legend"><span><i class="timeline-legend-shows"></i> Shows that year</span><span><i class="timeline-legend-total"></i> Running total</span></div>
+        </section>
+        <section class="timeline-year-detail" id="timeline-year-detail" aria-labelledby="timeline-selected-year" aria-live="polite">
+          <div class="timeline-year-heading"><div><p class="eyebrow">Selected year</p><h2 id="timeline-selected-year">—</h2></div><p id="timeline-year-change"></p></div>
+          <div class="timeline-months" id="timeline-months" aria-label="Shows by month"></div>
+          <div class="timeline-year-shows" id="timeline-year-shows"></div>
+        </section>
+      </section>
 
       <section class="search-page" id="search-page" aria-labelledby="search-heading"><div class="section-heading"><p class="eyebrow">06 / Find a memory</p><h1 id="search-heading">Search the archive</h1><p class="lede">Search shows, songs, artists, venues, notes and media captions.</p></div><div class="global-search-controls"><label class="global-search-query">Search<input id="global-search-input" type="search" placeholder="Track, artist, venue, note…" autocomplete="off" /></label><label>Year<select id="global-search-year"><option value="">All years</option></select></label><label>Rating<select id="global-search-rating"><option value="0">Any rating</option><option value="3">3+ stars</option><option value="4">4+ stars</option><option value="5">5 stars</option></select></label><label>Media<select id="global-search-media"><option value="any">Any</option><option value="with">Has media</option><option value="without">No media</option></select></label><label class="global-search-favourite"><input id="global-search-favourite" type="checkbox" /> Favourites only</label></div><p class="global-search-summary" id="global-search-summary"></p><div class="global-search-results" id="global-search-results"></div></section>
 
@@ -224,6 +240,6 @@
     <div class="media-lightbox" id="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Media viewer"><button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Close media viewer">×</button><img id="media-lightbox-image" alt="" /><video id="media-lightbox-video" controls></video><p id="media-lightbox-caption"></p></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="/app.js?v=full-show-timing-1"></script>
+    <script src="/app.js?v=timeline-view-1"></script>
   </body>
 </html>
