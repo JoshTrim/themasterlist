@@ -1,5 +1,8 @@
 const form = document.querySelector('#gig-form');
 const { escapeHtml, formatGigDate, formatBytes, providerName } = window.MasterListFormatters;
+const playbackCore = window.MasterListPlaybackCore;
+const playbackMedia = window.MasterListPlaybackMedia;
+const theatreUi = window.MasterListTheatre;
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
 const navSignIn = document.querySelector('#nav-sign-in');
 const jobUi = window.MasterListJobs.createJobQueue({ document, fetchJson, escapeHtml, hideUploads: () => isMobileUpload });
@@ -386,11 +389,9 @@ let setTimelineZoom = setTimelineMedia.matches ? 3 : 5;
 const formatPlaybackTime = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 const playbackResumeKey = (gigId) => `master-list:playback:${gigId}`;
 function updateSetTheatreMeta(gig, entry) {
-  const media = entry?.media;
-  const sourceType = media?.mimeType === 'video/youtube' ? 'YouTube' : media ? 'Your upload' : 'No source';
-  const sourceNumber = Number(entry?.sourceIndex || 0);
-  setPlayerSourceKind.textContent = sourceNumber ? `${sourceType} · Backup ${sourceNumber}` : sourceType;
-  setPlayerSourceLabel.textContent = media ? (media.caption || media.filename || 'Untitled video') : 'This track will be skipped';
+  const source = playbackMedia.sourcePresentation(entry);
+  setPlayerSourceKind.textContent = source.kind;
+  setPlayerSourceLabel.textContent = source.label;
   const previousEntry = setQueueIndex > 0 ? setQueue[setQueueIndex - 1] : null;
   const nextEntry = setQueueIndex < setQueue.length - 1 ? setQueue[setQueueIndex + 1] : null;
   setPlayerContextPrevious.textContent = previousEntry ? `← ${setQueueEntryTitle(gig, previousEntry)}` : 'Start of set';
@@ -404,9 +405,9 @@ function setPlaybackIsPlaying() {
 }
 function scheduleTheatreControls() {
   clearTimeout(theatreControlsTimer);
-  if (document.fullscreenElement !== setPlayer || !setPlaybackIsPlaying()) return;
+  if (!theatreUi.shouldAutoHide({ inTheatre: document.fullscreenElement === setPlayer, playing: setPlaybackIsPlaying(), timelineActive: Boolean(timelinePointer) })) return;
   theatreControlsTimer = setTimeout(() => {
-    if (document.fullscreenElement === setPlayer && !timelinePointer && setPlaybackIsPlaying()) setPlayer.classList.add('theatre-idle');
+    if (theatreUi.shouldAutoHide({ inTheatre: document.fullscreenElement === setPlayer, playing: setPlaybackIsPlaying(), timelineActive: Boolean(timelinePointer) })) setPlayer.classList.add('theatre-idle');
   }, 3400);
 }
 function revealTheatreControls({ schedule = true } = {}) {
@@ -448,25 +449,13 @@ function toggleSetMute() {
   } catch {}
 }
 function playbackBounds(source, duration = 0) {
-  const media = source?.media || source;
-  const clip = source?.clip || null;
-  const requestedStart = Math.max(0, Number(clip?.startSeconds ?? media?.playbackStart) || 0);
-  const requestedEnd = Number(clip?.endSeconds ?? media?.playbackEnd);
-  const naturalEnd = Number(duration) > 0 ? Number(duration) : null;
-  const start = naturalEnd ? Math.min(requestedStart, naturalEnd) : requestedStart;
-  const end = Number.isFinite(requestedEnd) && requestedEnd > start ? (naturalEnd ? Math.min(requestedEnd, naturalEnd) : requestedEnd) : naturalEnd;
-  return { start, end, length: end && end > start ? end - start : null };
+  return playbackCore.bounds(source, duration);
 }
 function playbackFraction(source, current, duration) {
-  const bounds = playbackBounds(source, duration);
-  if (!bounds.length) return duration > 0 ? Math.max(0, Math.min(1, current / duration)) : 0;
-  return Math.max(0, Math.min(1, (current - bounds.start) / bounds.length));
+  return playbackCore.fraction(source, current, duration);
 }
 function playbackTimeAt(source, fraction, duration) {
-  const bounds = playbackBounds(source, duration);
-  const bounded = Math.max(0, Math.min(1, Number(fraction) || 0));
-  if (bounds.length) return bounds.start + (bounds.length * bounded);
-  return bounds.end !== null ? bounds.start + (Math.max(0, bounds.end - bounds.start) * bounded) : bounds.start;
+  return playbackCore.timeAt(source, fraction, duration);
 }
 function savePlaybackResume(gig, fraction) {
   if (!gig || !setQueue[setQueueIndex]?.media || Date.now() - resumeSaveAt < 1000) return;
@@ -485,62 +474,19 @@ function readPlaybackResume(gig) {
   } catch { return null; }
 }
 function clearPlaybackResume(gig) { try { localStorage.removeItem(playbackResumeKey(gig.id)); } catch {} }
-function validChapterStart(song) {
-  if (song?.startSeconds === null || song?.startSeconds === undefined || song?.startSeconds === '') return null;
-  const value = Number(song.startSeconds);
-  return Number.isFinite(value) && value >= 0 ? value : null;
-}
-function playbackPlanLengths(gig) {
-  const lengths = setQueue.map((entry, index) => {
-    const bounds = playbackBounds(entry);
-    if (bounds.length) return bounds.length;
-    const nextSameSource = entry.media ? setQueue.slice(index + 1).find((candidate) => candidate.media?.id === entry.media.id && playbackBounds(candidate).start > bounds.start) : null;
-    if (nextSameSource) return playbackBounds(nextSameSource).start - bounds.start;
-    const chapterStart = entry.isUnknown ? null : validChapterStart(gig.songs[entry.songIndex]);
-    const nextEntry = index < setQueue.length - 1 ? setQueue[index + 1] : null;
-    const nextChapterStart = nextEntry && !nextEntry.isUnknown ? validChapterStart(gig.songs[nextEntry.songIndex]) : null;
-    return chapterStart !== null && nextChapterStart !== null && nextChapterStart > chapterStart ? nextChapterStart - chapterStart : null;
-  });
-  const known = lengths.filter((length) => Number.isFinite(length) && length > 0).sort((a, b) => a - b);
-  const fallback = known.length ? known[Math.floor(known.length / 2)] : 180;
-  return lengths.map((length) => Number.isFinite(length) && length > 0 ? length : fallback);
-}
 function playbackTimelineModel(gig) {
-  const count = setQueue.length;
-  if (!count) return [];
-  const lengths = playbackPlanLengths(gig);
-  const total = lengths.reduce((sum, length) => sum + length, 0) || count;
-  let elapsed = 0;
-  return setQueue.map((entry, index) => {
-    const start = elapsed / total;
-    elapsed += lengths[index];
-    const end = index === count - 1 ? 1 : elapsed / total;
-    return { entry, index, marker: start, start, end };
-  });
+  return playbackCore.timelineModel(gig, setQueue);
 }
 function focusedPlaybackTimelineModel(gig) {
-  const full = playbackTimelineModel(gig);
-  if (setTimelineZoom === 'all' || full.length <= Number(setTimelineZoom)) return full;
-  const visible = Math.max(1, Number(setTimelineZoom) || 3);
-  const startIndex = Math.max(0, Math.min(full.length - visible, setQueueIndex - Math.floor(visible / 2)));
-  const window = full.slice(startIndex, startIndex + visible);
-  const rangeStart = window[0].start;
-  const rangeEnd = window[window.length - 1].end;
-  const range = rangeEnd - rangeStart || 1;
-  return window.map((item, localIndex) => ({
-    ...item,
-    marker: (item.start - rangeStart) / range,
-    start: (item.start - rangeStart) / range,
-    end: (item.end - rangeStart) / range
-  }));
+  return playbackCore.focusedTimelineModel(gig, setQueue, setQueueIndex, setTimelineZoom);
 }
 function setTimelineProgress(gig, mediaFraction = 0, currentSeconds = 0, durationSeconds = 0) {
   const fullSegment = playbackTimelineModel(gig)[setQueueIndex];
   const segment = focusedPlaybackTimelineModel(gig).find((item) => item.index === setQueueIndex);
   if (!fullSegment || !segment) return;
   const fraction = Math.max(0, Math.min(1, Number(mediaFraction) || 0));
-  setPlayerProgress.style.width = `${(segment.start + ((segment.end - segment.start) * fraction)) * 100}%`;
-  setPlayerOverviewProgress.style.width = `${(fullSegment.start + ((fullSegment.end - fullSegment.start) * fraction)) * 100}%`;
+  setPlayerProgress.style.width = `${playbackCore.progressModel(segment, fraction) * 100}%`;
+  setPlayerOverviewProgress.style.width = `${playbackCore.progressModel(fullSegment, fraction) * 100}%`;
   const bounds = playbackBounds(segment.entry, durationSeconds);
   setPlayerElapsed.textContent = formatPlaybackTime(Math.max(0, (currentSeconds || 0) - bounds.start));
   setPlayerTotal.textContent = bounds.length ? formatPlaybackTime(bounds.length) : '--:--';
@@ -574,10 +520,9 @@ function seekSetTimeline(ratio, useFullTimeline = false) {
   const gig = gigs.find((entry) => entry.id === showDetailId);
   const model = gig ? (useFullTimeline ? playbackTimelineModel(gig) : focusedPlaybackTimelineModel(gig)) : [];
   if (!model.length) return;
-  const bounded = Math.max(0, Math.min(1, ratio));
-  let segment = model.find((item) => bounded <= item.end) || model[model.length - 1];
-  if (!segment.entry.media) { const localIndex = model.indexOf(segment); segment = model.slice(localIndex).find((item) => item.entry.media) || [...model.slice(0, localIndex)].reverse().find((item) => item.entry.media) || segment; }
-  const fraction = segment.end > segment.start ? (bounded - segment.start) / (segment.end - segment.start) : 0;
+  const target = playbackCore.seekTarget(model, ratio);
+  if (!target) return;
+  const { segment, fraction, ratio: bounded } = target;
   const changedTrack = segment.index !== setQueueIndex;
   setQueueIndex = segment.index;
   pendingSetSeek = { index: segment.index, fraction: Math.max(0, Math.min(1, fraction)) };
@@ -1205,24 +1150,19 @@ function renderEditMediaWorkspace(gig, media = []) {
 }
 
 function playbackSourceLabel(item) {
-  const type = item.mimeType === 'video/youtube' ? 'YouTube' : 'Upload';
-  return `${type} · ${item.caption || item.filename || 'Untitled video'}`;
+  return playbackCore.sourceLabel(item);
 }
 
-function playbackCandidates(gig, songIndex) {
-  return (gig.media || []).filter((item) => item.category !== 'artifact' && String(item.mimeType || '').startsWith('video/'));
+function playbackCandidates(gig) {
+  return playbackCore.candidates(gig);
 }
 
 function playbackClipFor(item, songIndex) {
-  return (item?.playbackClips || []).filter((clip) => clip.songIndex === songIndex).sort((a, b) => (a.priority || 0) - (b.priority || 0))[0] || null;
+  return playbackCore.clipFor(item, songIndex);
 }
 
 function playbackSourcesForSong(gig, songIndex) {
-  const videos = playbackCandidates(gig, songIndex);
-  const planned = videos.flatMap((media) => (media.playbackClips || []).filter((clip) => clip.songIndex === songIndex).map((clip) => ({ media, clip }))).sort((a, b) => (a.clip.priority || 0) - (b.clip.priority || 0));
-  if (planned.length) return planned;
-  const legacy = videos.find((item) => !(item.playbackClips || []).length && item.songIndex === songIndex);
-  return legacy ? [{ media: legacy, clip: { songIndex, startSeconds: legacy.playbackStart ?? null, endSeconds: legacy.playbackEnd ?? null, priority: 0 } }] : [];
+  return playbackCore.sourcesForSong(gig, songIndex);
 }
 
 function playbackFallbackOptions(gig, selectedId = '') {
@@ -2842,51 +2782,16 @@ document.addEventListener('keydown', (event) => {
 function stopYoutubeTimelinePolling() { if (youtubeTimelineTimer) { clearInterval(youtubeTimelineTimer); youtubeTimelineTimer = null; } }
 function clearSetSourceLoadTimer() { if (setSourceLoadTimer) { clearTimeout(setSourceLoadTimer); setSourceLoadTimer = null; } }
 function activateSetSource(entry, sourceIndex = 0) {
-  entry.sourceIndex = Math.max(0, Math.min(sourceIndex, Math.max(0, (entry.sources || []).length - 1)));
-  const source = entry.sources?.[entry.sourceIndex] || null;
-  entry.media = source?.media || null;
-  entry.clip = source?.clip || null;
-  return source;
+  return playbackCore.activateSource(entry, sourceIndex);
 }
 function setQueueEntryTitle(gig, entry) {
-  return entry?.isUnknown ? 'Unknown' : gig?.songs?.[entry?.songIndex]?.title || 'Unknown';
+  return playbackCore.entryTitle(gig, entry);
 }
 function setQueueEntryKey(entry) {
-  if (!entry?.isUnknown) return `song:${entry?.songIndex}`;
-  const bounds = playbackBounds(entry);
-  return `unknown:${entry.media?.id || ''}:${bounds.start}:${bounds.end ?? ''}`;
-}
-function unknownSetQueueEntry(media, startSeconds, endSeconds) {
-  const clip = { songIndex: null, startSeconds, endSeconds, priority: 0 };
-  const source = { media, clip };
-  return { isUnknown: true, songIndex: null, sources: [source], sourceIndex: 0, media, clip };
+  return playbackCore.entryKey(entry);
 }
 function buildSetPlaybackQueue(gig) {
-  const baseQueue = (gig?.songs || []).map((song, songIndex) => {
-    const entry = { songIndex, sources: playbackSourcesForSong(gig, songIndex), sourceIndex: 0, media: null, clip: null };
-    activateSetSource(entry, 0);
-    return entry;
-  });
-  const queue = [];
-  let previousPlayable = null;
-  baseQueue.forEach((entry) => {
-    if (entry.media) {
-      const currentBounds = playbackBounds(entry);
-      if (!previousPlayable && currentBounds.start > .5) queue.push(unknownSetQueueEntry(entry.media, 0, currentBounds.start));
-      if (previousPlayable?.media?.id === entry.media.id) {
-        const previousBounds = playbackBounds(previousPlayable);
-        if (previousBounds.end !== null && currentBounds.start > previousBounds.end + .5) queue.push(unknownSetQueueEntry(entry.media, previousBounds.end, currentBounds.start));
-      }
-      previousPlayable = entry;
-    }
-    queue.push(entry);
-  });
-  if (previousPlayable) {
-    const bounds = playbackBounds(previousPlayable);
-    const sourceDuration = Number(previousPlayable.media?.sourceDuration) || 0;
-    if (bounds.end !== null && sourceDuration > bounds.end + .5) queue.push(unknownSetQueueEntry(previousPlayable.media, bounds.end, sourceDuration));
-  }
-  return queue;
+  return playbackCore.buildQueue(gig);
 }
 function failSetSource(reason = 'Source unavailable') {
   if (setFallbackPending) return;
@@ -2915,8 +2820,7 @@ function armSetSourceLoadTimer() {
   setSourceLoadTimer = setTimeout(() => { if (setQueue[setQueueIndex] === entry && entry.media?.id === mediaId) failSetSource('Video timed out'); }, 12000);
 }
 function nextPlayableSetIndex(start, direction = 1) {
-  for (let index = start; index >= 0 && index < setQueue.length; index += direction) if (setQueue[index]?.media) return index;
-  return -1;
+  return playbackCore.nextPlayableIndex(setQueue, start, direction);
 }
 function finishSetPlayback(gig) {
   stopYoutubeTimelinePolling();
@@ -3046,8 +2950,7 @@ function playSetTrack() {
   pendingSetSeek = { index: setQueueIndex, fraction: seekFraction };
   const youtubeIframe = activeYoutubePlayer?.getIframe?.();
   if (entry.media.mimeType === 'video/youtube' && activeYoutubePlayer && youtubeIframe?.isConnected) {
-    const parsed = new URL(entry.media.url);
-    const videoId = parsed.searchParams.get('v') || parsed.pathname.split('/').filter(Boolean).pop();
+    const videoId = playbackMedia.youtubeVideoId(entry.media.url);
     activeYoutubeVideoId = videoId;
     armSetSourceLoadTimer();
     activeYoutubePlayer.loadVideoById({ videoId, startSeconds: playbackBounds(entry).start });
@@ -3056,13 +2959,7 @@ function playSetTrack() {
   if (activeYoutubePlayer) { try { activeYoutubePlayer.destroy(); } catch {} activeYoutubePlayer = null; activeYoutubeVideoId = ''; }
   const nextIndex = nextPlayableSetIndex(setQueueIndex + 1, 1);
   const next = nextIndex >= 0 ? setQueue[nextIndex] : null;
-  const currentMarkup = entry.media.mimeType === 'video/youtube'
-    ? `<iframe src="${youtubeEmbedUrl(entry.media.url)}" title="${escapeHtml(song.title)}" allowfullscreen></iframe>`
-    : `<video class="set-player-current" src="${entry.media.url}" controls autoplay playsinline></video>`;
-  const preloadMarkup = next?.media?.id === entry.media.id ? '' : next?.media?.mimeType === 'video/youtube'
-    ? `<iframe class="set-player-preload" src="${youtubeEmbedUrl(next.media.url)}" title="Preloaded next track" aria-hidden="true"></iframe>`
-    : next?.media ? `<video class="set-player-preload" src="${next.media.url}" preload="auto" muted playsinline></video>` : '';
-  setPlayerStage.innerHTML = `${currentMarkup}${preloadMarkup}`;
+  setPlayerStage.innerHTML = playbackMedia.stageMarkup({ entry, next, songTitle: song.title, escapeHtml, youtubeEmbedUrl });
   installPlayerStageNavigation();
   armSetSourceLoadTimer();
   const video = setPlayerStage.querySelector('video.set-player-current');
@@ -3135,9 +3032,10 @@ setPlayer.addEventListener('pointerdown', () => revealTheatreControls());
 setPlayer.addEventListener('focusin', () => revealTheatreControls({ schedule: false }));
 document.addEventListener('fullscreenchange', () => {
   const inTheatre = document.fullscreenElement === setPlayer;
+  const presentation = theatreUi.fullscreenPresentation(inTheatre);
   revealTheatreControls();
-  setPlayerFullscreen.textContent = inTheatre ? '↙ Exit theatre' : '⛶ Theatre';
-  setPlayerControlsToggle.setAttribute('aria-label', inTheatre ? 'Show or hide playback controls' : 'Playback controls');
+  setPlayerFullscreen.textContent = presentation.buttonLabel;
+  setPlayerControlsToggle.setAttribute('aria-label', presentation.controlsLabel);
   if (inTheatre) requestSetPlaybackWakeLock(); else releaseSetPlaybackWakeLock();
 });
 document.addEventListener('visibilitychange', () => {
@@ -3145,15 +3043,15 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', releaseSetPlaybackWakeLock);
 document.addEventListener('keydown', (event) => {
-  if (setPlayer.hidden || event.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
-  const key = event.key.toLowerCase();
   const inTheatre = document.fullscreenElement === setPlayer;
-  if (!inTheatre && key !== 'f') return;
-  if (key === 'arrowright') { event.preventDefault(); moveToPlayableTrack(1); }
-  else if (key === 'arrowleft') { event.preventDefault(); moveToPlayableTrack(-1); }
-  else if (key === ' ' || key === 'k') { event.preventDefault(); toggleSetPlayback(); }
-  else if (key === 'm') { event.preventDefault(); toggleSetMute(); }
-  else if (key === 'f') { event.preventDefault(); toggleSetTheatre(); }
+  const command = theatreUi.commandForKey({ key: event.key, inTheatre, playerHidden: setPlayer.hidden, editing: Boolean(event.target.closest?.('input, textarea, select, [contenteditable="true"]')) });
+  if (!command) return;
+  event.preventDefault();
+  if (command === 'next') moveToPlayableTrack(1);
+  else if (command === 'previous') moveToPlayableTrack(-1);
+  else if (command === 'toggle-playback') toggleSetPlayback();
+  else if (command === 'toggle-mute') toggleSetMute();
+  else if (command === 'toggle-theatre') toggleSetTheatre();
   revealTheatreControls();
 });
 

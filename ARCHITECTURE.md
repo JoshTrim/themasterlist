@@ -34,6 +34,9 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `jobs.js` — persistent background-job queue state and panel rendering.
 - `shows.js` — archive filtering, ordering and combined local/peer statistics.
 - `show-cards.js` — local and peer show-card factories, card actions and media/artifact accordion presentation.
+- `playback-core.js` — playback sources, clip bounds, queue construction, gap handling and timeline interpolation.
+- `playback-media.js` — YouTube/upload source presentation and player-stage markup.
+- `theatre.js` — fullscreen presentation, keyboard commands and control auto-hide rules.
 
 ## Testing strategy
 
