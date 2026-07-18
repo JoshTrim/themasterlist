@@ -42,6 +42,7 @@ const { createArchiveHealthService } = require('./lib/archive-health');
 const { createArchiveIntegrityService } = require('./lib/archive-integrity');
 const { createMaintenanceRoutes } = require('./lib/routes/maintenance');
 const { createShowRoutes } = require('./lib/routes/shows');
+const { createSetlistRoutes } = require('./lib/routes/setlists');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -134,6 +135,7 @@ const archiveHealthService = createArchiveHealthService({
 const archiveIntegrityService = createArchiveIntegrityService({ database, fs, path, mediaDir: MEDIA_DIR, databaseFile: DB_FILE, profileImageFilename: localProfileImageFilename });
 const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup, manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore });
 const handleShowRoute = createShowRoutes({ database, readGigs, readBody, sendJson, sendError, validateGig, normaliseRating, normaliseAttendees: normaliseGigAttendees, randomUUID });
+const handleSetlistRoute = createSetlistRoutes({ provider: setlistProvider, enrichAlbums: enrichGigAlbums, sendJson, sendError });
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
 const mediaRecognition = createMediaRecognition({
@@ -1138,11 +1140,7 @@ async function handleApi(request, response, url) {
   }
 
   if (await handleShowRoute(request, response, url)) return;
-
-  const albumStatsMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/album-stats$/);
-  if (albumStatsMatch && request.method === 'GET') {
-    return sendJson(response, 200, await enrichGigAlbums(albumStatsMatch[1], url.searchParams.get('refresh') === '1'));
-  }
+  if (await handleSetlistRoute(request, response, url)) return;
 
   if (await handleMediaUpload(request, response, url)) return;
   if (await handleMediaMutation(request, response, url)) return;
@@ -1227,13 +1225,6 @@ async function handleApi(request, response, url) {
     return sendJson(response, 201, { provider, ...exportResult });
   }
 
-  if (request.method === 'GET' && url.pathname === '/api/setlists/search') {
-    const artistName = url.searchParams.get('artistName')?.trim();
-    const cityName = url.searchParams.get('cityName')?.trim();
-    const eventDate = url.searchParams.get('eventDate')?.trim();
-    try { return sendJson(response, 200, await setlistProvider.search({ artistName, cityName, eventDate })); }
-    catch (error) { return sendError(response, error.status || 502, error.message); }
-  }
 
   return sendError(response, 404, 'Not found');
 }
