@@ -2,7 +2,11 @@ const form = document.querySelector('#gig-form');
 const mobileMenuToggle = document.querySelector('#mobile-menu-toggle');
 const siteNav = document.querySelector('#site-nav');
 const navSignIn = document.querySelector('#nav-sign-in');
-mobileMenuToggle?.addEventListener('click', () => { const open = siteNav.classList.toggle('is-open'); mobileMenuToggle.setAttribute('aria-expanded', String(open)); });
+mobileMenuToggle?.addEventListener('click', () => { const open = siteNav.classList.toggle('is-open'); mobileMenuToggle.setAttribute('aria-expanded', String(open)); mobileMenuToggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation'); });
+siteNav?.querySelectorAll('a').forEach((link) => {
+  if (link.pathname === window.location.pathname) link.setAttribute('aria-current', 'page');
+  link.addEventListener('click', () => { siteNav.classList.remove('is-open'); mobileMenuToggle?.setAttribute('aria-expanded', 'false'); });
+});
 const jobQueue = new Map();
 const jobPanel = document.createElement('aside'); jobPanel.className = 'job-queue'; jobPanel.hidden = true; jobPanel.innerHTML = '<p class="eyebrow">Background jobs</p><div class="job-queue-list"></div>'; document.body.append(jobPanel);
 const notificationPanel = document.createElement('aside'); notificationPanel.className = 'peer-notifications'; notificationPanel.hidden = true; notificationPanel.innerHTML = '<p class="eyebrow">From your peers</p><div class="peer-notification-list"></div>'; document.body.append(notificationPanel);
@@ -48,11 +52,16 @@ const sortFilter = document.querySelector('#sort-filter');
 const favouriteFilter = document.querySelector('#favourite-filter');
 const archiveStats = document.querySelector('#archive-stats');
 const dashboardStats = document.querySelector('#dashboard-stats');
+const genreStats = document.querySelector('#genre-stats');
+const genreStatsNote = document.querySelector('#genre-stats-note');
+const genreStatsChart = document.querySelector('#genre-stats-chart');
 const artistsFilter = document.querySelector('#artists-filter');
+const artistsMetadataFilter = document.querySelector('#artists-metadata-filter');
 const artistsSort = document.querySelector('#artists-sort');
 const artistsSummary = document.querySelector('#artists-summary');
 const artistsGrid = document.querySelector('#artists-grid');
 const venuesFilter = document.querySelector('#venues-filter');
+const venuesMetadataFilter = document.querySelector('#venues-metadata-filter');
 const venuesSort = document.querySelector('#venues-sort');
 const venuesSummary = document.querySelector('#venues-summary');
 const venuesGrid = document.querySelector('#venues-grid');
@@ -78,6 +87,7 @@ const healthFilters = document.querySelector('#health-filters');
 const healthList = document.querySelector('#health-list');
 const healthMessage = document.querySelector('#health-message');
 const repairAllMetadata = document.querySelector('#repair-all-metadata');
+const repairAllAlbums = document.querySelector('#repair-all-albums');
 const addDuplicateWarning = document.querySelector('#add-duplicate-warning');
 const editDuplicateWarning = document.querySelector('#edit-duplicate-warning');
 const loadMapButton = document.querySelector('#load-map');
@@ -167,6 +177,7 @@ const artistEditLink = document.querySelector('#artist-edit-link');
 const artistEditForm = document.querySelector('#artist-edit-form');
 const artistEditPreview = document.querySelector('#artist-edit-preview');
 const artistEditMessage = document.querySelector('#artist-edit-message');
+const artistEditStepper = document.querySelector('#artist-edit-stepper');
 const artistShows = document.querySelector('#artist-shows');
 const artistEmpty = document.querySelector('#artist-empty');
 const artistStats = document.querySelector('#artist-stats');
@@ -332,6 +343,8 @@ const showDetailSetlist = document.querySelector('#show-detail-setlist');
 const findYouTubeSet = document.querySelector('#find-youtube-set');
 const youtubeResults = document.querySelector('#youtube-results');
 const youtubeSearchMessage = document.querySelector('#youtube-search-message');
+const findAlbumInfo = document.querySelector('#find-album-info');
+const albumLookupMessage = document.querySelector('#album-lookup-message');
 const playWholeSet = document.querySelector('#play-whole-set');
 const setPlayer = document.querySelector('#set-player');
 const setPlayerTitle = document.querySelector('#set-player-title');
@@ -633,6 +646,7 @@ const venueNameFromUrl = new URLSearchParams(window.location.search).get('name')
 const venueCityFromUrl = new URLSearchParams(window.location.search).get('city')?.trim() || '';
 const venueHeading = document.querySelector('#venue-heading');
 const venuePageCity = document.querySelector('#venue-page-city');
+const venueClosedBadge = document.querySelector('#venue-closed-badge');
 const venueStats = document.querySelector('#venue-stats');
 const venueShows = document.querySelector('#venue-shows');
 const venueEmpty = document.querySelector('#venue-empty');
@@ -644,6 +658,7 @@ const venueEditLink = document.querySelector('#venue-edit-link');
 const venueEditForm = document.querySelector('#venue-edit-form');
 const venueEditPreview = document.querySelector('#venue-edit-preview');
 const venueEditMessage = document.querySelector('#venue-edit-message');
+const venueEditStepper = document.querySelector('#venue-edit-stepper');
 
 const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
 const formatGigDate = (date, options = { month: 'short', day: 'numeric', year: 'numeric' }) => date ? new Date(`${date}T12:00:00`).toLocaleDateString(undefined, options) : 'Date unknown';
@@ -1757,6 +1772,7 @@ function imageUploadPayload(file) {
 async function metadataFormPayload(form) {
   const payload = Object.fromEntries(new FormData(form).entries());
   delete payload.imageFile;
+  if (form.elements.isClosed) payload.isClosed = form.elements.isClosed.checked;
   const imageUpload = await imageUploadPayload(form.elements.imageFile.files[0]);
   if (imageUpload) payload.imageUpload = imageUpload;
   return payload;
@@ -1768,10 +1784,38 @@ function populateMetadataForm(form, preview, info) {
   form.elements.bio.value = info.bio || '';
   form.elements.image.value = info.image || '';
   form.elements.source.value = info.source || '';
+  if (form.elements.genres) form.elements.genres.value = (info.genres || []).join(', ');
+  if (form.elements.isClosed) form.elements.isClosed.checked = Boolean(info.isClosed);
   form.elements.imagePosition.value = info.imagePosition || 'center';
   form.elements.imageFile.value = '';
   updateMetadataPreview(preview, info.image || '', info.imagePosition || 'center');
   bindMetadataEditorPreview(form, preview);
+}
+
+function populateVenueLocationFields(info) {
+  venueEditForm.elements.locationAddress.value = '';
+  venueEditForm.elements.latitude.value = info.coordinates?.lat ?? '';
+  venueEditForm.elements.longitude.value = info.coordinates?.lng ?? '';
+}
+
+function renderMetadataEditorStepper(container, type, currentName, currentCity = '') {
+  const entities = new Map();
+  for (const gig of [...gigs, ...remoteSharedArchiveShows()]) {
+    const name = type === 'artist' ? gig.artist : gig.venue;
+    const city = type === 'venue' ? gig.city : '';
+    const key = `${name}|${city}`.toLocaleLowerCase();
+    if (name && !entities.has(key)) entities.set(key, { name, city });
+  }
+  const ordered = [...entities.values()].sort((a, b) => a.name.localeCompare(b.name) || a.city.localeCompare(b.city));
+  const currentKey = `${currentName}|${type === 'venue' ? currentCity : ''}`.toLocaleLowerCase();
+  const index = ordered.findIndex((entry) => `${entry.name}|${entry.city}`.toLocaleLowerCase() === currentKey);
+  const linkFor = (entry) => type === 'artist' ? `/artist/edit?name=${encodeURIComponent(entry.name)}` : `/venue/edit?name=${encodeURIComponent(entry.name)}&city=${encodeURIComponent(entry.city)}`;
+  const step = (entry, direction) => entry
+    ? `<a class="metadata-step metadata-step-${direction}" href="${linkFor(entry)}"><small>${direction === 'previous' ? '← Previous' : 'Next →'}</small><strong>${escapeHtml(entry.name)}</strong></a>`
+    : `<span class="metadata-step metadata-step-${direction} is-disabled"><small>${direction === 'previous' ? '← Previous' : 'Next →'}</small><strong>End of list</strong></span>`;
+  if (index < 0 || !ordered.length) { container.hidden = true; return; }
+  container.hidden = false;
+  container.innerHTML = `${step(ordered[index - 1], 'previous')}<span class="metadata-step-count">${index + 1} / ${ordered.length}</span>${step(ordered[index + 1], 'next')}`;
 }
 
 async function renderArtistEditPage() {
@@ -1781,6 +1825,7 @@ async function renderArtistEditPage() {
   document.querySelector('#artist-edit-heading').textContent = `Edit ${info.title || artistNameFromUrl}`;
   document.querySelector('#artist-edit-back').href = `/artist?name=${encodeURIComponent(artistNameFromUrl)}`;
   populateMetadataForm(artistEditForm, artistEditPreview, info);
+  renderMetadataEditorStepper(artistEditStepper, 'artist', artistNameFromUrl);
 }
 
 artistEditForm.addEventListener('submit', async (event) => {
@@ -1798,6 +1843,17 @@ artistEditForm.addEventListener('submit', async (event) => {
 
 async function renderDashboardStats() {
   if (page !== 'overview' || !dashboardStats) return;
+  const metadata = await loadDirectoryMetadata();
+  const allShows = [...gigs, ...remoteSharedArchiveShows()];
+  const artistMetadata = new Map(metadata.artists.map((entry) => [entry.lookupName, entry]));
+  const venueMetadata = new Map(metadata.venues.map((entry) => [entry.lookupName, entry]));
+  const locations = new Set(metadata.locations || []);
+  const artistKeys = [...new Set(allShows.map((gig) => gig.artist.trim().toLocaleLowerCase()).filter(Boolean))];
+  const venueKeys = [...new Set(allShows.map((gig) => `${gig.venue}|${gig.city}`.toLocaleLowerCase()))];
+  const artistComplete = artistKeys.filter((key) => !metadataMissingFields('artist', artistMetadata.get(key)).length).length;
+  const venueComplete = venueKeys.filter((key) => !metadataMissingFields('venue', venueMetadata.get(key), locations.has(key)).length).length;
+  const completionPercent = (complete, total) => total ? Math.round((complete / total) * 100) : 0;
+  const completionMarkup = `<section class="metadata-completion" aria-labelledby="metadata-completion-heading"><div><p class="eyebrow">Archive completion</p><h2 id="metadata-completion-heading">Metadata status</h2></div><a href="/artists?metadata=incomplete"><span><strong>${completionPercent(artistComplete, artistKeys.length)}%</strong>Artists complete</span><small>${artistKeys.length - artistComplete} need review →</small></a><a href="/venues?metadata=incomplete"><span><strong>${completionPercent(venueComplete, venueKeys.length)}%</strong>Venues complete</span><small>${venueKeys.length - venueComplete} need review →</small></a></section>`;
   const countBy = (values) => Object.entries(values.reduce((result, value) => { result[value] = (result[value] || 0) + 1; return result; }, {})).sort((a, b) => b[1] - a[1]);
   const topVenues = countBy(gigs.map((gig) => `${gig.venue}\u001f${gig.city}`)).slice(0, 5).map(([key, count]) => { const [name, city] = key.split('\u001f'); return [name, city, count]; });
   const localStats = { shows: gigs.length, artists: new Set(gigs.map((gig) => gig.artist.toLowerCase())).size, venues: new Set(gigs.map((gig) => `${gig.venue}|${gig.city}`.toLowerCase())).size, cities: new Set(gigs.map((gig) => gig.city.toLowerCase())).size, songs: gigs.reduce((sum, gig) => sum + (gig.songs?.length || 0), 0), favourites: gigs.filter((gig) => gig.favorite).length, topArtists: countBy(gigs.map((gig) => gig.artist)).slice(0, 5), topVenues };
@@ -1809,10 +1865,33 @@ async function renderDashboardStats() {
       const count = legacyEntry ? cityOrCount : possibleCount;
       return `<a class="dashboard-stat-link" href="/venue?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}"><span>${escapeHtml(name)}</span><small>${escapeHtml(city)}${city ? ' · ' : ''}${count} show${count === 1 ? '' : 's'}</small></a>`;
     }).join('') || '<span>None yet</span>';
-    dashboardStats.innerHTML = `<p class="eyebrow">Archive snapshot</p><div class="dashboard-stat-grid"><span><strong>${stats.shows}</strong> shows</span><span><strong>${stats.artists}</strong> artists</span><span><strong>${stats.venues}</strong> venues</span><span><strong>${stats.cities}</strong> cities</span><span><strong>${stats.songs}</strong> songs</span><span><strong>${stats.favourites}</strong> favourites</span></div><div class="dashboard-stat-columns"><div><b>Most seen artists</b>${artistLinks}</div><div><b>Most visited venues</b>${venueLinks}</div></div>`;
+    dashboardStats.innerHTML = `<p class="eyebrow">Archive snapshot</p><div class="dashboard-stat-grid"><span><strong>${stats.shows}</strong> shows</span><span><strong>${stats.artists}</strong> artists</span><span><strong>${stats.venues}</strong> venues</span><span><strong>${stats.cities}</strong> cities</span><span><strong>${stats.songs}</strong> songs</span><span><strong>${stats.favourites}</strong> favourites</span></div><div class="dashboard-stat-columns"><div><b>Most seen artists</b>${artistLinks}</div><div><b>Most visited venues</b>${venueLinks}</div></div>${completionMarkup}`;
   };
   render(localStats);
   try { render(await fetchJson('/api/stats')); } catch { /* local snapshot remains visible */ }
+  renderGenreStats();
+}
+
+let genreStatsPromise;
+async function renderGenreStats() {
+  if (page !== 'overview' || !genreStats) return;
+  genreStatsPromise ||= fetchJson('/api/stats/genres');
+  try {
+    const { genres = [] } = await genreStatsPromise;
+    if (!genres.length) {
+      genreStatsNote.textContent = 'No genre metadata is available yet.';
+      genreStatsChart.innerHTML = '<p class="empty-state">Add shows or enter genres in an artist profile to build this breakdown.</p>';
+      return;
+    }
+    const knownShows = genres.filter((entry) => entry.genre !== 'Unknown').reduce((sum, entry) => sum + entry.shows, 0);
+    genreStatsNote.textContent = `${knownShows.toFixed(knownShows % 1 ? 1 : 0)} show${knownShows === 1 ? '' : 's'} have genre metadata. Percentages divide multi-genre artists evenly.`;
+    const segments = genres.map((entry, index) => `<span class="genre-segment genre-colour-${index % 10}" style="width:${entry.percentage}%" title="${escapeHtml(entry.genre)} · ${entry.percentage}%"></span>`).join('');
+    const legend = genres.map((entry, index) => `<li><i class="genre-colour-${index % 10}"></i><span>${escapeHtml(entry.genre)}</span><strong>${entry.percentage.toFixed(1)}%</strong><small>${entry.shows} show${entry.shows === 1 ? '' : 's'}</small></li>`).join('');
+    genreStatsChart.innerHTML = `<div class="genre-stat-bar" aria-label="Genre percentages">${segments}</div><ul class="genre-stat-legend">${legend}</ul>`;
+  } catch (error) {
+    genreStatsNote.textContent = 'Genre metadata could not be loaded.';
+    genreStatsChart.innerHTML = `<p class="form-message error">${escapeHtml(error.message)}</p>`;
+  }
 }
 
 function directoryInitials(name) {
@@ -1823,6 +1902,33 @@ function directoryRatingFor(show) {
   const localRating = Number(show.performanceRating || 0);
   if (localRating) return localRating;
   return Math.max(0, ...(show.contributions || []).map((entry) => Number(entry.performanceRating || 0)));
+}
+
+let directoryMetadataPromise;
+function loadDirectoryMetadata() {
+  if (!directoryMetadataPromise) directoryMetadataPromise = fetchJson('/api/directory/metadata').catch(() => ({ artists: [], venues: [], locations: [] }));
+  return directoryMetadataPromise;
+}
+
+function metadataMissingFields(type, info = {}, hasLocation = true) {
+  const missing = [];
+  if (!String(info.image || '').trim()) missing.push('photo');
+  if (!String(info.bio || (type === 'venue' ? info.description : '') || '').trim()) missing.push('bio');
+  if (!String(info.source || '').trim()) missing.push('source');
+  if (type === 'venue' && !hasLocation) missing.push('location');
+  return missing;
+}
+
+function metadataFilterMatches(entity, filter) {
+  if (!filter || filter === 'all') return true;
+  if (filter === 'incomplete') return entity.missingMetadata.length > 0;
+  return entity.missingMetadata.includes(filter.replace('missing-', ''));
+}
+
+function metadataBadges(entity) {
+  const closed = entity.isClosed ? '<span class="venue-status-closed">Permanently closed</span>' : '';
+  if (!entity.missingMetadata.length) return `${closed}<span class="metadata-status-complete">✓ Complete</span>`;
+  return closed + entity.missingMetadata.map((field) => `<span class="metadata-status-missing">Missing ${escapeHtml(field === 'bio' ? 'biography' : field)}</span>`).join('');
 }
 
 function bindDirectoryImageFallbacks(grid) {
@@ -1853,15 +1959,19 @@ function runDirectoryHydrationQueue() {
     const task = directoryHydrationQueue.shift();
     directoryHydrationActive += 1;
     directoryEntityInfo(task.type, task.name, task.city).then((info) => {
-      if (!info?.image || !task.card.isConnected || task.card.querySelector('.entity-card-image img')) return;
-      const image = document.createElement('img');
-      image.alt = '';
-      image.loading = 'lazy';
-      image.decoding = 'async';
-      image.style.objectPosition = info.imagePosition || 'center';
-      image.addEventListener('error', () => { task.card.querySelector('.entity-card-image')?.classList.add('is-missing'); image.remove(); }, { once: true });
-      image.src = info.image;
-      task.card.querySelector('.entity-card-image')?.append(image);
+      if (!info || !task.card.isConnected) return;
+      const status = task.card.querySelector('.entity-card-metadata');
+      if (status) status.innerHTML = metadataBadges({ isClosed: Boolean(info.isClosed), missingMetadata: metadataMissingFields(task.type, info, task.card.dataset.hasLocation !== 'false') });
+      if (info.image && !task.card.querySelector('.entity-card-image img')) {
+        const image = document.createElement('img');
+        image.alt = '';
+        image.loading = 'lazy';
+        image.decoding = 'async';
+        image.style.objectPosition = info.imagePosition || 'center';
+        image.addEventListener('error', () => { task.card.querySelector('.entity-card-image')?.classList.add('is-missing'); image.remove(); }, { once: true });
+        image.src = info.image;
+        task.card.querySelector('.entity-card-image')?.append(image);
+      }
     }).finally(() => {
       directoryHydrationActive -= 1;
       runDirectoryHydrationQueue();
@@ -1889,11 +1999,12 @@ function hydrateMissingDirectoryCards(grid, type) {
 
 async function renderEntityDirectories() {
   if (!['artists', 'venues'].includes(page)) return;
-  let metadata = { artists: [], venues: [] };
-  try { metadata = await fetchJson('/api/directory/metadata'); } catch { /* Directory remains useful without cached artwork. */ }
+  const metadata = await loadDirectoryMetadata();
   const artistMetadata = new Map(metadata.artists.map((entry) => [entry.lookupName, entry]));
   const venueMetadata = new Map(metadata.venues.map((entry) => [entry.lookupName, entry]));
+  const locations = new Set(metadata.locations || []);
   const archiveShows = [...gigs, ...remoteSharedArchiveShows()];
+  const requestedMetadataFilter = new URLSearchParams(window.location.search).get('metadata');
 
   if (page === 'artists') {
     const records = new Map();
@@ -1910,22 +2021,25 @@ async function renderEntityDirectories() {
     }
     const artists = [...records.values()].map((record) => {
       const info = artistMetadata.get(record.key) || {};
-      return { ...record, image: info.image || '', imagePosition: info.imagePosition || 'center', description: info.description || '', averageRating: record.ratings.length ? record.ratings.reduce((sum, rating) => sum + rating, 0) / record.ratings.length : 0 };
+      return { ...record, image: info.image || '', imagePosition: info.imagePosition || 'center', description: info.description || '', missingMetadata: metadataMissingFields('artist', info), averageRating: record.ratings.length ? record.ratings.reduce((sum, rating) => sum + rating, 0) / record.ratings.length : 0 };
     });
+    if ([...artistsMetadataFilter.options].some((option) => option.value === requestedMetadataFilter)) artistsMetadataFilter.value = requestedMetadataFilter;
     const drawArtists = () => {
       const query = artistsFilter.value.trim().toLocaleLowerCase();
-      const visible = artists.filter((artist) => !query || artist.name.toLocaleLowerCase().includes(query)).sort((a, b) => {
+      const visible = artists.filter((artist) => (!query || artist.name.toLocaleLowerCase().includes(query)) && metadataFilterMatches(artist, artistsMetadataFilter.value)).sort((a, b) => {
         if (artistsSort.value === 'name') return a.name.localeCompare(b.name);
         if (artistsSort.value === 'recent') return (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
         if (artistsSort.value === 'rating') return b.averageRating - a.averageRating || b.shows - a.shows || a.name.localeCompare(b.name);
         return b.shows - a.shows || (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
       });
-      artistsSummary.textContent = `${visible.length} of ${artists.length} artist${artists.length === 1 ? '' : 's'}`;
-      artistsGrid.innerHTML = visible.map((artist) => `<a class="entity-card entity-card-artist" data-entity-name="${escapeHtml(artist.name)}" href="/artist?name=${encodeURIComponent(artist.name)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(artist.name))}</span>${artist.image ? `<img src="${escapeHtml(artist.image)}" alt="" loading="lazy" decoding="async" style="object-position:${escapeHtml(artist.imagePosition)}" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${artist.shows} show${artist.shows === 1 ? '' : 's'} · ${artist.venues.size} venue${artist.venues.size === 1 ? '' : 's'}</p><h2>${escapeHtml(artist.name)}</h2><p>${escapeHtml(artist.description || (artist.latestDate ? `Last seen ${formatGigDate(artist.latestDate)}` : 'An undated archive memory'))}</p><div class="entity-card-stats"><span><strong>${artist.averageRating ? artist.averageRating.toFixed(1) : '—'}</strong>Avg rating</span><span><strong>${artist.favourites}</strong>Favourite${artist.favourites === 1 ? '' : 's'}</span><span><strong>${artist.latestDate ? artist.latestDate.slice(0, 4) : '—'}</strong>Last seen</span></div></div></a>`).join('') || '<p class="empty-state entity-directory-empty">No artists match that search.</p>';
+      const incomplete = artists.filter((artist) => artist.missingMetadata.length).length;
+      artistsSummary.textContent = `${visible.length} of ${artists.length} artist${artists.length === 1 ? '' : 's'} · ${incomplete} need review`;
+      artistsGrid.innerHTML = visible.map((artist) => `<article class="entity-card entity-card-artist" data-entity-name="${escapeHtml(artist.name)}"><a class="entity-card-profile" href="/artist?name=${encodeURIComponent(artist.name)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(artist.name))}</span>${artist.image ? `<img src="${escapeHtml(artist.image)}" alt="" loading="lazy" decoding="async" style="object-position:${escapeHtml(artist.imagePosition)}" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${artist.shows} show${artist.shows === 1 ? '' : 's'} · ${artist.venues.size} venue${artist.venues.size === 1 ? '' : 's'}</p><h2>${escapeHtml(artist.name)}</h2><p>${escapeHtml(artist.description || (artist.latestDate ? `Last seen ${formatGigDate(artist.latestDate)}` : 'An undated archive memory'))}</p><div class="entity-card-stats"><span><strong>${artist.averageRating ? artist.averageRating.toFixed(1) : '—'}</strong>Avg rating</span><span><strong>${artist.favourites}</strong>Favourite${artist.favourites === 1 ? '' : 's'}</span><span><strong>${artist.latestDate ? artist.latestDate.slice(0, 4) : '—'}</strong>Last seen</span></div></div></a><div class="entity-card-metadata">${metadataBadges(artist)}</div><a class="entity-card-edit" href="/artist/edit?name=${encodeURIComponent(artist.name)}" aria-label="Edit ${escapeHtml(artist.name)} metadata">✎ <span>Edit</span></a></article>`).join('') || '<p class="empty-state entity-directory-empty">No artists match those filters.</p>';
       bindDirectoryImageFallbacks(artistsGrid);
       hydrateMissingDirectoryCards(artistsGrid, 'artist');
     };
     artistsFilter.addEventListener('input', drawArtists);
+    artistsMetadataFilter.addEventListener('change', drawArtists);
     artistsSort.addEventListener('change', drawArtists);
     drawArtists();
   }
@@ -1941,20 +2055,23 @@ async function renderEntityDirectories() {
       if (show.date > record.latestDate) record.latestDate = show.date;
       if (show.favorite || show.contributions?.some((entry) => entry.favorite)) record.favourites += 1;
     }
-    const venues = [...records.values()].map((record) => { const info = venueMetadata.get(record.key) || {}; return { ...record, image: info.image || '', imagePosition: info.imagePosition || 'center', description: info.description || '' }; });
+    const venues = [...records.values()].map((record) => { const info = venueMetadata.get(record.key) || {}; return { ...record, image: info.image || '', imagePosition: info.imagePosition || 'center', description: info.description || '', isClosed: Boolean(info.isClosed), missingMetadata: metadataMissingFields('venue', info, locations.has(record.key)), hasLocation: locations.has(record.key) }; });
+    if ([...venuesMetadataFilter.options].some((option) => option.value === requestedMetadataFilter)) venuesMetadataFilter.value = requestedMetadataFilter;
     const drawVenues = () => {
       const query = venuesFilter.value.trim().toLocaleLowerCase();
-      const visible = venues.filter((venue) => !query || `${venue.name} ${venue.city}`.toLocaleLowerCase().includes(query)).sort((a, b) => {
+      const visible = venues.filter((venue) => (!query || `${venue.name} ${venue.city}`.toLocaleLowerCase().includes(query)) && metadataFilterMatches(venue, venuesMetadataFilter.value)).sort((a, b) => {
         if (venuesSort.value === 'name') return a.name.localeCompare(b.name) || a.city.localeCompare(b.city);
         if (venuesSort.value === 'recent') return (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
         return b.shows - a.shows || (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
       });
-      venuesSummary.textContent = `${visible.length} of ${venues.length} venue${venues.length === 1 ? '' : 's'}`;
-      venuesGrid.innerHTML = visible.map((venue) => `<a class="entity-card entity-card-venue" data-entity-name="${escapeHtml(venue.name)}" data-entity-city="${escapeHtml(venue.city)}" href="/venue?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(venue.name))}</span>${venue.image ? `<img src="${escapeHtml(venue.image)}" alt="" loading="lazy" decoding="async" style="object-position:${escapeHtml(venue.imagePosition)}" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${escapeHtml(venue.city || 'Location unknown')}</p><h2>${escapeHtml(venue.name)}</h2><p>${escapeHtml(venue.description || (venue.latestDate ? `Last visited ${formatGigDate(venue.latestDate)}` : 'An undated archive location'))}</p><div class="entity-card-stats"><span><strong>${venue.shows}</strong>Visit${venue.shows === 1 ? '' : 's'}</span><span><strong>${venue.artists.size}</strong>Artist${venue.artists.size === 1 ? '' : 's'}</span><span><strong>${venue.latestDate ? venue.latestDate.slice(0, 4) : '—'}</strong>Last visit</span></div></div></a>`).join('') || '<p class="empty-state entity-directory-empty">No venues match that search.</p>';
+      const incomplete = venues.filter((venue) => venue.missingMetadata.length).length;
+      venuesSummary.textContent = `${visible.length} of ${venues.length} venue${venues.length === 1 ? '' : 's'} · ${incomplete} need review`;
+      venuesGrid.innerHTML = visible.map((venue) => `<article class="entity-card entity-card-venue" data-entity-name="${escapeHtml(venue.name)}" data-entity-city="${escapeHtml(venue.city)}" data-has-location="${venue.hasLocation}"><a class="entity-card-profile" href="/venue?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(venue.name))}</span>${venue.image ? `<img src="${escapeHtml(venue.image)}" alt="" loading="lazy" decoding="async" style="object-position:${escapeHtml(venue.imagePosition)}" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${escapeHtml(venue.city || 'Location unknown')}</p><h2>${escapeHtml(venue.name)}</h2><p>${escapeHtml(venue.description || (venue.latestDate ? `Last visited ${formatGigDate(venue.latestDate)}` : 'An undated archive location'))}</p><div class="entity-card-stats"><span><strong>${venue.shows}</strong>Visit${venue.shows === 1 ? '' : 's'}</span><span><strong>${venue.artists.size}</strong>Artist${venue.artists.size === 1 ? '' : 's'}</span><span><strong>${venue.latestDate ? venue.latestDate.slice(0, 4) : '—'}</strong>Last visit</span></div></div></a><div class="entity-card-metadata">${metadataBadges(venue)}</div><a class="entity-card-edit" href="/venue/edit?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}" aria-label="Edit ${escapeHtml(venue.name)} metadata">✎ <span>Edit</span></a></article>`).join('') || '<p class="empty-state entity-directory-empty">No venues match those filters.</p>';
       bindDirectoryImageFallbacks(venuesGrid);
       hydrateMissingDirectoryCards(venuesGrid, 'venue');
     };
     venuesFilter.addEventListener('input', drawVenues);
+    venuesMetadataFilter.addEventListener('change', drawVenues);
     venuesSort.addEventListener('change', drawVenues);
     drawVenues();
   }
@@ -2198,6 +2315,7 @@ function renderHealthSnapshot(data) {
     } catch (error) { submit.disabled = false; submit.textContent = 'Retry save'; healthMessage.textContent = error.message; healthMessage.classList.add('error'); }
   }));
   repairAllMetadata.disabled = !repairable;
+  repairAllAlbums.disabled = !data.issues.some((issue) => issue.type === 'albums' && issue.repairable);
 }
 
 async function renderArchiveHealth() {
@@ -2206,21 +2324,34 @@ async function renderArchiveHealth() {
   catch (error) { healthMessage.textContent = error.message; healthMessage.classList.add('error'); }
 }
 
-repairAllMetadata?.addEventListener('click', async () => {
-  const repairable = (healthData?.issues || []).filter((issue) => issue.repairable);
+async function repairHealthIssues(repairable, button, idleLabel, albumOnly = false) {
   if (!repairable.length) return;
   repairAllMetadata.disabled = true;
+  repairAllAlbums.disabled = true;
   healthMessage.classList.remove('error');
   let latest = healthData;
   for (const [index, issue] of repairable.entries()) {
-    repairAllMetadata.textContent = `${index + 1} / ${repairable.length}`;
+    button.textContent = `${index + 1} / ${repairable.length}`;
     healthMessage.textContent = `Repairing ${issue.title}…`;
     try { latest = await fetchJson('/api/health/repair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(issue) }); }
     catch (error) { healthMessage.textContent = `${issue.title}: ${error.message}`; healthMessage.classList.add('error'); }
   }
   renderHealthSnapshot(latest);
-  repairAllMetadata.textContent = 'Repair all available';
-  healthMessage.textContent = latest.issues.length ? 'Metadata repair pass complete. Some records may still need manual attention.' : 'Metadata repair complete. The archive is healthy.';
+  button.textContent = idleLabel;
+  const remainingAlbums = latest.issues.filter((issue) => issue.type === 'albums').length;
+  healthMessage.textContent = albumOnly
+    ? remainingAlbums ? `Album search complete. ${remainingAlbums} set${remainingAlbums === 1 ? '' : 's'} still need manual album information.` : 'Album search complete. All setlist tracks have album information.'
+    : latest.issues.length ? 'Metadata repair pass complete. Some records may still need manual attention.' : 'Metadata repair complete. The archive is healthy.';
+}
+
+repairAllAlbums?.addEventListener('click', () => {
+  const repairable = (healthData?.issues || []).filter((issue) => issue.type === 'albums' && issue.repairable);
+  repairHealthIssues(repairable, repairAllAlbums, 'Find missing albums', true);
+});
+
+repairAllMetadata?.addEventListener('click', () => {
+  const repairable = (healthData?.issues || []).filter((issue) => issue.repairable);
+  repairHealthIssues(repairable, repairAllMetadata, 'Repair all available');
 });
 
 async function renderVenuePage() {
@@ -2228,6 +2359,7 @@ async function renderVenuePage() {
   const records = gigs.filter((gig) => gig.venue.toLowerCase() === venueNameFromUrl.toLowerCase() && (!venueCityFromUrl || gig.city.toLowerCase() === venueCityFromUrl.toLowerCase()));
   venueHeading.textContent = venueNameFromUrl || 'Venue not found';
   venuePageCity.textContent = venueCityFromUrl;
+  venueClosedBadge.hidden = true;
   venueStats.innerHTML = records.length ? `<span>${records.length} show${records.length === 1 ? '' : 's'}</span><span>${new Set(records.map((gig) => gig.artist)).size} artists</span><span>${new Set(records.map((gig) => gig.city)).size} cities</span><span>${records.reduce((sum, gig) => sum + (gig.songs?.length || 0), 0)} songs</span><span>${records.filter((gig) => gig.favorite).length} favourites</span>` : '';
   venueEmpty.hidden = Boolean(records.length);
   venueShows.replaceChildren();
@@ -2252,6 +2384,7 @@ async function renderVenuePage() {
     venueHeading.textContent = info.title || venueNameFromUrl;
     venueDescription.textContent = info.description || '';
     venueBio.textContent = info.bio || 'No venue biography was found yet.';
+    venueClosedBadge.hidden = !info.isClosed;
     venueImage.hidden = !info.image;
     if (info.image) { venueImage.src = info.image; venueImage.alt = `${info.title || venueNameFromUrl} photo`; venueImage.style.objectPosition = info.imagePosition || 'center'; }
     venueSource.hidden = !info.source;
@@ -2266,6 +2399,8 @@ async function renderVenueEditPage() {
   document.querySelector('#venue-edit-heading').textContent = `Edit ${info.title || venueNameFromUrl}`;
   document.querySelector('#venue-edit-back').href = `/venue?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`;
   populateMetadataForm(venueEditForm, venueEditPreview, info);
+  populateVenueLocationFields(info);
+  renderMetadataEditorStepper(venueEditStepper, 'venue', venueNameFromUrl, venueCityFromUrl);
 }
 
 venueEditForm.addEventListener('submit', async (event) => {
@@ -2276,7 +2411,9 @@ venueEditForm.addEventListener('submit', async (event) => {
   try {
     const info = await fetchJson(`/api/venues?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(await metadataFormPayload(venueEditForm)) });
     populateMetadataForm(venueEditForm, venueEditPreview, info);
+    populateVenueLocationFields(info);
     venueHeading.textContent = info.title; venueDescription.textContent = info.description; venueBio.textContent = info.bio;
+    venueClosedBadge.hidden = !info.isClosed;
     venueImage.hidden = !info.image; if (info.image) { venueImage.src = info.image; venueImage.alt = `${info.title} photo`; venueImage.style.objectPosition = info.imagePosition || 'center'; }
     venueSource.hidden = !info.source; if (info.source) venueSource.href = info.source;
     venueEditMessage.textContent = 'Venue info saved.'; venueEditMessage.classList.remove('error');
@@ -2462,7 +2599,10 @@ function renderShowPage() {
   attendeesLine.textContent = names.length > 1 ? `Attended with ${names.slice(1).join(', ')}` : 'Solo show';
   showDetailRatings.innerHTML = gig.performanceRating ? `<span><b>${gig.performanceRating}</b> / 5 stars</span>` : '<span>Not rated yet</span>';
   showDetailSetlist.innerHTML = gig.songs?.length ? `<ol>${renderTrackList(gig.songs)}</ol>${renderAlbumStats(gig.songs)}` : '<p>No setlist attached.</p>';
-  if (gig.songs?.length) fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats`).then((data) => { gig.songs = data.songs; showDetailSetlist.innerHTML = `<ol>${renderTrackList(gig.songs)}</ol>${renderAlbumStats(gig.songs)}`; }).catch(() => {});
+  const hasMissingAlbums = () => gig.songs?.some((song) => !String(song.album || '').trim() || /^unknown album$/i.test(String(song.album).trim()));
+  findAlbumInfo.hidden = !hasMissingAlbums();
+  albumLookupMessage.textContent = '';
+  if (gig.songs?.length) fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats`).then((data) => { gig.songs = data.songs; showDetailSetlist.innerHTML = `<ol>${renderTrackList(gig.songs)}</ol>${renderAlbumStats(gig.songs)}`; findAlbumInfo.hidden = !hasMissingAlbums(); }).catch(() => {});
   showEditLink.href = `/edit?id=${encodeURIComponent(gig.id)}`;
   const generalMedia = (gig.media || []).filter((item) => item.category !== 'artifact');
   const artifacts = (gig.media || []).filter((item) => item.category === 'artifact');
@@ -2478,6 +2618,29 @@ function renderShowPage() {
   renderMediaGallery(showDetailArtifacts, artifacts, { editable: true, allowCover: false, songs: gig.songs || [] });
   if (page === 'playback' || new URLSearchParams(window.location.search).get('play') === '1') setTimeout(() => playWholeSet?.click(), 0);
 }
+
+findAlbumInfo?.addEventListener('click', async () => {
+  const gig = gigs.find((entry) => entry.id === showDetailId);
+  if (!gig?.songs?.length) return;
+  findAlbumInfo.disabled = true;
+  findAlbumInfo.textContent = 'Searching albums…';
+  albumLookupMessage.classList.remove('error');
+  albumLookupMessage.textContent = 'Searching by track title and artist…';
+  try {
+    const data = await fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats?refresh=1`);
+    gig.songs = data.songs;
+    showDetailSetlist.innerHTML = `<ol>${renderTrackList(gig.songs)}</ol>${renderAlbumStats(gig.songs)}`;
+    const remaining = gig.songs.filter((song) => !String(song.album || '').trim() || /^unknown album$/i.test(String(song.album).trim())).length;
+    findAlbumInfo.hidden = remaining === 0;
+    albumLookupMessage.textContent = remaining ? `${remaining} track${remaining === 1 ? '' : 's'} could not be matched. You can enter those manually on the edit page.` : 'Album information updated.';
+  } catch (error) {
+    albumLookupMessage.textContent = error.message;
+    albumLookupMessage.classList.add('error');
+  } finally {
+    findAlbumInfo.disabled = false;
+    findAlbumInfo.textContent = 'Find album info';
+  }
+});
 
 function renderAlbumStats(songs) {
   const counts = new Map();

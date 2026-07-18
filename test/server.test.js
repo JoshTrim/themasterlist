@@ -96,6 +96,12 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     assert.match(timeline.body, /href="\/timeline"/);
   });
 
+  test('health page exposes a dedicated missing-album repair action', async () => {
+    const health = await api('/health');
+    assert.equal(health.response.status, 200);
+    assert.match(health.body, /id="repair-all-albums"/);
+  });
+
   test('artist and venue directories expose their page shells and cached metadata feed', async () => {
     const [artists, venues, metadata] = await Promise.all([
       api('/artists'),
@@ -105,12 +111,16 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     assert.equal(artists.response.status, 200);
     assert.match(artists.body, /id="artists-page"/);
     assert.match(artists.body, /href="\/artists"/);
+    assert.match(artists.body, /id="artists-metadata-filter"/);
+    assert.match(artists.body, /class="site-nav-group"/);
     assert.equal(venues.response.status, 200);
     assert.match(venues.body, /id="venues-page"/);
     assert.match(venues.body, /href="\/venues"/);
+    assert.match(venues.body, /id="venues-metadata-filter"/);
     assert.equal(metadata.response.status, 200);
     assert.ok(Array.isArray(metadata.body.artists));
     assert.ok(Array.isArray(metadata.body.venues));
+    assert.ok(Array.isArray(metadata.body.locations));
     const anonymous = await api('/api/directory/metadata', { cookie: '' });
     assert.equal(anonymous.response.status, 401);
   });
@@ -121,23 +131,33 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     assert.match(editor.body, /id="artist-edit-page"/);
     const artist = await jsonApi('/api/artists?name=Test%20Artist', 'PATCH', {
       title: 'Test Artist Display', description: 'Edited locally', bio: 'A manual artist biography.', imagePosition: 'top',
+      genres: 'Electronic, Experimental',
       imageUpload: { filename: 'portrait.png', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z7eQAAAAASUVORK5CYII=' }
     });
     assert.equal(artist.response.status, 200);
     assert.equal(artist.body.imagePosition, 'top');
+    assert.deepEqual(artist.body.genres, ['Electronic', 'Experimental']);
     assert.match(artist.body.image, /^\/api\/profile-images\/profile-/);
     const image = await api(artist.body.image);
     assert.equal(image.response.status, 200);
     assert.match(image.response.headers.get('content-type'), /^image\/png/);
-    const venue = await jsonApi('/api/venues?name=Test%20Venue&city=Brisbane', 'PATCH', { title: 'Test Venue', description: 'Edited venue', imagePosition: 'bottom' });
+    const venue = await jsonApi('/api/venues?name=Test%20Venue&city=Brisbane', 'PATCH', { title: 'Test Venue', description: 'Edited venue', imagePosition: 'bottom', isClosed: true, latitude: -27.4698, longitude: 153.0251 });
     assert.equal(venue.response.status, 200);
     assert.equal(venue.body.imagePosition, 'bottom');
+    assert.equal(venue.body.isClosed, true);
+    assert.deepEqual(venue.body.coordinates, { lat: -27.4698, lng: 153.0251 });
     const reloadedVenue = await api('/api/venues?name=Test%20Venue&city=Brisbane');
     assert.equal(reloadedVenue.body.description, 'Edited venue');
     assert.equal(reloadedVenue.body.imagePosition, 'bottom');
+    assert.equal(reloadedVenue.body.isClosed, true);
+    const directoryMetadata = await api('/api/directory/metadata');
+    assert.ok(directoryMetadata.body.locations.includes('test venue|brisbane'));
+    assert.equal(Boolean(directoryMetadata.body.venues.find((entry) => entry.lookupName === 'test venue|brisbane')?.isClosed), true);
     const reloaded = await api('/api/artists?name=Test%20Artist');
     assert.equal(reloaded.body.title, 'Test Artist Display');
     assert.equal(reloaded.body.imagePosition, 'top');
+    const genreStats = await api('/api/stats/genres');
+    assert.deepEqual(genreStats.body.genres.map((entry) => [entry.genre, entry.percentage]), [['Electronic', 50], ['Experimental', 50]]);
   });
 
   test('editing show fields preserves attached media and omitted album metadata', async () => {
@@ -151,6 +171,9 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     assert.equal(updated.response.status, 200);
     assert.equal(updated.body.songs[0].album, 'First Album');
     assert.equal(updated.body.songs[1].album, 'Second Album');
+    const refreshedAlbums = await api(`/api/gigs/${gig.id}/album-stats?refresh=1`);
+    assert.equal(refreshedAlbums.response.status, 200);
+    assert.deepEqual(refreshedAlbums.body.songs.map((song) => song.album), ['First Album', 'Second Album']);
 
     const media = await api(`/api/gigs/${gig.id}/media`);
     assert.equal(media.response.status, 200);

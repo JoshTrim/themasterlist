@@ -68,7 +68,17 @@ database.exec(`
     image TEXT,
     image_position TEXT NOT NULL DEFAULT 'center',
     is_manual INTEGER NOT NULL DEFAULT 0,
+    is_closed INTEGER NOT NULL DEFAULT 0,
     source TEXT,
+    updated_at TEXT NOT NULL
+  )
+`);
+database.exec(`
+  CREATE TABLE IF NOT EXISTS artist_genres (
+    lookup_name TEXT PRIMARY KEY,
+    artist_name TEXT NOT NULL,
+    genres TEXT NOT NULL DEFAULT '[]',
+    source TEXT NOT NULL DEFAULT 'itunes',
     updated_at TEXT NOT NULL
   )
 `);
@@ -108,6 +118,7 @@ addColumnIfMissing('artist_info', 'image_position', "TEXT NOT NULL DEFAULT 'cent
 addColumnIfMissing('venue_info', 'image_position', "TEXT NOT NULL DEFAULT 'center'");
 addColumnIfMissing('artist_info', 'is_manual', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('venue_info', 'is_manual', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('venue_info', 'is_closed', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('gig_media', 'caption', "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing('gig_media', 'is_cover', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('gig_media', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
@@ -571,6 +582,65 @@ async function providerResponse(url, options, provider) {
   throw new Error(`${provider}: ${detail}`);
 }
 
+function normaliseGenres(value) {
+  const values = Array.isArray(value) ? value : String(value || '').split(',');
+  return [...new Set(values.map((genre) => String(genre || '').trim()).filter(Boolean).map((genre) => genre.slice(0, 60)))].slice(0, 8);
+}
+
+function cachedArtistGenres(name) {
+  const row = database.prepare('SELECT genres, source, updated_at AS updatedAt FROM artist_genres WHERE lookup_name = ?').get(String(name || '').trim().toLowerCase());
+  if (!row) return null;
+  try { return { genres: normaliseGenres(JSON.parse(row.genres || '[]')), source: row.source, updatedAt: row.updatedAt }; } catch { return { genres: [], source: row.source, updatedAt: row.updatedAt }; }
+}
+
+function saveArtistGenres(name, genres, source = 'manual') {
+  const artistName = String(name || '').trim();
+  const values = normaliseGenres(genres);
+  database.prepare('INSERT OR REPLACE INTO artist_genres (lookup_name, artist_name, genres, source, updated_at) VALUES (?, ?, ?, ?, ?)').run(artistName.toLowerCase(), artistName, JSON.stringify(values), source, new Date().toISOString());
+  return values;
+}
+
+async function fetchArtistGenres(name) {
+  const artistName = String(name || '').trim();
+  if (!artistName) return [];
+  const cached = cachedArtistGenres(artistName);
+  if (cached) return cached.genres;
+  let genres = [];
+  try {
+    const endpoint = new URL('https://itunes.apple.com/search');
+    endpoint.searchParams.set('term', artistName); endpoint.searchParams.set('entity', 'musicArtist'); endpoint.searchParams.set('limit', '8');
+    const response = await fetch(endpoint);
+    const results = response.ok ? (await response.json()).results || [] : [];
+    const clean = (value) => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const wanted = clean(artistName);
+    const match = results.find((entry) => clean(entry.artistName) === wanted) || results.find((entry) => clean(entry.artistName).includes(wanted) || wanted.includes(clean(entry.artistName)));
+    genres = normaliseGenres(match?.primaryGenreName || '');
+  } catch { /* Keep an empty cached result so Overview remains fast offline. */ }
+  return saveArtistGenres(artistName, genres, 'itunes');
+}
+
+async function archiveGenreStats() {
+  const gigs = database.prepare('SELECT artist FROM gigs').all();
+  const artistCounts = new Map();
+  for (const gig of gigs) artistCounts.set(gig.artist, (artistCounts.get(gig.artist) || 0) + 1);
+  const pending = [...artistCounts];
+  const entries = [];
+  await Promise.all(Array.from({ length: Math.min(4, pending.length) }, async () => {
+    while (pending.length) {
+      const [artist, shows] = pending.shift();
+      entries.push({ artist, shows, genres: await fetchArtistGenres(artist) });
+    }
+  }));
+  const totals = new Map();
+  for (const entry of entries) {
+    const genres = entry.genres.length ? entry.genres : ['Unknown'];
+    const weight = entry.shows / genres.length;
+    for (const genre of genres) totals.set(genre, (totals.get(genre) || 0) + weight);
+  }
+  const totalShows = gigs.length || 1;
+  return [...totals].map(([genre, shows]) => ({ genre, shows: Math.round(shows * 10) / 10, percentage: Math.round((shows / totalShows) * 1000) / 10 })).sort((a, b) => b.percentage - a.percentage || a.genre.localeCompare(b.genre));
+}
+
 async function fetchArtistInfo(name) {
   const requestedName = String(name || '').trim();
   if (!requestedName) throw new Error('An artist name is required.');
@@ -604,7 +674,7 @@ async function fetchVenueInfo(name, city = '') {
   if (!requestedName) throw new Error('A venue name is required.');
   const lookupName = `${requestedName}|${requestedCity}`.toLowerCase();
   const venueWords = requestedName.toLowerCase().split(/\s+/).filter((word) => word.length > 3);
-  const cached = database.prepare('SELECT title, description, bio, image, image_position AS imagePosition, is_manual AS isManual, source FROM venue_info WHERE lookup_name = ?').get(lookupName);
+  const cached = database.prepare('SELECT title, description, bio, image, image_position AS imagePosition, is_manual AS isManual, is_closed AS isClosed, source FROM venue_info WHERE lookup_name = ?').get(lookupName);
   if (cached && (cached.isManual || (venueWords.every((word) => cached.title.toLowerCase().includes(word)) && (cached.bio || cached.description || cached.image)))) return { name: requestedName, city: requestedCity, ...cached };
   if (cached) database.prepare('DELETE FROM venue_info WHERE lookup_name = ?').run(lookupName);
   const headers = { 'User-Agent': 'TheMasterList/0.1 personal-live-music-archive', 'Accept-Language': 'en' };
@@ -1266,7 +1336,11 @@ async function enrichGigAlbums(gigId, forceMissing = false) {
   if (!gig) throw new Error('Gig not found.');
   const songs = JSON.parse(gig.songs || '[]');
   if (forceMissing) songs.filter((song) => !String(song.album || '').trim() || /^unknown album$/i.test(String(song.album).trim())).forEach((song) => database.prepare('DELETE FROM album_lookup_cache WHERE cache_key = ?').run(`v6::${song.artist || gig.artist}::${song.title}`.toLowerCase()));
-  const enriched = await Promise.all(songs.map(async (song) => ({ ...song, album: await resolveAlbum(song.artist || gig.artist, song.title) || song.album || null })));
+  const enriched = await Promise.all(songs.map(async (song) => {
+    const currentAlbum = String(song.album || '').trim();
+    if (currentAlbum && !/^unknown album$/i.test(currentAlbum)) return song;
+    return { ...song, album: await resolveAlbum(song.artist || gig.artist, song.title) || null };
+  }));
   database.prepare('UPDATE gigs SET songs = ? WHERE id = ?').run(JSON.stringify(enriched), gigId);
   const counts = {};
   enriched.forEach((song) => { const album = song.album || 'Unknown album'; counts[album] = (counts[album] || 0) + 1; });
@@ -1331,8 +1405,9 @@ function normaliseSongs(setlist) {
 
 async function resolveAlbum(artist, title) {
   const key = `v6::${artist}::${title}`.toLowerCase();
-  const cached = database.prepare('SELECT album FROM album_lookup_cache WHERE cache_key = ?').get(key);
-  if (cached) return cached.album || null;
+  const cached = database.prepare('SELECT album, created_at AS createdAt FROM album_lookup_cache WHERE cache_key = ?').get(key);
+  if (cached?.album) return cached.album;
+  if (cached && Date.now() - new Date(cached.createdAt).getTime() < 7 * 24 * 60 * 60 * 1000) return null;
   let album = null;
   const clean = (value) => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/&/g, ' and ').replace(/\b(feat\.?|ft\.?).*$/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
   const wantedArtist = clean(artist);
@@ -2136,6 +2211,10 @@ async function handleApi(request, response, url) {
     const topVenues = countBy(gigs.map((gig) => `${gig.venue}\u001f${gig.city}`)).slice(0, 5).map(([key, count]) => { const [name, city] = key.split('\u001f'); return [name, city, count]; });
     return sendJson(response, 200, { shows: gigs.length, artists: new Set(gigs.map((gig) => gig.artist.toLowerCase())).size, venues: new Set(gigs.map((gig) => `${gig.venue}|${gig.city}`.toLowerCase())).size, cities: new Set(gigs.map((gig) => gig.city.toLowerCase())).size, songs: songs.length, favourites: gigs.filter((gig) => gig.favorite).length, topArtists: countBy(gigs.map((gig) => gig.artist)).slice(0, 5), topVenues, years: countBy(gigs.map((gig) => gig.date?.slice(0, 4)).filter(Boolean)) });
   }
+  if (request.method === 'GET' && url.pathname === '/api/stats/genres') {
+    requireAccount(request);
+    return sendJson(response, 200, { genres: await archiveGenreStats() });
+  }
   if (request.method === 'GET' && url.pathname === '/api/limits') {
     requireAccount(request);
     const day = usageDay();
@@ -2199,18 +2278,23 @@ async function handleApi(request, response, url) {
 
   if (request.method === 'GET' && url.pathname === '/api/directory/metadata') {
     requireAccount(request);
-    const artists = database.prepare('SELECT lookup_name AS lookupName, title, description, image, image_position AS imagePosition FROM artist_info').all();
-    const venues = database.prepare('SELECT lookup_name AS lookupName, title, description, image, image_position AS imagePosition FROM venue_info').all();
-    return sendJson(response, 200, { artists, venues });
+    const artists = database.prepare('SELECT lookup_name AS lookupName, title, description, bio, image, image_position AS imagePosition, source, is_manual AS isManual FROM artist_info').all();
+    const venues = database.prepare('SELECT lookup_name AS lookupName, title, description, bio, image, image_position AS imagePosition, source, is_manual AS isManual, is_closed AS isClosed FROM venue_info').all();
+    const geocodes = await readGeocodes();
+    const locations = Object.entries(geocodes).filter(([, coordinates]) => Number.isFinite(Number(coordinates?.lat)) && Number.isFinite(Number(coordinates?.lng))).map(([key]) => key);
+    return sendJson(response, 200, { artists, venues, locations });
   }
 
   if (request.method === 'GET' && url.pathname === '/api/artists') {
     const info = await fetchArtistInfo(url.searchParams.get('name'));
-    return sendJson(response, 200, { ...info, imagePosition: normaliseImagePosition(info.imagePosition) });
+    const genres = cachedArtistGenres(info.name)?.genres || [];
+    return sendJson(response, 200, { ...info, imagePosition: normaliseImagePosition(info.imagePosition), genres });
   }
   if (request.method === 'GET' && url.pathname === '/api/venues') {
     const info = await fetchVenueInfo(url.searchParams.get('name'), url.searchParams.get('city'));
-    return sendJson(response, 200, { ...info, imagePosition: normaliseImagePosition(info.imagePosition) });
+    const locationKey = `${String(url.searchParams.get('name') || '').trim()}|${String(url.searchParams.get('city') || '').trim()}`.toLowerCase();
+    const coordinates = (await readGeocodes())[locationKey] || null;
+    return sendJson(response, 200, { ...info, imagePosition: normaliseImagePosition(info.imagePosition), isClosed: Boolean(info.isClosed), coordinates });
   }
   if (request.method === 'PATCH' && url.pathname === '/api/artists') {
     requireAccount(request);
@@ -2228,9 +2312,10 @@ async function handleApi(request, response, url) {
       imagePosition: normaliseImagePosition(body.imagePosition ?? existing?.imagePosition),
       source: String(body.source ?? existing?.source ?? '').trim() || null
     };
+    const genres = Object.prototype.hasOwnProperty.call(body, 'genres') ? saveArtistGenres(name, body.genres, 'manual') : (cachedArtistGenres(name)?.genres || []);
     database.prepare('INSERT OR REPLACE INTO artist_info (lookup_name, title, description, bio, image, image_position, is_manual, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.imagePosition, info.source, new Date().toISOString());
     await removeReplacedProfileImage(existing?.image, info.image);
-    return sendJson(response, 200, { name, ...info });
+    return sendJson(response, 200, { name, ...info, genres });
   }
   if (request.method === 'PATCH' && url.pathname === '/api/venues') {
     requireAccount(request);
@@ -2239,7 +2324,24 @@ async function handleApi(request, response, url) {
     if (!name) return sendError(response, 400, 'A venue name is required.');
     const body = await readBody(request);
     const lookupName = `${name}|${city}`.toLowerCase();
-    const existing = database.prepare('SELECT title, description, bio, image, image_position AS imagePosition, source FROM venue_info WHERE lookup_name = ?').get(lookupName);
+    const existing = database.prepare('SELECT title, description, bio, image, image_position AS imagePosition, is_closed AS isClosed, source FROM venue_info WHERE lookup_name = ?').get(lookupName);
+    const geocodes = await readGeocodes();
+    let coordinates = geocodes[lookupName] || null;
+    const address = String(body.locationAddress || '').trim();
+    const latitudeValue = String(body.latitude ?? '').trim();
+    const longitudeValue = String(body.longitude ?? '').trim();
+    if (address) {
+      const query = new URL('https://nominatim.openstreetmap.org/search');
+      query.searchParams.set('q', address); query.searchParams.set('format', 'jsonv2'); query.searchParams.set('limit', '1');
+      const result = await fetch(query, { headers: { 'User-Agent': 'TheMasterList/0.1 personal-live-music-archive', 'Accept-Language': 'en' } });
+      const match = result.ok ? (await result.json())[0] : null;
+      if (!match) return sendError(response, 404, 'That address could not be found. Try including the suburb, city and country.');
+      coordinates = { lat: Number(match.lat), lng: Number(match.lon) };
+    } else if (latitudeValue || longitudeValue) {
+      const lat = Number(latitudeValue); const lng = Number(longitudeValue);
+      if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) return sendError(response, 400, 'Enter valid latitude and longitude coordinates.');
+      coordinates = { lat, lng };
+    }
     const uploadedImage = await saveProfileImageUpload(body.imageUpload);
     const info = {
       title: String(body.title ?? existing?.title ?? name).trim(),
@@ -2247,11 +2349,13 @@ async function handleApi(request, response, url) {
       bio: String(body.bio ?? existing?.bio ?? '').trim(),
       image: uploadedImage || String(body.image ?? existing?.image ?? '').trim() || null,
       imagePosition: normaliseImagePosition(body.imagePosition ?? existing?.imagePosition),
+      isClosed: Object.prototype.hasOwnProperty.call(body, 'isClosed') ? [true, 1, '1', 'true', 'on'].includes(body.isClosed) : Boolean(existing?.isClosed),
       source: String(body.source ?? existing?.source ?? '').trim() || null
     };
-    database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, image_position, is_manual, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.imagePosition, info.source, new Date().toISOString());
+    database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, image_position, is_manual, is_closed, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.imagePosition, info.isClosed ? 1 : 0, info.source, new Date().toISOString());
+    if (coordinates) { geocodes[lookupName] = coordinates; await writeGeocodes(geocodes); }
     await removeReplacedProfileImage(existing?.image, info.image);
-    return sendJson(response, 200, { name, city, ...info });
+    return sendJson(response, 200, { name, city, ...info, coordinates });
   }
 
   if (request.method === 'GET' && url.pathname === '/api/health') return sendJson(response, 200, await archiveHealth());
@@ -2269,10 +2373,12 @@ async function handleApi(request, response, url) {
     } else if (type === 'venue') {
       const name = String(body.name || '').trim(); const city = String(body.city || '').trim();
       if (!name) return sendError(response, 400, 'Venue name is required.');
-      const existing = database.prepare('SELECT image FROM venue_info WHERE lookup_name = ?').get(`${name}|${city}`.toLowerCase());
-      database.prepare('DELETE FROM venue_info WHERE lookup_name = ?').run(`${name}|${city}`.toLowerCase());
+      const lookupName = `${name}|${city}`.toLowerCase();
+      const existing = database.prepare('SELECT image, is_closed AS isClosed FROM venue_info WHERE lookup_name = ?').get(lookupName);
+      database.prepare('DELETE FROM venue_info WHERE lookup_name = ?').run(lookupName);
       await removeReplacedProfileImage(existing?.image, null);
       await fetchVenueInfo(name, city);
+      if (existing?.isClosed) database.prepare('UPDATE venue_info SET is_closed = 1 WHERE lookup_name = ?').run(lookupName);
     } else if (type === 'location') {
       const key = String(body.key || '').toLowerCase();
       const geocodes = await readGeocodes();
@@ -2300,12 +2406,12 @@ async function handleApi(request, response, url) {
       const name = String(body.name || '').trim(); const city = String(body.city || '').trim();
       if (!name) return sendError(response, 400, 'Venue name is required.');
       const lookupName = `${name}|${city}`.toLowerCase();
-      const existing = database.prepare('SELECT image, image_position AS imagePosition FROM venue_info WHERE lookup_name = ?').get(lookupName);
+      const existing = database.prepare('SELECT image, image_position AS imagePosition, is_closed AS isClosed FROM venue_info WHERE lookup_name = ?').get(lookupName);
       const info = {
         title: String(body.title || name).trim(), description: String(body.description || '').trim(), bio: String(body.bio || '').trim(),
-        image: String(body.image || '').trim() || null, imagePosition: normaliseImagePosition(existing?.imagePosition), source: String(body.source || '').trim() || null
+        image: String(body.image || '').trim() || null, imagePosition: normaliseImagePosition(existing?.imagePosition), isClosed: Boolean(existing?.isClosed), source: String(body.source || '').trim() || null
       };
-      database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, image_position, is_manual, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.imagePosition, info.source, new Date().toISOString());
+      database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, image_position, is_manual, is_closed, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.imagePosition, info.isClosed ? 1 : 0, info.source, new Date().toISOString());
       await removeReplacedProfileImage(existing?.image, info.image);
     } else if (type === 'location') {
       const key = String(body.key || '').toLowerCase(); const address = String(body.address || '').trim();
@@ -2334,7 +2440,7 @@ async function handleApi(request, response, url) {
 
   const albumStatsMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/album-stats$/);
   if (albumStatsMatch && request.method === 'GET') {
-    return sendJson(response, 200, await enrichGigAlbums(albumStatsMatch[1]));
+    return sendJson(response, 200, await enrichGigAlbums(albumStatsMatch[1], url.searchParams.get('refresh') === '1'));
   }
 
   if (request.method === 'POST' && url.pathname === '/api/gigs') {
