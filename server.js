@@ -4,7 +4,8 @@ const fs = require('node:fs/promises');
 const legacyFs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { randomUUID, randomBytes, createHash, generateKeyPairSync, sign: signPayload, verify: verifyPayload } = require('node:crypto');
+const crypto = require('node:crypto');
+const { randomUUID, createHash } = crypto;
 const playback = require('./lib/playback');
 const { recognitionKey, youtubeVideoId, isoDurationSeconds, parsePlaybackChapters, estimateFullShowTimings, suggestPlaybackPlan } = playback;
 const { normaliseGenres, normaliseImagePosition, normaliseSongs, validateGig, normaliseRating } = require('./lib/validation');
@@ -26,6 +27,10 @@ const { createMediaMutationRoutes } = require('./lib/routes/media-mutations');
 const { createMediaEncoding } = require('./lib/media-encoding');
 const { createMediaRecognition } = require('./lib/media-recognition');
 const { recoverMediaWork } = require('./lib/media-recovery');
+const { createPeerIdentity } = require('./lib/peer-identity');
+const { createPeerTransport } = require('./lib/peer-transport');
+const { createPeerSync } = require('./lib/peer-sync');
+const { createPeerRoutes } = require('./lib/routes/peers');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -61,20 +66,10 @@ if (legacyFs.existsSync(PENDING_RESTORE_FILE)) {
 const database = new Database(DB_FILE);
 database.pragma('journal_mode = WAL');
 migrateSchema(database);
-
-function ensureInstanceIdentity() {
-  const existing = database.prepare('SELECT * FROM instance_identity WHERE id = 1').get();
-  if (existing) return existing;
-  const keys = generateKeyPairSync('ed25519', {
-    publicKeyEncoding: { type: 'spki', format: 'pem' },
-    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-  });
-  const identity = { instanceId: randomUUID(), name: String(process.env.INSTANCE_NAME || 'The Master List instance').trim(), publicKey: keys.publicKey, privateKey: keys.privateKey, createdAt: new Date().toISOString() };
-  database.prepare('INSERT INTO instance_identity (id, instance_id, name, public_key, private_key, created_at) VALUES (1, ?, ?, ?, ?, ?)').run(identity.instanceId, identity.name, identity.publicKey, identity.privateKey, identity.createdAt);
-  return { id: 1, instance_id: identity.instanceId, name: identity.name, public_key: identity.publicKey, private_key: identity.privateKey, created_at: identity.createdAt };
-}
-
-ensureInstanceIdentity();
+const peerIdentity = createPeerIdentity({ database, crypto, instanceName: () => process.env.INSTANCE_NAME || 'The Master List instance' });
+peerIdentity.ensure();
+const instanceRow = peerIdentity.row;
+const peerRows = peerIdentity.peers;
 
 function appSetting(key, fallback = null) {
   const row = database.prepare('SELECT value FROM app_settings WHERE key = ?').get(key);
@@ -128,8 +123,25 @@ const handleMediaMutation = createMediaMutationRoutes({
   requireAccount, readBody, sendJson, sendError, mediaRows, hashFile,
   encoding: mediaEncoding, recognition: mediaRecognition, processor: mediaProcessor, jobs: backgroundJobs
 });
-const conflictStore = createConflictStore({ database, payloadFromGig: conflictPayloadFromGig, payloadFromSnapshot: conflictPayloadFromSnapshot, findGig: findGigSync });
+const peerTransport = createPeerTransport({ fetch, identity: peerIdentity, AbortController, setTimeout, clearTimeout });
+let conflictStore;
+const peerSync = createPeerSync({
+  database, identity: peerIdentity, transport: peerTransport, findGig: findGigSync,
+  normaliseRating, createHash, detectConflict: (...args) => conflictStore.detect(...args)
+});
+const {
+  contributionRows: sharedContributionRows,
+  conflictPayloadFromGig,
+  conflictPayloadFromSnapshot,
+  upsertLocalContribution
+} = peerSync;
+conflictStore = createConflictStore({ database, payloadFromGig: conflictPayloadFromGig, payloadFromSnapshot: conflictPayloadFromSnapshot, findGig: findGigSync });
 const { detect: detectSyncConflict, list: peerConflictRows } = conflictStore;
+const handlePeerRoute = createPeerRoutes({
+  database, identity: peerIdentity, transport: peerTransport, sync: peerSync,
+  requireAccount, readBody, sendJson, sendError, appOrigin,
+  instanceUrl: () => process.env.INSTANCE_URL || '', randomUUID
+});
 
 const mediaRecoveryPromise = recoverMediaWork({ database, fs, path, mediaDir: MEDIA_DIR }).then((result) => {
   if (Object.values(result).some(Boolean)) console.log('[media] recovered interrupted work:', result);
@@ -418,15 +430,6 @@ function profileRows() {
   return database.prepare('SELECT id, name, created_at AS createdAt FROM profiles ORDER BY name COLLATE NOCASE').all();
 }
 
-function instanceRow() {
-  const row = database.prepare('SELECT instance_id AS instanceId, name, public_key AS publicKey, created_at AS createdAt FROM instance_identity WHERE id = 1').get();
-  return row || ensureInstanceIdentity();
-}
-
-function peerRows() {
-  return database.prepare('SELECT id, peer_id AS peerId, name, base_url AS baseUrl, public_key AS publicKey, status, created_at AS createdAt, last_seen_at AS lastSeenAt FROM peer_instances ORDER BY name COLLATE NOCASE').all();
-}
-
 function normaliseGigAttendees(value, account) {
   const owner = account ? { id: account.id, type: 'owner', name: account.name } : null;
   const peers = new Map(peerRows().map((peer) => [peer.peerId, { id: peer.peerId, type: 'peer', name: peer.name }]));
@@ -438,300 +441,6 @@ function normaliseGigAttendees(value, account) {
     if (peers.has(peerId) && !attendees.some((attendee) => attendee.id === peerId)) attendees.push(peers.get(peerId));
   }
   return attendees;
-}
-
-function peerInviteToken(request) {
-  const identity = database.prepare('SELECT instance_id, name, public_key, private_key FROM instance_identity WHERE id = 1').get();
-  const payload = {
-    version: 1,
-    peerId: identity.instance_id,
-    name: identity.name,
-    publicKey: identity.public_key,
-    baseUrl: String(process.env.INSTANCE_URL || appOrigin(request)).replace(/\/$/, ''),
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-    nonce: randomBytes(18).toString('base64url')
-  };
-  const encodedPayload = JSON.stringify(payload);
-  const signature = signPayload(null, Buffer.from(encodedPayload), identity.private_key).toString('base64url');
-  return Buffer.from(JSON.stringify({ payload, signature })).toString('base64url');
-}
-
-function parsePeerInvite(token) {
-  let envelope;
-  try { envelope = JSON.parse(Buffer.from(String(token || ''), 'base64url').toString('utf8')); } catch { throw new Error('That pairing invite is not valid.'); }
-  const payload = envelope?.payload;
-  if (!payload?.peerId || !payload?.publicKey || !payload?.name || !payload?.expiresAt || !envelope.signature) throw new Error('That pairing invite is incomplete.');
-  if (Date.parse(payload.expiresAt) <= Date.now()) throw new Error('That pairing invite has expired.');
-  if (!verifyPayload(null, Buffer.from(JSON.stringify(payload)), payload.publicKey, Buffer.from(envelope.signature, 'base64url'))) throw new Error('That pairing invite signature could not be verified.');
-  return payload;
-}
-
-function signInstanceEnvelope(payload) {
-  const identity = database.prepare('SELECT instance_id, private_key FROM instance_identity WHERE id = 1').get();
-  const signedPayload = {
-    ...payload,
-    originInstanceId: identity.instance_id,
-    issuedAt: new Date().toISOString(),
-    nonce: randomBytes(18).toString('base64url')
-  };
-  const encoded = JSON.stringify(signedPayload);
-  return { payload: signedPayload, signature: signPayload(null, Buffer.from(encoded), identity.private_key).toString('base64url') };
-}
-
-function verifyPeerEnvelope(envelope, expectedPeerId = null) {
-  const payload = envelope?.payload;
-  const originInstanceId = String(payload?.originInstanceId || '').trim();
-  if (!originInstanceId || !envelope?.signature) throw new Error('Signed peer request is incomplete.');
-  if (expectedPeerId && originInstanceId !== expectedPeerId) throw new Error('Peer response came from an unexpected instance.');
-  const peer = database.prepare('SELECT * FROM peer_instances WHERE peer_id = ?').get(originInstanceId);
-  if (!peer) throw new Error('This instance is not paired.');
-  const issuedAt = Date.parse(payload.issuedAt);
-  if (!Number.isFinite(issuedAt) || Math.abs(Date.now() - issuedAt) > 10 * 60 * 1000) throw new Error('Signed peer request has expired.');
-  const valid = verifyPayload(null, Buffer.from(JSON.stringify(payload)), peer.public_key, Buffer.from(envelope.signature, 'base64url'));
-  if (!valid) throw new Error('Peer signature could not be verified.');
-  return { payload, peer };
-}
-
-function verifySelfSignedPairEnvelope(envelope) {
-  const payload = envelope?.payload;
-  if (payload?.type !== 'pair' || !payload.originInstanceId || !payload.publicKey || !payload.name || !envelope?.signature) throw new Error('Pair confirmation is incomplete.');
-  const issuedAt = Date.parse(payload.issuedAt);
-  if (!Number.isFinite(issuedAt) || Math.abs(Date.now() - issuedAt) > 10 * 60 * 1000) throw new Error('Pair confirmation has expired.');
-  if (!verifyPayload(null, Buffer.from(JSON.stringify(payload)), payload.publicKey, Buffer.from(envelope.signature, 'base64url'))) throw new Error('Pair confirmation signature could not be verified.');
-  return payload;
-}
-
-async function confirmPairWithRemote(peer, inviteToken, request) {
-  if (!peer?.base_url) return false;
-  const identity = database.prepare('SELECT instance_id, name, public_key FROM instance_identity WHERE id = 1').get();
-  const envelope = signInstanceEnvelope({
-    type: 'pair',
-    name: identity.name,
-    publicKey: identity.public_key,
-    baseUrl: String(process.env.INSTANCE_URL || appOrigin(request)).replace(/\/$/, '')
-  });
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12_000);
-  try {
-    const response = await fetch(`${peer.base_url.replace(/\/$/, '')}/api/sync/pair`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ inviteToken, envelope }), signal: controller.signal
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || `Peer returned HTTP ${response.status}.`);
-    const verified = verifyPeerEnvelope(body, peer.peer_id).payload;
-    if (verified.requestNonce !== envelope.payload.nonce) throw new Error('Pair confirmation did not match this request.');
-    return true;
-  } finally { clearTimeout(timeout); }
-}
-
-async function postPeerEnvelope(peer, pathname, payload) {
-  if (!peer?.base_url) throw new Error('This peer does not have a connection URL.');
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12_000);
-  try {
-    const envelope = signInstanceEnvelope(payload);
-    const response = await fetch(`${peer.base_url.replace(/\/$/, '')}${pathname}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(envelope),
-      signal: controller.signal
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || `Peer returned HTTP ${response.status}.`);
-    const verified = verifyPeerEnvelope(body, peer.peer_id).payload;
-    if (verified.requestNonce !== envelope.payload.nonce) throw new Error('Peer response did not match this request.');
-    return verified;
-  } catch (error) {
-    if (error.name === 'AbortError') throw new Error('Peer connection timed out.');
-    throw error;
-  } finally { clearTimeout(timeout); }
-}
-
-async function syncWithPeer(peer) {
-  if (!peer?.base_url) throw new Error('Add a peer URL before syncing this instance.');
-  try {
-    const snapshots = localSyncSnapshots(peer.peer_id);
-    const reply = await postPeerEnvelope(peer, '/api/sync/exchange', { type: 'sync-exchange', snapshots });
-    if (reply.type !== 'sync-response' || !Array.isArray(reply.snapshots)) throw new Error('Peer returned an invalid sync response.');
-    let applied = 0;
-    for (const snapshot of reply.snapshots.slice(0, 500)) if (applySyncSnapshot(snapshot, peer)) applied += 1;
-    const now = new Date().toISOString();
-    database.prepare("UPDATE peer_instances SET status = 'connected', last_seen_at = ? WHERE id = ?").run(now, peer.id);
-    return { ok: true, peerId: peer.id, peerName: peer.name, sent: snapshots.length, received: reply.snapshots.length, applied, remoteApplied: Number(reply.applied || 0), lastSeenAt: now };
-  } catch (error) {
-    database.prepare("UPDATE peer_instances SET status = 'unreachable' WHERE id = ?").run(peer.id);
-    throw error;
-  }
-}
-
-function localParticipantName() {
-  return database.prepare('SELECT name FROM profiles WHERE is_admin = 1 ORDER BY created_at LIMIT 1').get()?.name || instanceRow().name;
-}
-
-function syncMediaManifest(gig) {
-  return (gig.media || []).map((item) => ({
-    id: item.id,
-    filename: item.filename,
-    mimeType: item.mimeType,
-    caption: item.caption || '',
-    size: Number(item.size || 0),
-    checksum: item.checksum || null,
-    category: item.category || 'show',
-    externalUrl: item.externalUrl || null,
-    songIndex: item.songIndex ?? null,
-    playbackPreferred: Boolean(item.playbackPreferred),
-    playbackStart: item.playbackStart ?? null,
-    playbackEnd: item.playbackEnd ?? null,
-    playbackClips: Array.isArray(item.playbackClips) ? item.playbackClips : []
-  }));
-}
-
-function conflictPayloadFromGig(gig) {
-  return {
-    notes: String(gig.performanceNotes || gig.notes || ''),
-    venueNotes: String(gig.venueNotes || ''),
-    performanceRating: normaliseRating(gig.performanceRating),
-    venueRating: normaliseRating(gig.venueRating),
-    favorite: Boolean(gig.favorite),
-    songs: Array.isArray(gig.songs) ? gig.songs : [],
-    media: syncMediaManifest(gig)
-  };
-}
-
-function conflictPayloadFromSnapshot(snapshot) {
-  const contribution = snapshot.contribution || {};
-  return {
-    notes: String(contribution.performanceNotes || ''),
-    venueNotes: String(contribution.venueNotes || ''),
-    performanceRating: normaliseRating(contribution.performanceRating),
-    venueRating: normaliseRating(contribution.venueRating),
-    favorite: Boolean(contribution.favorite),
-    songs: Array.isArray(snapshot.show?.songs) ? snapshot.show.songs : [],
-    media: Array.isArray(contribution.media) ? contribution.media : []
-  };
-}
-
-function ensureSharedShowForGig(gig) {
-  const sharedGigId = gig.sharedId || gig.id;
-  database.prepare(`INSERT INTO shared_shows
-    (id, source_gig_id, artist, venue, city, date, setlist_fm_id, setlist_fm_url, songs, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET source_gig_id=COALESCE(shared_shows.source_gig_id, excluded.source_gig_id),
-      artist=excluded.artist, venue=excluded.venue, city=excluded.city, date=excluded.date,
-      setlist_fm_id=excluded.setlist_fm_id, setlist_fm_url=excluded.setlist_fm_url, songs=excluded.songs`).run(
-    sharedGigId, gig.id, gig.artist, gig.venue, gig.city, gig.date, gig.setlistFmId || null, gig.setlistFmUrl || null,
-    JSON.stringify(gig.songs || []), gig.createdAt || new Date().toISOString()
-  );
-  return sharedGigId;
-}
-
-function upsertLocalContribution(gig, updatedAt = new Date().toISOString()) {
-  const sharedGigId = ensureSharedShowForGig(gig);
-  const identity = instanceRow();
-  const media = syncMediaManifest(gig);
-  database.prepare(`INSERT INTO shared_gig_contributions
-    (shared_gig_id, instance_id, local_gig_id, participant_name, performance_rating, venue_rating, favorite, performance_notes, venue_notes, media_manifest, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(shared_gig_id, instance_id) DO UPDATE SET local_gig_id=excluded.local_gig_id,
-      participant_name=excluded.participant_name, performance_rating=excluded.performance_rating,
-      venue_rating=excluded.venue_rating, favorite=excluded.favorite, performance_notes=excluded.performance_notes,
-      venue_notes=excluded.venue_notes, media_manifest=excluded.media_manifest, updated_at=excluded.updated_at`).run(
-    sharedGigId, identity.instanceId, gig.id, localParticipantName(), gig.performanceRating ?? null, gig.venueRating ?? null,
-    gig.favorite ? 1 : 0, gig.performanceNotes || gig.notes || '', gig.venueNotes || '', JSON.stringify(media), updatedAt
-  );
-  return { sharedGigId, contribution: sharedContributionRows(sharedGigId).find((entry) => entry.instanceId === identity.instanceId) };
-}
-
-function localSyncSnapshots(peerId) {
-  const identity = instanceRow();
-  return database.prepare('SELECT id FROM gigs ORDER BY created_at').all().map((row) => findGigSync(row.id)).filter((gig) =>
-    (gig.attendees || []).some((attendee) => attendee.id === peerId)
-  ).map((gig) => {
-    const updatedAt = new Date().toISOString();
-    const { sharedGigId, contribution } = upsertLocalContribution(gig, updatedAt);
-    const attendees = (gig.attendees || []).map((attendee) => attendee.type === 'owner'
-      ? { id: identity.instanceId, type: 'instance', name: localParticipantName() }
-      : { id: attendee.id, type: 'instance', name: attendee.name });
-    const show = { artist: gig.artist, venue: gig.venue, city: gig.city, date: gig.date, setlistFmId: gig.setlistFmId, setlistFmUrl: gig.setlistFmUrl, songs: gig.songs || [] };
-    const contributionContent = { ...contribution };
-    delete contributionContent.updatedAt;
-    const eventPayload = { sharedGigId, instanceId: identity.instanceId, show, attendees, contribution: contributionContent };
-    return {
-      eventId: createHash('sha256').update(JSON.stringify(eventPayload)).digest('hex'),
-      sharedGigId,
-      show,
-      attendees,
-      contribution
-    };
-  });
-}
-
-function matchingLocalGig(show) {
-  return database.prepare(`SELECT id, shared_id FROM gigs WHERE lower(artist) = lower(?) AND lower(venue) = lower(?)
-    AND lower(city) = lower(?) AND date = ? ORDER BY created_at LIMIT 1`).get(show.artist, show.venue, show.city, show.date);
-}
-
-function applySyncSnapshot(snapshot, originPeer) {
-  if (!snapshot?.eventId || !snapshot?.sharedGigId || !snapshot?.show || !snapshot?.contribution) return false;
-  if (snapshot.contribution.instanceId !== originPeer.peer_id) throw new Error('Peer contribution identity does not match its signature.');
-  if (database.prepare('SELECT 1 FROM sync_events WHERE event_id = ?').get(snapshot.eventId)) return false;
-  const isNewPeerContribution = !database.prepare('SELECT 1 FROM shared_gig_contributions WHERE shared_gig_id = ? AND instance_id = ?').get(snapshot.sharedGigId, originPeer.peer_id);
-  const show = snapshot.show;
-  if (![show.artist, show.venue, show.city].every((value) => typeof value === 'string') || typeof show.date !== 'string') throw new Error('Peer sent an invalid shared show.');
-  let local = database.prepare('SELECT id, shared_id FROM gigs WHERE shared_id = ?').get(snapshot.sharedGigId);
-  if (!local) local = matchingLocalGig(show);
-  if (local && local.shared_id !== snapshot.sharedGigId && !database.prepare('SELECT 1 FROM gigs WHERE shared_id = ?').get(snapshot.sharedGigId)) {
-    database.prepare('UPDATE gigs SET shared_id = ? WHERE id = ?').run(snapshot.sharedGigId, local.id);
-  }
-  const conflictState = detectSyncConflict(snapshot, originPeer, local ? findGigSync(local.id) : null);
-  const now = new Date().toISOString();
-  database.transaction(() => {
-    database.prepare(`INSERT INTO shared_shows
-      (id, source_gig_id, artist, venue, city, date, setlist_fm_id, setlist_fm_url, songs, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET source_gig_id=COALESCE(shared_shows.source_gig_id, excluded.source_gig_id),
-        artist=excluded.artist, venue=excluded.venue, city=excluded.city, date=excluded.date,
-        setlist_fm_id=excluded.setlist_fm_id, setlist_fm_url=excluded.setlist_fm_url, songs=excluded.songs`).run(
-      snapshot.sharedGigId, local?.id || null, show.artist, show.venue, show.city, show.date,
-      show.setlistFmId || null, show.setlistFmUrl || null, JSON.stringify(Array.isArray(show.songs) ? show.songs : []), now
-    );
-    const contribution = snapshot.contribution;
-    database.prepare(`INSERT INTO shared_gig_contributions
-      (shared_gig_id, instance_id, local_gig_id, participant_name, performance_rating, venue_rating, favorite, performance_notes, venue_notes, media_manifest, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(shared_gig_id, instance_id) DO UPDATE SET participant_name=excluded.participant_name,
-        performance_rating=excluded.performance_rating, venue_rating=excluded.venue_rating, favorite=excluded.favorite,
-        performance_notes=excluded.performance_notes, venue_notes=excluded.venue_notes,
-        media_manifest=excluded.media_manifest, updated_at=excluded.updated_at
-      WHERE excluded.updated_at >= shared_gig_contributions.updated_at`).run(
-      snapshot.sharedGigId, originPeer.peer_id, null, String(contribution.participantName || originPeer.name).slice(0, 100),
-      normaliseRating(contribution.performanceRating), normaliseRating(contribution.venueRating), contribution.favorite ? 1 : 0,
-      String(contribution.performanceNotes || '').slice(0, 20_000), String(contribution.venueNotes || '').slice(0, 20_000), JSON.stringify(Array.isArray(contribution.media) ? contribution.media.slice(0, 500) : []),
-      contribution.updatedAt || now
-    );
-    if (local) {
-      const gigRow = database.prepare('SELECT attendees FROM gigs WHERE id = ?').get(local.id);
-      const attendees = JSON.parse(gigRow?.attendees || '[]');
-      if (!attendees.some((attendee) => attendee.id === originPeer.peer_id)) attendees.push({ id: originPeer.peer_id, type: 'peer', name: originPeer.name });
-      database.prepare('UPDATE gigs SET attendees = ? WHERE id = ?').run(JSON.stringify(attendees), local.id);
-      upsertLocalContribution(findGigSync(local.id), now);
-    }
-    database.prepare('INSERT INTO sync_events (event_id, origin_instance_id, shared_gig_id, event_type, payload, created_at, applied_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-      snapshot.eventId, originPeer.peer_id, snapshot.sharedGigId, 'shared-gig.snapshot', JSON.stringify(snapshot), contribution.updatedAt || now, now
-    );
-    {
-      const notificationId = createHash('sha256').update(`peer-show:${originPeer.peer_id}:${snapshot.eventId}`).digest('hex');
-      const notificationType = conflictState.conflict ? 'peer-sync-conflict' : (isNewPeerContribution ? 'peer-show-shared' : 'peer-show-updated');
-      database.prepare(`INSERT OR IGNORE INTO notifications
-        (id, type, peer_id, shared_gig_id, title, body, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        notificationId, notificationType, originPeer.peer_id, snapshot.sharedGigId, conflictState.conflict ? `Review edits from ${originPeer.name}` : (isNewPeerContribution ? `${originPeer.name} shared a show` : `${originPeer.name} updated a shared show`),
-        `${show.artist} at ${show.venue}${show.city ? `, ${show.city}` : ''}`, now
-      );
-    }
-  })();
-  return true;
 }
 
 function applyRemoteMediaAssignments(localGigId, localMedia, remoteMedia, mode) {
@@ -797,17 +506,6 @@ function resolvePeerConflict(id, choices) {
     database.prepare("UPDATE notifications SET read_at = COALESCE(read_at, ?) WHERE type = 'peer-sync-conflict' AND shared_gig_id = ? AND peer_id = ?").run(new Date().toISOString(), row.shared_gig_id, row.peer_id);
   })();
   return { ok: true, resolution, gig: findGigSync(gig.id) };
-}
-
-function sharedContributionRows(sharedGigId) {
-  return database.prepare(`SELECT shared_gig_id AS sharedGigId, instance_id AS instanceId, local_gig_id AS localGigId,
-    participant_name AS participantName, performance_rating AS performanceRating, venue_rating AS venueRating,
-    favorite, performance_notes AS performanceNotes, venue_notes AS venueNotes, media_manifest AS mediaManifest, updated_at AS updatedAt
-    FROM shared_gig_contributions WHERE shared_gig_id = ? ORDER BY updated_at`).all(sharedGigId).map((entry) => ({
-    ...entry,
-    favorite: Boolean(entry.favorite),
-    media: JSON.parse(entry.mediaManifest || '[]')
-  }));
 }
 
 function sharedShowRows() {
@@ -1378,135 +1076,9 @@ async function handleApi(request, response, url) {
 
   if (await handleAuthApi(request, response, url)) return;
 
-  if (request.method === 'POST' && url.pathname === '/api/sync/pair') {
-    try {
-      const body = await readBody(request);
-      const invite = parsePeerInvite(body.inviteToken);
-      if (invite.peerId !== instanceRow().instanceId) return sendError(response, 400, 'This pairing invite belongs to another instance.');
-      const peer = verifySelfSignedPairEnvelope(body.envelope);
-      if (peer.originInstanceId === instanceRow().instanceId) return sendError(response, 400, 'You cannot pair an instance with itself.');
-      const baseUrl = String(peer.baseUrl || '').trim().replace(/\/$/, '');
-      if (baseUrl) { const parsed = new URL(baseUrl); if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Peer URL is invalid.'); }
-      const now = new Date().toISOString();
-      database.prepare(`INSERT INTO peer_instances (id, peer_id, name, base_url, public_key, status, created_at, last_seen_at)
-        VALUES (?, ?, ?, ?, ?, 'connected', ?, ?)
-        ON CONFLICT(peer_id) DO UPDATE SET name=excluded.name, base_url=excluded.base_url, public_key=excluded.public_key,
-          status='connected', last_seen_at=excluded.last_seen_at`).run(randomUUID(), peer.originInstanceId, peer.name, baseUrl, peer.publicKey, now, now);
-      return sendJson(response, 200, signInstanceEnvelope({ type: 'pair-response', requestNonce: peer.nonce }));
-    } catch (error) { return sendError(response, 400, error.message); }
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/sync/hello') {
-    try {
-      const { payload, peer } = verifyPeerEnvelope(await readBody(request));
-      if (payload.type !== 'hello') return sendError(response, 400, 'Invalid peer health request.');
-      const now = new Date().toISOString();
-      database.prepare("UPDATE peer_instances SET status = 'connected', last_seen_at = ? WHERE peer_id = ?").run(now, peer.peer_id);
-      return sendJson(response, 200, signInstanceEnvelope({ type: 'hello-response', requestNonce: payload.nonce, name: instanceRow().name }));
-    } catch (error) { return sendError(response, 401, error.message); }
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/sync/exchange') {
-    try {
-      const { payload, peer } = verifyPeerEnvelope(await readBody(request));
-      if (payload.type !== 'sync-exchange' || !Array.isArray(payload.snapshots)) return sendError(response, 400, 'Invalid sync exchange.');
-      let applied = 0;
-      for (const snapshot of payload.snapshots.slice(0, 500)) if (applySyncSnapshot(snapshot, peer)) applied += 1;
-      const now = new Date().toISOString();
-      database.prepare("UPDATE peer_instances SET status = 'connected', last_seen_at = ? WHERE peer_id = ?").run(now, peer.peer_id);
-      return sendJson(response, 200, signInstanceEnvelope({
-        type: 'sync-response',
-        requestNonce: payload.nonce,
-        applied,
-        snapshots: localSyncSnapshots(peer.peer_id)
-      }));
-    } catch (error) { return sendError(response, 400, error.message); }
-  }
+  if (await handlePeerRoute(request, response, url)) return;
 
   request.account = accountsConfigured() ? requireAccount(request) : null;
-
-  if (request.method === 'GET' && url.pathname === '/api/instance') {
-    requireAccount(request);
-    return sendJson(response, 200, { ...instanceRow(), peers: peerRows() });
-  }
-
-  if (request.method === 'GET' && url.pathname === '/api/peers') {
-    requireAccount(request);
-    return sendJson(response, 200, peerRows());
-  }
-
-  if (request.method === 'GET' && url.pathname === '/api/notifications') {
-    requireAccount(request);
-    const scope = url.searchParams.get('scope') === 'all' ? 'all' : 'unread';
-    const notifications = database.prepare(`SELECT id, type, peer_id AS peerId, shared_gig_id AS sharedGigId,
-      title, body, created_at AS createdAt, read_at AS readAt FROM notifications
-      ${scope === 'all' ? '' : 'WHERE read_at IS NULL'} ORDER BY created_at DESC LIMIT 200`).all();
-    return sendJson(response, 200, notifications.map((entry) => ({ ...entry, unread: !entry.readAt })));
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/notifications/read-all') {
-    requireAccount(request);
-    const result = database.prepare('UPDATE notifications SET read_at = ? WHERE read_at IS NULL').run(new Date().toISOString());
-    return sendJson(response, 200, { updated: result.changes });
-  }
-
-  const notificationMatch = url.pathname.match(/^\/api\/notifications\/([a-f0-9]+)$/);
-  if (request.method === 'PATCH' && notificationMatch) {
-    requireAccount(request);
-    database.prepare('UPDATE notifications SET read_at = ? WHERE id = ?').run(new Date().toISOString(), notificationMatch[1]);
-    return sendJson(response, 200, { ok: true });
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/peers/invite') {
-    requireAccount(request);
-    const token = peerInviteToken(request);
-    return sendJson(response, 201, { token, inviteUrl: `${appOrigin(request)}/account?peerInvite=${encodeURIComponent(token)}`, expiresAt: JSON.parse(Buffer.from(token, 'base64url').toString('utf8')).payload.expiresAt });
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/peers/import') {
-    requireAccount(request);
-    const body = await readBody(request);
-    const peer = parsePeerInvite(body.token);
-    if (peer.peerId === instanceRow().instanceId) return sendError(response, 400, 'You cannot pair an instance with itself.');
-    const now = new Date().toISOString();
-    const id = randomUUID();
-    database.prepare(`INSERT INTO peer_instances (id, peer_id, name, base_url, public_key, status, created_at, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, 'paired', ?, NULL)
-      ON CONFLICT(peer_id) DO UPDATE SET name=excluded.name, base_url=excluded.base_url, public_key=excluded.public_key, status='paired'`).run(id, peer.peerId, peer.name, peer.baseUrl || '', peer.publicKey, now);
-    let confirmed = false;
-    try {
-      confirmed = await confirmPairWithRemote(database.prepare('SELECT * FROM peer_instances WHERE peer_id = ?').get(peer.peerId), body.token, request);
-      if (confirmed) database.prepare("UPDATE peer_instances SET status = 'connected', last_seen_at = ? WHERE peer_id = ?").run(new Date().toISOString(), peer.peerId);
-    } catch { /* The peer may be offline; a later test will report connection state. */ }
-    return sendJson(response, 201, { peer: peerRows().find((entry) => entry.peerId === peer.peerId), message: confirmed ? 'Peer paired on both instances.' : 'Peer saved locally. The remote instance could not be confirmed yet.' });
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/peers') {
-    requireAccount(request);
-    const body = await readBody(request);
-    const peerId = String(body.peerId || '').trim();
-    const name = String(body.name || '').trim();
-    const publicKey = String(body.publicKey || '').trim();
-    const baseUrl = String(body.baseUrl || '').trim().replace(/\/$/, '');
-    if (!peerId || !name || !publicKey) return sendError(response, 400, 'Peer ID, name, and public key are required.');
-    if (baseUrl) {
-      try { const parsed = new URL(baseUrl); if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error(); } catch { return sendError(response, 400, 'Peer URL must be a valid HTTP or HTTPS URL.'); }
-    }
-    const now = new Date().toISOString();
-    const id = randomUUID();
-    database.prepare(`INSERT INTO peer_instances (id, peer_id, name, base_url, public_key, status, created_at, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, 'paired', ?, NULL)
-      ON CONFLICT(peer_id) DO UPDATE SET name=excluded.name, base_url=excluded.base_url, public_key=excluded.public_key, status='paired'`).run(id, peerId, name, baseUrl, publicKey, now);
-    return sendJson(response, 201, peerRows().find((peer) => peer.peerId === peerId));
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/peers/sync-all') {
-    requireAccount(request);
-    const connectedPeers = database.prepare("SELECT * FROM peer_instances WHERE status = 'connected' AND base_url <> '' ORDER BY name COLLATE NOCASE").all();
-    const settled = await Promise.allSettled(connectedPeers.map((peer) => syncWithPeer(peer)));
-    const results = settled.map((result, index) => result.status === 'fulfilled' ? result.value : { ok: false, peerId: connectedPeers[index].id, peerName: connectedPeers[index].name, error: result.reason?.message || 'Sync failed.' });
-    return sendJson(response, 200, { peers: connectedPeers.length, results, applied: results.reduce((sum, result) => sum + Number(result.applied || 0), 0) });
-  }
 
   if (request.method === 'GET' && url.pathname === '/api/sync/conflicts') {
     const account = requireAccount(request);
@@ -1520,33 +1092,6 @@ async function handleApi(request, response, url) {
     if (!account.isAdmin) return sendError(response, 403, 'Only the instance owner can resolve sync conflicts.');
     try { return sendJson(response, 200, resolvePeerConflict(conflictResolveMatch[1], await readBody(request))); }
     catch (error) { return sendError(response, 400, error.message); }
-  }
-
-  const peerActionMatch = url.pathname.match(/^\/api\/peers\/([\w-]+)\/(test|sync)$/);
-  if (request.method === 'POST' && peerActionMatch) {
-    requireAccount(request);
-    const peer = database.prepare('SELECT * FROM peer_instances WHERE id = ?').get(peerActionMatch[1]);
-    if (!peer) return sendError(response, 404, 'Paired instance not found.');
-    if (!peer.base_url) return sendError(response, 400, 'Add a peer URL before testing or syncing this instance.');
-    try {
-      if (peerActionMatch[2] === 'test') {
-        const reply = await postPeerEnvelope(peer, '/api/sync/hello', { type: 'hello' });
-        const now = new Date().toISOString();
-        database.prepare("UPDATE peer_instances SET status = 'connected', last_seen_at = ? WHERE id = ?").run(now, peer.id);
-        return sendJson(response, 200, { ok: true, name: reply.name || peer.name, status: 'connected', lastSeenAt: now });
-      }
-      return sendJson(response, 200, await syncWithPeer(peer));
-    } catch (error) {
-      database.prepare("UPDATE peer_instances SET status = 'unreachable' WHERE id = ?").run(peer.id);
-      return sendError(response, 502, error.message);
-    }
-  }
-
-  const peerMatch = url.pathname.match(/^\/api\/peers\/([\w-]+)$/);
-  if (request.method === 'DELETE' && peerMatch) {
-    requireAccount(request);
-    database.prepare('DELETE FROM peer_instances WHERE id = ?').run(peerMatch[1]);
-    return sendJson(response, 200, { ok: true });
   }
 
   const mediaFileMatch = url.pathname.match(/^\/api\/media\/([\w-]+)$/);
