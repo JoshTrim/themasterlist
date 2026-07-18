@@ -32,6 +32,7 @@
 - `lib/providers/apple-music.js` — catalog matching, library playlist creation and API-sized track batching.
 - `lib/oauth.js` — provider configuration, authorization state, code exchange, connection status and token refresh.
 - `lib/geocoding.js` — Nominatim lookup, request throttling, coordinate validation, persistence and map aggregation.
+- `lib/archive-health.js` — deterministic missing-setlist, album, profile-photo, biography and venue-location diagnostics.
 
 The browser application is progressively split from `public/app.js`. Browser-safe CommonJS/UMD modules under `public/lib/` load before the main application bundle:
 
