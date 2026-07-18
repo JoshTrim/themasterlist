@@ -5,6 +5,7 @@ const playbackMedia = window.MasterListPlaybackMedia;
 const playbackEditor = window.MasterListPlaybackEditor;
 const theatreUi = window.MasterListTheatre;
 const mediaUi = window.MasterListMediaUi;
+const mediaUploaderModule = window.MasterListMediaUploader;
 const uploadQueue = window.MasterListUploadQueue;
 const mediaJobs = window.MasterListMediaJobs;
 const showEditor = window.MasterListShowEditor;
@@ -195,6 +196,7 @@ const mediaSelection = mediaUi.createSelection();
 const mobileUploadStates = new WeakMap();
 const mobileUploadRenderTimers = new WeakMap();
 const isMobileUpload = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+const gigMediaUploader = mediaUploaderModule.createUploader({ fetch: (...args) => window.fetch(...args), XMLHttpRequest: window.XMLHttpRequest, AbortController: window.AbortController, randomUUID: () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`, updateJob, isMobile: () => isMobileUpload });
 let uploadWakeLock = null;
 let activeWakeLockUsers = 0;
 async function retainUploadWakeLock() { if (!isMobileUpload || !navigator.wakeLock) return; activeWakeLockUsers += 1; if (uploadWakeLock) return; try { uploadWakeLock = await navigator.wakeLock.request('screen'); uploadWakeLock.addEventListener?.('release', () => { uploadWakeLock = null; }); } catch { uploadWakeLock = null; } }
@@ -795,81 +797,8 @@ async function pollMediaRecognition(gigId, onMedia) {
   return mediaJobs.pollRecognition({ fetchMedia: () => fetchJson(`/api/gigs/${gigId}/media`), onUpdate: onMedia });
 }
 
-async function fileAsBase64(file) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = '';
-  for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-  return btoa(binary);
-}
-
-const mobileUploadChains = new Map();
-async function uploadGigMediaNow(gigId, files, onProgress = () => {}, category = 'show') {
-  if (!crypto.randomUUID) Object.defineProperty(crypto, 'randomUUID', { value: () => `${Date.now()}-${Math.random().toString(36).slice(2)}` });
-  const queue = [...files];
-  const uploadPath = category === 'artifact' ? `/api/gigs/${gigId}/artifacts` : `/api/gigs/${gigId}/media`;
-  const uploadChunked = async (file, jobId) => {
-    const chunkSize = 4 * 1024 * 1024;
-    const uploadId = crypto.randomUUID();
-    const controller = new AbortController();
-    updateJob(jobId, { cancel: () => controller.abort() });
-    let offset = 0;
-    while (offset < file.size) {
-      const chunk = file.slice(offset, offset + chunkSize);
-      let attempt = 0;
-      while (true) {
-        try {
-          const response = await fetch(`${uploadPath}/chunk`, { method: 'POST', cache: 'no-store', signal: controller.signal, headers: { 'Content-Type': file.type, 'X-Upload-Id': uploadId, 'X-Upload-Offset': String(offset), 'X-Upload-Total': String(file.size), 'X-Media-Filename': encodeURIComponent(file.name), 'X-Media-Category': category }, body: chunk });
-          const body = await response.json().catch(() => ({}));
-          if (response.status === 409 && Number.isFinite(Number(body.offset))) { offset = Math.max(0, Math.min(file.size, Number(body.offset))); continue; }
-          if (!response.ok) throw new Error(body.error || `Chunk failed (HTTP ${response.status})`);
-          if (body.complete && category === 'artifact' && body.media?.category !== 'artifact') throw new Error('The server did not save this as an artifact. Restart the server and retry.');
-          offset = body.complete ? file.size : Math.max(offset, Number(body.offset) || 0);
-          updateJob(jobId, { progress: offset / file.size * 100 });
-          onProgress(file, offset / file.size);
-          break;
-        } catch (error) {
-          if (controller.signal.aborted) throw new Error('Upload cancelled.');
-          if (++attempt >= 6) throw new Error(`${error.message || 'Network error'} after ${attempt} attempts.`);
-          await new Promise((resolve) => setTimeout(resolve, Math.min(10000, 800 * (2 ** (attempt - 1)))));
-        }
-      }
-    }
-  };
-  const worker = async () => {
-    while (queue.length) {
-      const file = queue.shift();
-      const jobId = `${Date.now()}-${Math.random()}`;
-      updateJob(jobId, { id: jobId, type: 'Uploading', name: file.name, status: 'running', progress: 0 });
-      try {
-        if (isMobileUpload) await uploadChunked(file, jobId);
-        else await new Promise((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          updateJob(jobId, { cancel: () => xhr.abort() });
-          xhr.open('POST', uploadPath);
-          xhr.setRequestHeader('Content-Type', file.type);
-          xhr.setRequestHeader('X-Media-Filename', encodeURIComponent(file.name));
-          xhr.setRequestHeader('X-Media-Caption', encodeURIComponent(file.name));
-          xhr.setRequestHeader('X-Media-Category', category);
-          xhr.upload.onprogress = (event) => { if (event.lengthComputable) { updateJob(jobId, { progress: (event.loaded / event.total) * 100 }); onProgress(file, event.loaded / event.total); } };
-          xhr.onload = () => { let body = {}; try { body = JSON.parse(xhr.responseText); } catch {} if (xhr.status >= 200 && xhr.status < 300) { if (category === 'artifact' && body.media?.category !== 'artifact' && body.category !== 'artifact') return reject(new Error('The server did not save this as an artifact. Restart the server and retry.')); updateJob(jobId, { status: 'complete', progress: 100 }); resolve(body); } else reject(new Error(body.error || 'Media upload failed.')); };
-          xhr.onerror = () => reject(new Error('Media upload failed.'));
-          xhr.onabort = () => reject(new Error('Upload cancelled.'));
-          xhr.send(file);
-        });
-        updateJob(jobId, { status: 'complete', progress: 100 });
-      } catch (error) { updateJob(jobId, { status: 'error', error: error.message }); throw error; }
-    }
-  };
-  const concurrency = isMobileUpload ? 1 : 2;
-  await Promise.all(Array.from({ length: concurrency }, () => worker()));
-}
 function uploadGigMedia(gigId, files, onProgress = () => {}, category = 'show') {
-  if (!isMobileUpload) return uploadGigMediaNow(gigId, files, onProgress, category);
-  const previous = mobileUploadChains.get(gigId) || Promise.resolve();
-  const next = previous.catch(() => {}).then(() => uploadGigMediaNow(gigId, files, onProgress, category));
-  mobileUploadChains.set(gigId, next);
-  next.finally(() => { if (mobileUploadChains.get(gigId) === next) mobileUploadChains.delete(gigId); }).catch(() => {});
-  return next;
+  return gigMediaUploader.upload(gigId, files, onProgress, category);
 }
 
 async function addYouTubeMedia(gigId, input) {

@@ -55,6 +55,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `playback-editor.js` — playback-plan validation, normalized clip payloads and suggestion presentation state.
 - `theatre.js` — fullscreen presentation, keyboard commands and control auto-hide rules.
 - `media-ui.js` — media recognition/workspace presentation, bulk selection and media-safe show patches.
+- `media-uploader.js` — serial resumable mobile uploads, direct desktop uploads, retries, cancellation and job progress.
 - `upload-queue.js` — serial mobile upload queue state, retry/clear transitions and progress markup.
 - `media-jobs.js` — bounded polling for encoding, rotation, background removal and audio recognition.
 - `show-editor.js` — shared add/edit payloads, duplicate detection, attendees and metadata-preserving track mutations.
