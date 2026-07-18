@@ -15,10 +15,10 @@ describe('frontend shell contracts', () => {
   });
 
   test('loads shared frontend modules before the application bundle', () => {
-    for (const module of ['formatters', 'navigation', 'auth-state', 'jobs', 'shows', 'show-cards', 'playback-core', 'playback-media', 'theatre', 'media-ui', 'upload-queue', 'media-jobs', 'show-editor']) {
+    for (const module of ['api-client', 'page-runtime', 'formatters', 'navigation', 'auth-state', 'jobs', 'shows', 'show-cards', 'playback-core', 'playback-media', 'theatre', 'media-ui', 'upload-queue', 'media-jobs', 'show-editor']) {
       assert.ok(html.indexOf(`/lib/${module}.js`) < html.indexOf('/app.js'), module);
     }
-    for (const global of ['MasterListFormatters', 'MasterListNavigation', 'MasterListAuthState', 'MasterListJobs', 'MasterListShows', 'MasterListShowCards', 'MasterListPlaybackCore', 'MasterListPlaybackMedia', 'MasterListTheatre', 'MasterListMediaUi', 'MasterListUploadQueue', 'MasterListMediaJobs', 'MasterListShowEditor']) {
+    for (const global of ['MasterListApiClient', 'MasterListPageRuntime', 'MasterListFormatters', 'MasterListNavigation', 'MasterListAuthState', 'MasterListJobs', 'MasterListShows', 'MasterListShowCards', 'MasterListPlaybackCore', 'MasterListPlaybackMedia', 'MasterListTheatre', 'MasterListMediaUi', 'MasterListUploadQueue', 'MasterListMediaJobs', 'MasterListShowEditor']) {
       assert.match(app, new RegExp(`window\\.${global}`), global);
     }
   });
@@ -32,5 +32,15 @@ describe('frontend shell contracts', () => {
   test('cache-busts the application and stylesheet assets', () => {
     assert.match(html, /styles\.css\?v=[^"']+/);
     assert.match(html, /app\.js\?v=[^"']+/);
+  });
+
+  test('loads Leaflet only when the map is requested', () => {
+    assert.doesNotMatch(html, /<link[^>]+leaflet/);
+    assert.doesNotMatch(html, /<script[^>]+src="https:\/\/unpkg\.com\/leaflet/);
+    assert.match(app, /pageRuntime\.loadLeaflet/);
+  });
+
+  test('keeps the archive count populated on shell-only authenticated pages', () => {
+    assert.match(app, /fetchJson\('\/api\/stats'\)/);
   });
 });

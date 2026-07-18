@@ -41,6 +41,8 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `upload-queue.js` — serial mobile upload queue state, retry/clear transitions and progress markup.
 - `media-jobs.js` — bounded polling for encoding, rotation, background removal and audio recognition.
 - `show-editor.js` — shared add/edit payloads, duplicate detection, attendees and metadata-preserving track mutations.
+- `api-client.js` — consistent JSON response parsing and API error objects.
+- `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 
 ## Testing strategy
 

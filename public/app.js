@@ -7,6 +7,8 @@ const mediaUi = window.MasterListMediaUi;
 const uploadQueue = window.MasterListUploadQueue;
 const mediaJobs = window.MasterListMediaJobs;
 const showEditor = window.MasterListShowEditor;
+const pageRuntime = window.MasterListPageRuntime;
+const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
 const navSignIn = document.querySelector('#nav-sign-in');
 const jobUi = window.MasterListJobs.createJobQueue({ document, fetchJson, escapeHtml, hideUploads: () => isMobileUpload });
@@ -688,10 +690,7 @@ function setMessage(text, isError = false) {
 }
 
 async function fetchJson(url, options) {
-  const response = await fetch(url, options);
-  const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || 'Something went wrong.');
-  return payload;
+  return apiClient.json(url, options);
 }
 
 function renderPeerNotifications(notifications) {
@@ -3460,6 +3459,7 @@ loadMapButton.addEventListener('click', async () => {
   loadMapButton.textContent = 'Finding venues…';
   mapMessage.textContent = 'Looking up venues that have not been placed yet…';
   try {
+    await pageRuntime.loadLeaflet({ document, window });
     const payload = await fetchJson('/api/map/locations', { method: 'POST' });
     drawMap(payload.locations);
   } catch (error) {
@@ -3579,46 +3579,54 @@ async function initializeApp() {
   if (authState.redirectToLogin) { window.location.replace('/login'); return; }
   if (!authState.authenticated) {
     showAuth(auth);
+    return;
   } else {
     activeProfileId = account.id;
   }
-  const [gigData, integrationData, profileData, showData, peerData] = await Promise.all([fetchJson('/api/gigs'), fetchJson('/api/integrations'), fetchJson('/api/profiles'), fetchJson('/api/shared/shows'), account ? fetchJson('/api/peers') : Promise.resolve([])]);
-    gigs = gigData;
-    integrations = integrationData;
-    profiles = profileData;
-    sharedShows = showData;
-    peers = peerData;
-    renderAttendeePicker(addAttendeePicker, []);
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('connected')) setMessage(`${providerName(params.get('connected'))} connected. Choose a show to export.`);
-    if (params.get('integrationError')) setMessage('Could not connect that music service. Check its configuration and try again.', true);
-    populateYearFilter();
-    populateShowAutofill();
-    renderGigs();
-    await renderDashboardStats();
-    await renderEntityDirectories();
-    renderTimeline();
-    renderGlobalSearch();
-    await renderArchiveHealth();
-    await renderApiLimits();
-    await renderMaintenance();
-    await renderActivity();
-    await renderConflicts();
-    renderProfiles();
-    renderSharedShows();
-    await renderInstanceSettings();
-    await renderArtistPage();
-    await renderArtistEditPage();
-    renderShowPage();
-    renderCityPage();
-    await renderVenuePage();
-    await renderVenueEditPage();
-    renderEditPage();
-    if (page === 'map' && loadMapButton) loadMapButton.click();
-    if (account) {
-      await loadPeerNotifications();
-      peerPollTimer = setTimeout(pollConnectedPeers, 5_000);
-    }
+  const data = await pageRuntime.loadPageData(page, { authenticated: true, fetchJson });
+  ({ gigs, integrations, profiles, sharedShows, peers } = data);
+  if (pageRuntime.requirementsFor(page).includes('gigs')) {
+    const total = gigs.length + (pageRuntime.requirementsFor(page).includes('sharedShows') ? remoteSharedArchiveShows().length : 0);
+    count.textContent = `${total} show${total === 1 ? '' : 's'}`;
+  } else {
+    const stats = await fetchJson('/api/stats').catch(() => null);
+    if (stats) count.textContent = `${stats.shows} show${stats.shows === 1 ? '' : 's'}`;
+  }
+  const controllers = {
+    home: async () => {},
+    login: async () => {},
+    overview: renderDashboardStats,
+    artists: renderEntityDirectories,
+    venues: renderEntityDirectories,
+    timeline: async () => renderTimeline(),
+    search: async () => renderGlobalSearch(),
+    health: renderArchiveHealth,
+    'api-limits': renderApiLimits,
+    maintenance: renderMaintenance,
+    activity: renderActivity,
+    conflicts: renderConflicts,
+    add: async () => { renderAttendeePicker(addAttendeePicker, []); populateShowAutofill(); },
+    shows: async () => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('connected')) setMessage(`${providerName(params.get('connected'))} connected. Choose a show to export.`);
+      if (params.get('integrationError')) setMessage('Could not connect that music service. Check its configuration and try again.', true);
+      populateYearFilter(); renderGigs();
+    },
+    artist: renderArtistPage,
+    'artist-edit': renderArtistEditPage,
+    show: async () => renderShowPage(),
+    playback: async () => renderShowPage(),
+    city: async () => renderCityPage(),
+    venue: renderVenuePage,
+    'venue-edit': renderVenueEditPage,
+    edit: async () => { populateShowAutofill(); renderEditPage(); },
+    map: async () => loadMapButton?.click(),
+    account: async () => { renderProfiles(); renderSharedShows(); await renderInstanceSettings(); }
+  };
+  await pageRuntime.runController(page, controllers, { account, data });
+  await loadPeerNotifications();
+  await loadConflictCount();
+  peerPollTimer = setTimeout(pollConnectedPeers, 5_000);
 }
 
 initializeApp().catch((error) => setMessage(error.message, true));
