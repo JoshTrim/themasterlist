@@ -35,6 +35,7 @@ const { createSetlistFmProvider } = require('./lib/providers/setlist-fm');
 const { createMetadataProvider } = require('./lib/providers/metadata');
 const { createSpotifyProvider } = require('./lib/providers/spotify');
 const { createYouTubeProvider } = require('./lib/providers/youtube');
+const { createAppleMusicProvider } = require('./lib/providers/apple-music');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -112,6 +113,7 @@ const setlistProvider = createSetlistFmProvider({ apiKey: process.env.SETLIST_FM
 const metadataProvider = createMetadataProvider({ fetch, googleApiKey: process.env.GOOGLE_CUSTOM_SEARCH_API_KEY, googleEngineId: process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID });
 const spotifyProvider = createSpotifyProvider({ requestJson: providerResponse });
 const youtubeProvider = createYouTubeProvider({ requestJson: providerResponse });
+const appleMusicProvider = createAppleMusicProvider({ requestJson: providerResponse, developerToken: process.env.APPLE_MUSIC_DEVELOPER_TOKEN, storefront: process.env.APPLE_MUSIC_STOREFRONT || 'au' });
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
 const mediaRecognition = createMediaRecognition({
@@ -836,34 +838,7 @@ async function refreshYouTubePlaybackMetadata(gigId, media) {
 }
 
 async function exportAppleMusic(gig, musicUserToken) {
-  if (!musicUserToken) throw new Error('Apple Music authorization was not completed.');
-  const headers = {
-    Authorization: `Bearer ${process.env.APPLE_MUSIC_DEVELOPER_TOKEN}`,
-    'Music-User-Token': musicUserToken,
-    'Content-Type': 'application/json'
-  };
-  const storefront = process.env.APPLE_MUSIC_STOREFRONT || 'au';
-  const tracks = [];
-  const unmatched = [];
-  for (const song of gig.songs) {
-    const query = new URLSearchParams({ term: `${song.artist || gig.artist} ${song.title}`, types: 'songs', limit: '1' });
-    const result = await providerResponse(`https://api.music.apple.com/v1/catalog/${storefront}/search?${query}`, { headers }, 'Apple Music search');
-    const track = result.results?.songs?.data?.[0];
-    if (track) tracks.push({ id: track.id, type: 'songs' });
-    else unmatched.push(`${song.artist || gig.artist} — ${song.title}`);
-  }
-  const details = playlistDetails(gig);
-  const playlist = await providerResponse('https://api.music.apple.com/v1/me/library/playlists', {
-    method: 'POST', headers, body: JSON.stringify({ attributes: { name: details.name, description: details.description } })
-  }, 'Apple Music playlist');
-  const playlistId = playlist.data?.[0]?.id;
-  if (!playlistId) throw new Error('Apple Music did not return the new playlist.');
-  for (let index = 0; index < tracks.length; index += 100) {
-    await providerResponse(`https://api.music.apple.com/v1/me/library/playlists/${playlistId}/tracks`, {
-      method: 'POST', headers, body: JSON.stringify({ data: tracks.slice(index, index + 100) })
-    }, 'Apple Music playlist');
-  }
-  return { url: 'https://music.apple.com/library', matched: tracks.length, unmatched };
+  return appleMusicProvider.exportPlaylist({ gig, musicUserToken, details: playlistDetails(gig) });
 }
 
 async function handleAuth(request, response, url) {

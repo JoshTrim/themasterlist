@@ -29,6 +29,7 @@
 - `lib/providers/metadata.js` — iTunes, MusicBrainz, Wikipedia and official-site metadata lookups without persistence concerns.
 - `lib/providers/spotify.js` — track matching, private playlist creation and API-sized batching.
 - `lib/providers/youtube.js` — playlist export, event-specific live-video search, embed checks and playback metadata.
+- `lib/providers/apple-music.js` — catalog matching, library playlist creation and API-sized track batching.
 
 The browser application is progressively split from `public/app.js`. Browser-safe CommonJS/UMD modules under `public/lib/` load before the main application bundle:
 
