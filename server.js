@@ -34,6 +34,7 @@ const { createPeerRoutes } = require('./lib/routes/peers');
 const { createSetlistFmProvider } = require('./lib/providers/setlist-fm');
 const { createMetadataProvider } = require('./lib/providers/metadata');
 const { createSpotifyProvider } = require('./lib/providers/spotify');
+const { createYouTubeProvider } = require('./lib/providers/youtube');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -110,6 +111,7 @@ const { readAll: readGigs, writeAll: writeGigs, find: findGigSync } = gigReposit
 const setlistProvider = createSetlistFmProvider({ apiKey: process.env.SETLIST_FM_API_KEY, fetch, recordUsage, normaliseSongs });
 const metadataProvider = createMetadataProvider({ fetch, googleApiKey: process.env.GOOGLE_CUSTOM_SEARCH_API_KEY, googleEngineId: process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID });
 const spotifyProvider = createSpotifyProvider({ requestJson: providerResponse });
+const youtubeProvider = createYouTubeProvider({ requestJson: providerResponse });
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
 const mediaRecognition = createMediaRecognition({
@@ -785,42 +787,12 @@ async function exportSpotify(gig) {
 
 async function exportYouTube(gig) {
   const accessToken = await getAccessToken('youtube');
-  const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
-  const videos = [];
-  const unmatched = [];
-  for (const song of gig.songs) {
-    const query = new URLSearchParams({ part: 'snippet', type: 'video', videoCategoryId: '10', maxResults: '1', q: `${song.artist || gig.artist} ${song.title} official audio` });
-    const result = await providerResponse(`https://www.googleapis.com/youtube/v3/search?${query}`, { headers }, 'YouTube search');
-    const video = result.items?.[0]?.id?.videoId;
-    if (video) videos.push(video);
-    else unmatched.push(`${song.artist || gig.artist} — ${song.title}`);
-  }
-  const details = playlistDetails(gig);
-  const playlist = await providerResponse('https://www.googleapis.com/youtube/v3/playlists?part=snippet,status', {
-    method: 'POST', headers, body: JSON.stringify({ snippet: details, status: { privacyStatus: 'private' } })
-  }, 'YouTube playlist');
-  for (const videoId of videos) {
-    await providerResponse('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet', {
-      method: 'POST', headers, body: JSON.stringify({ snippet: { playlistId: playlist.id, resourceId: { kind: 'youtube#video', videoId } } })
-    }, 'YouTube playlist');
-  }
-  return { url: `https://www.youtube.com/playlist?list=${playlist.id}`, matched: videos.length, unmatched };
+  return youtubeProvider.exportPlaylist({ gig, accessToken, details: playlistDetails(gig) });
 }
 
 async function searchYouTubeForGig(gig) {
   const accessToken = await getAccessToken('youtube');
-  const headers = { Authorization: `Bearer ${accessToken}` };
   const matches = [];
-  const venueNeedle = String(gig.venue || '').trim().toLowerCase();
-  const dateNeedles = [];
-  if (gig.date) {
-    const date = new Date(`${gig.date}T00:00:00`);
-    if (!Number.isNaN(date.getTime())) {
-      dateNeedles.push(String(date.getFullYear()));
-      dateNeedles.push(date.toLocaleDateString('en-US', { month: 'long' }).toLowerCase());
-      dateNeedles.push(date.toLocaleDateString('en-US', { month: 'short' }).toLowerCase());
-    }
-  }
   for (const [index, song] of gig.songs.entries()) {
     // Include the embed check in the cache version so older cached results
     // cannot reintroduce videos that YouTube reports as non-embeddable.
@@ -830,21 +802,7 @@ async function searchYouTubeForGig(gig) {
       matches.push({ index, title: song.title, results: JSON.parse(cached.results) });
       continue;
     }
-    const query = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '10', q: `${song.artist || gig.artist} ${song.title} ${gig.venue} ${gig.city} live` });
-    const result = await providerResponse(`https://www.googleapis.com/youtube/v3/search?${query}`, { headers }, 'YouTube search');
-    const filtered = (result.items || []).filter((item) => {
-      if (!item.id?.videoId) return false;
-      const text = `${item.snippet?.title || ''} ${item.snippet?.description || ''}`.toLowerCase();
-      return (venueNeedle && text.includes(venueNeedle)) || dateNeedles.some((needle) => text.includes(needle));
-    });
-    const candidateIds = filtered.map((item) => item.id.videoId).slice(0, 50);
-    let embeddableIds = new Set();
-    if (candidateIds.length) {
-      const statusQuery = new URLSearchParams({ part: 'status', id: candidateIds.join(',') });
-      const statusResult = await providerResponse(`https://www.googleapis.com/youtube/v3/videos?${statusQuery}`, { headers }, 'YouTube video status');
-      embeddableIds = new Set((statusResult.items || []).filter((item) => item.status?.embeddable === true).map((item) => item.id));
-    }
-    const results = filtered.filter((item) => embeddableIds.has(item.id.videoId)).slice(0, 3).map((item) => ({ id: item.id.videoId, title: item.snippet?.title || '', description: item.snippet?.description || '', channel: item.snippet?.channelTitle || '', thumbnail: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url || '' }));
+    const results = await youtubeProvider.searchLiveVideos({ gig, song, accessToken });
     database.prepare('INSERT INTO youtube_search_cache (cache_key, results, created_at) VALUES (?, ?, ?) ON CONFLICT(cache_key) DO UPDATE SET results = excluded.results, created_at = excluded.created_at').run(cacheKey, JSON.stringify(results), new Date().toISOString());
     matches.push({ index, title: song.title, results });
   }
@@ -859,12 +817,11 @@ async function refreshYouTubePlaybackMetadata(gigId, media) {
   try {
     const token = await getAccessToken('youtube');
     const byVideoId = new Map(pending.map((item) => [youtubeVideoId(item.externalUrl || item.url), item]));
-    const query = new URLSearchParams({ part: 'snippet,contentDetails,status', id: [...byVideoId.keys()].join(',') });
-    const result = await providerResponse(`https://www.googleapis.com/youtube/v3/videos?${query}`, { headers: { Authorization: `Bearer ${token}` } }, 'YouTube video metadata');
+    const videos = await youtubeProvider.videoMetadata({ videoIds: [...byVideoId.keys()], accessToken: token });
     const now = new Date().toISOString();
     const update = database.prepare('UPDATE gig_media SET caption = ?, source_description = ?, source_duration = ?, source_metadata_at = ? WHERE id = ?');
     const seen = new Set();
-    (result.items || []).forEach((video) => {
+    videos.forEach((video) => {
       const item = byVideoId.get(video.id);
       if (!item) return;
       seen.add(video.id);
