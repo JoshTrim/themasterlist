@@ -46,6 +46,7 @@ const { createSetlistRoutes } = require('./lib/routes/setlists');
 const { createStatsRoutes } = require('./lib/routes/stats');
 const { createArchiveTransferRoutes } = require('./lib/routes/archive-transfer');
 const { createDirectoryRoutes } = require('./lib/routes/directory');
+const { createPlaybackPlanRoutes } = require('./lib/routes/playback-plans');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -142,6 +143,7 @@ const handleSetlistRoute = createSetlistRoutes({ provider: setlistProvider, enri
 const handleStatsRoute = createStatsRoutes({ database, requireAccount, sendJson, genreStats: archiveGenreStats, usageDay, configured, youtubeQuota: process.env.YOUTUBE_DAILY_QUOTA_UNITS, setlistConfigured: Boolean(process.env.SETLIST_FM_API_KEY && process.env.SETLIST_FM_API_KEY !== 'replace-me') });
 const handleArchiveTransfer = createArchiveTransferRoutes({ database, requireAccount, readBody, readGigs, sendJson, sendError, validateGig, normaliseAttendees: normaliseGigAttendees, randomUUID });
 const handleDirectoryRoute = createDirectoryRoutes({ database, requireAccount, readBody, sendJson, sendError, fetchArtistInfo, fetchVenueInfo, cachedArtistGenres, saveArtistGenres, normaliseImagePosition, saveProfileImageUpload, removeReplacedProfileImage, geocoding, validCoordinates });
+const handlePlaybackPlanRoute = createPlaybackPlanRoutes({ database, requireAccount, readBody, sendJson, sendError, findGig: findGigSync, mediaRows, refreshMetadata: refreshYouTubePlaybackMetadata, suggestPlaybackPlan });
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
 const mediaRecognition = createMediaRecognition({
@@ -1020,69 +1022,7 @@ async function handleApi(request, response, url) {
 
   if (await handleMediaUpload(request, response, url)) return;
   if (await handleMediaMutation(request, response, url)) return;
-  const playbackSuggestMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/playback-plan\/suggest$/);
-  if (request.method === 'POST' && playbackSuggestMatch) {
-    requireAccount(request);
-    const gig = findGigSync(playbackSuggestMatch[1]);
-    let media = mediaRows(gig.id);
-    const metadataWarning = await refreshYouTubePlaybackMetadata(gig.id, media);
-    media = mediaRows(gig.id);
-    const suggestions = suggestPlaybackPlan(gig, media);
-    return sendJson(response, 200, { suggestions, metadataWarning, inspected: media.filter((item) => item.category !== 'artifact' && String(item.mimeType || '').startsWith('video/')).length });
-  }
-  const playbackPlanMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/playback-plan$/);
-  if (request.method === 'PUT' && playbackPlanMatch) {
-    requireAccount(request);
-    const gig = database.prepare('SELECT id, songs FROM gigs WHERE id = ?').get(playbackPlanMatch[1]);
-    if (!gig) return sendError(response, 404, 'Gig not found.');
-    const songs = JSON.parse(gig.songs || '[]');
-    const media = database.prepare("SELECT id FROM gig_media WHERE gig_id = ? AND mime_type LIKE 'video/%' AND category <> 'artifact'").all(gig.id);
-    const mediaIds = new Set(media.map((item) => item.id));
-    const body = await readBody(request);
-    if (!Array.isArray(body.clips)) return sendError(response, 400, 'Playback clips are required.');
-    if (body.clips.length > songs.length * 8) return sendError(response, 400, 'A track can have at most eight playback sources.');
-    const validatedClips = [];
-    const clipKeys = new Set();
-    for (const [inputIndex, item] of body.clips.entries()) {
-      const songIndex = Number(item.songIndex);
-      const mediaId = String(item.mediaId || '');
-      const requestedPriority = Number(item.priority);
-      const startSeconds = item.startSeconds === '' || item.startSeconds === null || item.startSeconds === undefined ? null : Number(item.startSeconds);
-      const endSeconds = item.endSeconds === '' || item.endSeconds === null || item.endSeconds === undefined ? null : Number(item.endSeconds);
-      if (!Number.isInteger(songIndex) || songIndex < 0 || songIndex >= songs.length || !mediaIds.has(mediaId)) return sendError(response, 400, 'Playback clip references an invalid song or video.');
-      if (startSeconds !== null && (!Number.isFinite(startSeconds) || startSeconds < 0)) return sendError(response, 400, `Invalid start point for track ${songIndex + 1}.`);
-      if (endSeconds !== null && (!Number.isFinite(endSeconds) || endSeconds <= 0)) return sendError(response, 400, `Invalid end point for track ${songIndex + 1}.`);
-      if (startSeconds !== null && endSeconds !== null && endSeconds <= startSeconds) return sendError(response, 400, `Playback end must follow the start for track ${songIndex + 1}.`);
-      const key = `${songIndex}:${mediaId}`;
-      if (clipKeys.has(key)) return sendError(response, 400, `Track ${songIndex + 1} contains the same playback source more than once.`);
-      clipKeys.add(key);
-      validatedClips.push({ mediaId, songIndex, startSeconds, endSeconds, requestedPriority: Number.isInteger(requestedPriority) && requestedPriority >= 0 ? requestedPriority : inputIndex, inputIndex });
-    }
-    const clipsBySong = new Map();
-    validatedClips.forEach((clip) => { if (!clipsBySong.has(clip.songIndex)) clipsBySong.set(clip.songIndex, []); clipsBySong.get(clip.songIndex).push(clip); });
-    if ([...clipsBySong.values()].some((clips) => clips.length > 8)) return sendError(response, 400, 'A track can have at most eight playback sources.');
-    clipsBySong.forEach((clips) => clips.sort((a, b) => a.requestedPriority - b.requestedPriority || a.inputIndex - b.inputIndex).forEach((clip, priority) => { clip.priority = priority; }));
-    const clipsByMedia = new Map();
-    validatedClips.forEach((clip) => { if (!clipsByMedia.has(clip.mediaId)) clipsByMedia.set(clip.mediaId, []); clipsByMedia.get(clip.mediaId).push(clip); });
-    for (const clips of clipsByMedia.values()) {
-      clips.sort((a, b) => a.songIndex - b.songIndex);
-      for (let index = 1; index < clips.length; index += 1) {
-        const previous = clips[index - 1];
-        const current = clips[index];
-        if (previous.startSeconds !== null && current.startSeconds !== null && current.startSeconds < previous.startSeconds) return sendError(response, 400, `Track ${current.songIndex + 1} starts before an earlier clip from the same video.`);
-        if (previous.endSeconds !== null && current.startSeconds !== null && current.startSeconds < previous.endSeconds) return sendError(response, 400, `Track ${current.songIndex + 1} overlaps the previous clip from the same video.`);
-      }
-    }
-    const savePlan = database.transaction((clips) => {
-      database.prepare('DELETE FROM media_playback_clips WHERE media_id IN (SELECT id FROM gig_media WHERE gig_id = ?)').run(gig.id);
-      database.prepare("UPDATE gig_media SET playback_clips_initialized = 1 WHERE gig_id = ? AND mime_type LIKE 'video/%'").run(gig.id);
-      const insert = database.prepare('INSERT INTO media_playback_clips (media_id, song_index, start_seconds, end_seconds, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
-      const now = new Date().toISOString();
-      clips.forEach((clip) => insert.run(clip.mediaId, clip.songIndex, clip.startSeconds, clip.endSeconds, clip.priority, now, now));
-    });
-    savePlan(validatedClips);
-    return sendJson(response, 200, { media: mediaRows(gig.id) });
-  }
+  if (await handlePlaybackPlanRoute(request, response, url)) return;
   const exportMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/export\/(spotify|youtube|apple-music)$/);
   const youtubeSearchMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/youtube-search$/);
   if (request.method === 'POST' && youtubeSearchMatch) {

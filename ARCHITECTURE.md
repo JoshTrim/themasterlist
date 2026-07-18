@@ -40,6 +40,7 @@
 - `lib/routes/stats.js` — archive summaries, genre statistics and provider-usage reporting.
 - `lib/routes/archive-transfer.js` — authenticated JSON archive export and transactional validated import.
 - `lib/routes/directory.js` — artist and venue profile lookup, editing, genres, images and locations.
+- `lib/routes/playback-plans.js` — playback suggestions plus validated, transactional clip assignment.
 
 The browser application is progressively split from `public/app.js`. Browser-safe CommonJS/UMD modules under `public/lib/` load before the main application bundle:
 
