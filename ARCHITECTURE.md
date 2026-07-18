@@ -38,6 +38,7 @@
 - `lib/routes/shows.js` — show listing, creation, metadata-preserving edits and deletion.
 - `lib/routes/setlists.js` — setlist.fm search and cached album-enrichment endpoints.
 - `lib/routes/stats.js` — archive summaries, genre statistics and provider-usage reporting.
+- `lib/routes/archive-transfer.js` — authenticated JSON archive export and transactional validated import.
 
 The browser application is progressively split from `public/app.js`. Browser-safe CommonJS/UMD modules under `public/lib/` load before the main application bundle:
 

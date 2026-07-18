@@ -44,6 +44,7 @@ const { createMaintenanceRoutes } = require('./lib/routes/maintenance');
 const { createShowRoutes } = require('./lib/routes/shows');
 const { createSetlistRoutes } = require('./lib/routes/setlists');
 const { createStatsRoutes } = require('./lib/routes/stats');
+const { createArchiveTransferRoutes } = require('./lib/routes/archive-transfer');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -138,6 +139,7 @@ const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBod
 const handleShowRoute = createShowRoutes({ database, readGigs, readBody, sendJson, sendError, validateGig, normaliseRating, normaliseAttendees: normaliseGigAttendees, randomUUID });
 const handleSetlistRoute = createSetlistRoutes({ provider: setlistProvider, enrichAlbums: enrichGigAlbums, sendJson, sendError });
 const handleStatsRoute = createStatsRoutes({ database, requireAccount, sendJson, genreStats: archiveGenreStats, usageDay, configured, youtubeQuota: process.env.YOUTUBE_DAILY_QUOTA_UNITS, setlistConfigured: Boolean(process.env.SETLIST_FM_API_KEY && process.env.SETLIST_FM_API_KEY !== 'replace-me') });
+const handleArchiveTransfer = createArchiveTransferRoutes({ database, requireAccount, readBody, readGigs, sendJson, sendError, validateGig, normaliseAttendees: normaliseGigAttendees, randomUUID });
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
 const mediaRecognition = createMediaRecognition({
@@ -904,21 +906,7 @@ async function handleApi(request, response, url) {
     return sendJson(response, 200, { format: 'the-master-list-backup-v1', createdAt: new Date().toISOString(), database: (await fs.readFile(DB_FILE)).toString('base64'), media: files });
   }
 
-  if (request.method === 'GET' && url.pathname === '/api/archive/export') {
-    requireAccount(request);
-    const gigs = await readGigs();
-    return sendJson(response, 200, { format: 'the-master-list-export-v1', createdAt: new Date().toISOString(), gigs });
-  }
-  if (request.method === 'POST' && url.pathname === '/api/archive/import') {
-    requireAccount(request);
-    const body = await readBody(request);
-    if (!Array.isArray(body.gigs)) return sendError(response, 400, 'Import must contain a gigs array.');
-    const imported = body.gigs.map((gig) => { const id = gig.id || randomUUID(); return { ...gig, id, sharedId: gig.sharedId || id, artist: String(gig.artist || '').trim(), venue: String(gig.venue || '').trim(), city: String(gig.city || '').trim(), date: String(gig.date || '').trim(), songs: Array.isArray(gig.songs) ? gig.songs : [], attendees: normaliseGigAttendees(gig.attendees, request.account), createdAt: gig.createdAt || new Date().toISOString() }; });
-    imported.forEach(validateGig);
-    const importGigs = database.transaction((records) => { const statement = database.prepare(`INSERT INTO gigs (id, shared_id, artist, venue, city, date, notes, performance_notes, venue_notes, performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, attendees, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET shared_id=excluded.shared_id, artist=excluded.artist, venue=excluded.venue, city=excluded.city, date=excluded.date, notes=excluded.notes, performance_notes=excluded.performance_notes, venue_notes=excluded.venue_notes, performance_rating=excluded.performance_rating, venue_rating=excluded.venue_rating, favorite=excluded.favorite, setlist_fm_id=excluded.setlist_fm_id, setlist_fm_url=excluded.setlist_fm_url, songs=excluded.songs, attendees=excluded.attendees`); records.forEach((gig) => statement.run(gig.id, gig.sharedId, gig.artist, gig.venue, gig.city, gig.date, gig.notes || '', gig.performanceNotes || gig.notes || '', gig.venueNotes || '', gig.performanceRating ?? null, gig.venueRating ?? null, gig.favorite ? 1 : 0, gig.setlistFmId || null, gig.setlistFmUrl || null, JSON.stringify(gig.songs || []), JSON.stringify(gig.attendees || []), gig.createdAt)); });
-    importGigs(imported);
-    return sendJson(response, 200, { imported: imported.length });
-  }
+  if (await handleArchiveTransfer(request, response, url)) return;
   if (await handleStatsRoute(request, response, url)) return;
   if (request.method === 'GET' && url.pathname === '/api/jobs') {
     return sendJson(response, 200, backgroundJobs.listActive());
