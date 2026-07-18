@@ -41,6 +41,7 @@ const { createGeocodingService, validCoordinates } = require('./lib/geocoding');
 const { createArchiveHealthService } = require('./lib/archive-health');
 const { createArchiveIntegrityService } = require('./lib/archive-integrity');
 const { createMaintenanceRoutes } = require('./lib/routes/maintenance');
+const { createShowRoutes } = require('./lib/routes/shows');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -132,6 +133,7 @@ const archiveHealthService = createArchiveHealthService({
 });
 const archiveIntegrityService = createArchiveIntegrityService({ database, fs, path, mediaDir: MEDIA_DIR, databaseFile: DB_FILE, profileImageFilename: localProfileImageFilename });
 const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup, manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore });
+const handleShowRoute = createShowRoutes({ database, readGigs, readBody, sendJson, sendError, validateGig, normaliseRating, normaliseAttendees: normaliseGigAttendees, randomUUID });
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
 const mediaRecognition = createMediaRecognition({
@@ -1135,57 +1137,13 @@ async function handleApi(request, response, url) {
     return sendJson(response, 200, await archiveHealth());
   }
 
-  if (request.method === 'GET' && url.pathname === '/api/gigs') {
-    const gigs = await readGigs();
-    return sendJson(response, 200, gigs.sort((a, b) => b.date.localeCompare(a.date)));
-  }
+  if (await handleShowRoute(request, response, url)) return;
 
   const albumStatsMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/album-stats$/);
   if (albumStatsMatch && request.method === 'GET') {
     return sendJson(response, 200, await enrichGigAlbums(albumStatsMatch[1], url.searchParams.get('refresh') === '1'));
   }
 
-  if (request.method === 'POST' && url.pathname === '/api/gigs') {
-    const gig = await readBody(request);
-    validateGig(gig);
-    const record = {
-      id: randomUUID(),
-      sharedId: randomUUID(),
-      artist: gig.artist.trim(),
-      venue: gig.venue.trim(),
-      city: gig.city.trim(),
-      date: String(gig.date || '').trim(),
-      notes: String(gig.notes || '').trim(),
-      performanceNotes: String(gig.performanceNotes || gig.notes || '').trim(),
-      venueNotes: String(gig.venueNotes || '').trim(),
-      performanceRating: normaliseRating(gig.performanceRating),
-      venueRating: normaliseRating(gig.venueRating),
-      favorite: gig.favorite === true || gig.favorite === 'true',
-      setlistFmId: gig.setlistFmId || null,
-      setlistFmUrl: gig.setlistFmUrl || null,
-      songs: Array.isArray(gig.songs) ? gig.songs : [],
-      attendees: normaliseGigAttendees(gig.attendees, request.account),
-      createdAt: new Date().toISOString()
-    };
-    database.prepare(`
-      INSERT INTO gigs (id, shared_id, artist, venue, city, date, notes, performance_notes, venue_notes,
-        performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, attendees, created_at)
-      VALUES (@id, @sharedId, @artist, @venue, @city, @date, @notes, @performanceNotes, @venueNotes,
-        @performanceRating, @venueRating, @favorite, @setlistFmId, @setlistFmUrl, @songs, @attendees, @createdAt)
-    `).run({
-      ...record,
-      performanceRating: record.performanceRating ?? null,
-      venueRating: record.venueRating ?? null,
-      favorite: record.favorite ? 1 : 0,
-      setlistFmId: record.setlistFmId || null,
-      setlistFmUrl: record.setlistFmUrl || null,
-      songs: JSON.stringify(record.songs || []),
-      attendees: JSON.stringify(record.attendees || [])
-    });
-    return sendJson(response, 201, record);
-  }
-
-  const gigMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)$/);
   if (await handleMediaUpload(request, response, url)) return;
   if (await handleMediaMutation(request, response, url)) return;
   const playbackSuggestMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/playback-plan\/suggest$/);
@@ -1251,55 +1209,6 @@ async function handleApi(request, response, url) {
     savePlan(validatedClips);
     return sendJson(response, 200, { media: mediaRows(gig.id) });
   }
-  if (request.method === 'PATCH' && gigMatch) {
-    const update = await readBody(request);
-    const gigs = await readGigs();
-    const gig = gigs.find((entry) => entry.id === gigMatch[1]);
-    if (!gig) return sendError(response, 404, 'Gig not found');
-    if ('artist' in update) gig.artist = String(update.artist || '').trim();
-    if ('venue' in update) gig.venue = String(update.venue || '').trim();
-    if ('city' in update) gig.city = String(update.city || '').trim();
-    if ('date' in update) gig.date = String(update.date || '').trim();
-    if ('attendees' in update) gig.attendees = normaliseGigAttendees(update.attendees, request.account);
-    if ('songs' in update && Array.isArray(update.songs)) gig.songs = update.songs.map((song, index) => {
-      const existing = gig.songs[index] || {};
-      const merged = {
-        ...existing,
-        ...song,
-        title: String(song.title || '').trim(),
-        artist: String(song.artist ?? existing.artist ?? '').trim(),
-        album: String(song.album ?? existing.album ?? '').trim() || null,
-        encore: 'encore' in song ? Boolean(song.encore) : Boolean(existing.encore),
-        position: index + 1,
-        info: String(song.info ?? existing.info ?? '').trim(),
-        startSeconds: song.startSeconds === '' || song.startSeconds === null || song.startSeconds === undefined ? null : Number(song.startSeconds),
-        endSeconds: song.endSeconds === '' || song.endSeconds === null || song.endSeconds === undefined ? null : Number(song.endSeconds)
-      };
-      if (!Number.isFinite(merged.startSeconds)) merged.startSeconds = null;
-      if (!Number.isFinite(merged.endSeconds)) merged.endSeconds = null;
-      return merged;
-    }).filter((song) => song.title);
-    if ('favorite' in update) gig.favorite = update.favorite === true;
-    if ('performanceRating' in update) gig.performanceRating = normaliseRating(update.performanceRating);
-    if ('venueRating' in update) gig.venueRating = normaliseRating(update.venueRating);
-    if ('performanceNotes' in update) gig.performanceNotes = String(update.performanceNotes || '').trim();
-    if ('venueNotes' in update) gig.venueNotes = String(update.venueNotes || '').trim();
-    database.prepare(`UPDATE gigs SET artist = ?, venue = ?, city = ?, date = ?, songs = ?, attendees = ?, favorite = ?,
-      performance_rating = ?, venue_rating = ?, performance_notes = ?, venue_notes = ?, notes = ? WHERE id = ?`).run(
-      gig.artist, gig.venue, gig.city, gig.date, JSON.stringify(gig.songs || []), JSON.stringify(gig.attendees || []), gig.favorite ? 1 : 0,
-      gig.performanceRating ?? null, gig.venueRating ?? null, gig.performanceNotes || '', gig.venueNotes || '', gig.notes || '', gig.id
-    );
-    return sendJson(response, 200, gig);
-  }
-
-  if (request.method === 'DELETE' && gigMatch) {
-    const gigs = await readGigs();
-    const remaining = gigs.filter((gig) => gig.id !== gigMatch[1]);
-    if (remaining.length === gigs.length) return sendError(response, 404, 'Gig not found');
-    database.prepare('DELETE FROM gigs WHERE id = ?').run(gigMatch[1]);
-    return sendJson(response, 200, { ok: true });
-  }
-
   const exportMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/export\/(spotify|youtube|apple-music)$/);
   const youtubeSearchMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/youtube-search$/);
   if (request.method === 'POST' && youtubeSearchMatch) {
