@@ -15,10 +15,10 @@ describe('frontend shell contracts', () => {
   });
 
   test('loads shared frontend modules before the application bundle', () => {
-    for (const module of ['api-client', 'page-runtime', 'formatters', 'navigation', 'auth-state', 'jobs', 'shows', 'show-cards', 'playback-core', 'playback-media', 'playback-editor', 'theatre', 'media-ui', 'media-uploader', 'media-gallery', 'upload-queue', 'media-jobs', 'show-editor', 'show-form-controller', 'directory-ui']) {
+    for (const module of ['api-client', 'page-runtime', 'formatters', 'navigation', 'auth-state', 'jobs', 'shows', 'show-cards', 'playback-core', 'playback-media', 'playback-editor', 'theatre', 'theatre-controller', 'media-ui', 'media-uploader', 'media-gallery', 'upload-queue', 'media-jobs', 'show-editor', 'show-form-controller', 'directory-ui']) {
       assert.ok(html.indexOf(`/lib/${module}.js`) < html.indexOf('/app.js'), module);
     }
-    for (const global of ['MasterListApiClient', 'MasterListPageRuntime', 'MasterListFormatters', 'MasterListNavigation', 'MasterListAuthState', 'MasterListJobs', 'MasterListShows', 'MasterListShowCards', 'MasterListPlaybackCore', 'MasterListPlaybackMedia', 'MasterListPlaybackEditor', 'MasterListTheatre', 'MasterListMediaUi', 'MasterListMediaUploader', 'MasterListMediaGallery', 'MasterListUploadQueue', 'MasterListMediaJobs', 'MasterListShowEditor', 'MasterListShowFormController', 'MasterListDirectoryUi']) {
+    for (const global of ['MasterListApiClient', 'MasterListPageRuntime', 'MasterListFormatters', 'MasterListNavigation', 'MasterListAuthState', 'MasterListJobs', 'MasterListShows', 'MasterListShowCards', 'MasterListPlaybackCore', 'MasterListPlaybackMedia', 'MasterListPlaybackEditor', 'MasterListTheatre', 'MasterListTheatreController', 'MasterListMediaUi', 'MasterListMediaUploader', 'MasterListMediaGallery', 'MasterListUploadQueue', 'MasterListMediaJobs', 'MasterListShowEditor', 'MasterListShowFormController', 'MasterListDirectoryUi']) {
       assert.match(app, new RegExp(`window\\.${global}`), global);
     }
   });

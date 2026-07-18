@@ -4,6 +4,7 @@ const playbackCore = window.MasterListPlaybackCore;
 const playbackMedia = window.MasterListPlaybackMedia;
 const playbackEditor = window.MasterListPlaybackEditor;
 const theatreUi = window.MasterListTheatre;
+const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
 const mediaUploaderModule = window.MasterListMediaUploader;
 const mediaGalleryModule = window.MasterListMediaGallery;
@@ -388,7 +389,7 @@ let setFallbackPending = false;
 let pendingSetSeek = null;
 let setTrackAdvancePending = false;
 let resumeSaveAt = 0;
-let theatreControlsTimer;
+let theatreController;
 let setPlaybackWakeLock;
 const setTimelineMedia = matchMedia('(max-width: 640px)');
 let setTimelineZoom = setTimelineMedia.matches ? 3 : 5;
@@ -410,16 +411,10 @@ function setPlaybackIsPlaying() {
   try { return activeYoutubePlayer?.getPlayerState?.() === 1; } catch { return false; }
 }
 function scheduleTheatreControls() {
-  clearTimeout(theatreControlsTimer);
-  if (!theatreUi.shouldAutoHide({ inTheatre: document.fullscreenElement === setPlayer, playing: setPlaybackIsPlaying(), timelineActive: Boolean(timelinePointer) })) return;
-  theatreControlsTimer = setTimeout(() => {
-    if (theatreUi.shouldAutoHide({ inTheatre: document.fullscreenElement === setPlayer, playing: setPlaybackIsPlaying(), timelineActive: Boolean(timelinePointer) })) setPlayer.classList.add('theatre-idle');
-  }, 3400);
+  theatreController?.schedule();
 }
 function revealTheatreControls({ schedule = true } = {}) {
-  setPlayer.classList.remove('theatre-idle', 'controls-hidden');
-  clearTimeout(theatreControlsTimer);
-  if (schedule) scheduleTheatreControls();
+  theatreController?.reveal({ schedule });
 }
 async function requestSetPlaybackWakeLock() {
   if (!navigator.wakeLock || setPlaybackWakeLock || document.fullscreenElement !== setPlayer) return;
@@ -2679,43 +2674,18 @@ setPlayerRestart.addEventListener('click', () => {
   pendingSetSeek = { index: setQueueIndex, fraction: 0 };
   playSetTrack();
 });
-async function toggleSetTheatre() {
-  if (!document.fullscreenElement) await setPlayer.requestFullscreen?.();
-  else await document.exitFullscreen?.();
-}
-setPlayerFullscreen?.addEventListener('click', toggleSetTheatre);
-setPlayerControlsToggle.addEventListener('click', () => {
-  if (setPlayer.classList.contains('theatre-idle')) revealTheatreControls();
-  else setPlayer.classList.add('theatre-idle');
+theatreController = theatreControllerModule.createController({
+  document, window, player: setPlayer, fullscreenButton: setPlayerFullscreen, controlsToggle: setPlayerControlsToggle,
+  theatre: theatreUi, isPlaying: setPlaybackIsPlaying, timelineActive: () => Boolean(timelinePointer),
+  requestWakeLock: requestSetPlaybackWakeLock, releaseWakeLock: releaseSetPlaybackWakeLock,
+  commands: {
+    next: () => moveToPlayableTrack(1), previous: () => moveToPlayableTrack(-1),
+    'toggle-playback': toggleSetPlayback, 'toggle-mute': toggleSetMute,
+    'toggle-theatre': () => theatreController.toggle()
+  },
+  setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window)
 });
-setPlayer.addEventListener('pointermove', () => revealTheatreControls());
-setPlayer.addEventListener('pointerdown', () => revealTheatreControls());
-setPlayer.addEventListener('focusin', () => revealTheatreControls({ schedule: false }));
-document.addEventListener('fullscreenchange', () => {
-  const inTheatre = document.fullscreenElement === setPlayer;
-  const presentation = theatreUi.fullscreenPresentation(inTheatre);
-  revealTheatreControls();
-  setPlayerFullscreen.textContent = presentation.buttonLabel;
-  setPlayerControlsToggle.setAttribute('aria-label', presentation.controlsLabel);
-  if (inTheatre) requestSetPlaybackWakeLock(); else releaseSetPlaybackWakeLock();
-});
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && document.fullscreenElement === setPlayer) requestSetPlaybackWakeLock();
-});
-window.addEventListener('pagehide', releaseSetPlaybackWakeLock);
-document.addEventListener('keydown', (event) => {
-  const inTheatre = document.fullscreenElement === setPlayer;
-  const command = theatreUi.commandForKey({ key: event.key, inTheatre, playerHidden: setPlayer.hidden, editing: Boolean(event.target.closest?.('input, textarea, select, [contenteditable="true"]')) });
-  if (!command) return;
-  event.preventDefault();
-  if (command === 'next') moveToPlayableTrack(1);
-  else if (command === 'previous') moveToPlayableTrack(-1);
-  else if (command === 'toggle-playback') toggleSetPlayback();
-  else if (command === 'toggle-mute') toggleSetMute();
-  else if (command === 'toggle-theatre') toggleSetTheatre();
-  revealTheatreControls();
-});
-
+theatreController.bind();
 findYouTubeSet.addEventListener('click', async () => {
   const gig = gigs.find((entry) => entry.id === showDetailId);
   if (!gig?.songs?.length) { youtubeSearchMessage.textContent = 'Add a setlist before searching YouTube.'; return; }

@@ -54,6 +54,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `playback-media.js` — YouTube/upload source presentation and player-stage markup.
 - `playback-editor.js` — playback-plan validation, normalized clip payloads and suggestion presentation state.
 - `theatre.js` — fullscreen presentation, keyboard commands and control auto-hide rules.
+- `theatre-controller.js` — fullscreen lifecycle, wake lock, keyboard transport and theatre control visibility wiring.
 - `media-ui.js` — media recognition/workspace presentation, bulk selection and media-safe show patches.
 - `media-uploader.js` — serial resumable mobile uploads, direct desktop uploads, retries, cancellation and job progress.
 - `media-gallery.js` — gallery rendering and media caption, assignment, cover, cutout, trim, rotate, ordering and bulk-delete actions.
