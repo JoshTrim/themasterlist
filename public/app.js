@@ -15,6 +15,7 @@ const showFormController = window.MasterListShowFormController;
 const directoryUi = window.MasterListDirectoryUi;
 const archiveSearchModule = window.MasterListArchiveSearch;
 const timelinePageModule = window.MasterListTimelinePage;
+const overviewPageModule = window.MasterListOverviewPage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1490,59 +1491,13 @@ artistEditForm.addEventListener('submit', async (event) => {
   finally { submit.disabled = false; }
 });
 
-async function renderDashboardStats() {
-  if (page !== 'overview' || !dashboardStats) return;
-  const metadata = await loadDirectoryMetadata();
-  const allShows = [...gigs, ...remoteSharedArchiveShows()];
-  const artistMetadata = new Map(metadata.artists.map((entry) => [entry.lookupName, entry]));
-  const venueMetadata = new Map(metadata.venues.map((entry) => [entry.lookupName, entry]));
-  const locations = new Set(metadata.locations || []);
-  const artistKeys = [...new Set(allShows.map((gig) => gig.artist.trim().toLocaleLowerCase()).filter(Boolean))];
-  const venueKeys = [...new Set(allShows.map((gig) => `${gig.venue}|${gig.city}`.toLocaleLowerCase()))];
-  const artistComplete = artistKeys.filter((key) => !metadataMissingFields('artist', artistMetadata.get(key)).length).length;
-  const venueComplete = venueKeys.filter((key) => !metadataMissingFields('venue', venueMetadata.get(key), locations.has(key)).length).length;
-  const completionPercent = (complete, total) => total ? Math.round((complete / total) * 100) : 0;
-  const completionMarkup = `<section class="metadata-completion" aria-labelledby="metadata-completion-heading"><div><p class="eyebrow">Archive completion</p><h2 id="metadata-completion-heading">Metadata status</h2></div><a href="/artists?metadata=incomplete"><span><strong>${completionPercent(artistComplete, artistKeys.length)}%</strong>Artists complete</span><small>${artistKeys.length - artistComplete} need review →</small></a><a href="/venues?metadata=incomplete"><span><strong>${completionPercent(venueComplete, venueKeys.length)}%</strong>Venues complete</span><small>${venueKeys.length - venueComplete} need review →</small></a></section>`;
-  const countBy = (values) => Object.entries(values.reduce((result, value) => { result[value] = (result[value] || 0) + 1; return result; }, {})).sort((a, b) => b[1] - a[1]);
-  const topVenues = countBy(gigs.map((gig) => `${gig.venue}\u001f${gig.city}`)).slice(0, 5).map(([key, count]) => { const [name, city] = key.split('\u001f'); return [name, city, count]; });
-  const localStats = { shows: gigs.length, artists: new Set(gigs.map((gig) => gig.artist.toLowerCase())).size, venues: new Set(gigs.map((gig) => `${gig.venue}|${gig.city}`.toLowerCase())).size, cities: new Set(gigs.map((gig) => gig.city.toLowerCase())).size, songs: gigs.reduce((sum, gig) => sum + (gig.songs?.length || 0), 0), favourites: gigs.filter((gig) => gig.favorite).length, topArtists: countBy(gigs.map((gig) => gig.artist)).slice(0, 5), topVenues };
-  const render = (stats) => {
-    const artistLinks = stats.topArtists.map(([name, count]) => `<a class="dashboard-stat-link" href="/artist?name=${encodeURIComponent(name)}"><span>${escapeHtml(name)}</span><small>${count} show${count === 1 ? '' : 's'}</small></a>`).join('') || '<span>None yet</span>';
-    const venueLinks = stats.topVenues.map(([name, cityOrCount, possibleCount]) => {
-      const legacyEntry = possibleCount === undefined;
-      const city = legacyEntry ? gigs.find((gig) => gig.venue === name)?.city || '' : cityOrCount;
-      const count = legacyEntry ? cityOrCount : possibleCount;
-      return `<a class="dashboard-stat-link" href="/venue?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}"><span>${escapeHtml(name)}</span><small>${escapeHtml(city)}${city ? ' · ' : ''}${count} show${count === 1 ? '' : 's'}</small></a>`;
-    }).join('') || '<span>None yet</span>';
-    dashboardStats.innerHTML = `<p class="eyebrow">Archive snapshot</p><div class="dashboard-stat-grid"><span><strong>${stats.shows}</strong> shows</span><span><strong>${stats.artists}</strong> artists</span><span><strong>${stats.venues}</strong> venues</span><span><strong>${stats.cities}</strong> cities</span><span><strong>${stats.songs}</strong> songs</span><span><strong>${stats.favourites}</strong> favourites</span></div><div class="dashboard-stat-columns"><div><b>Most seen artists</b>${artistLinks}</div><div><b>Most visited venues</b>${venueLinks}</div></div>${completionMarkup}`;
-  };
-  render(localStats);
-  try { render(await fetchJson('/api/stats')); } catch { /* local snapshot remains visible */ }
-  renderGenreStats();
-}
-
-let genreStatsPromise;
-async function renderGenreStats() {
-  if (page !== 'overview' || !genreStats) return;
-  genreStatsPromise ||= fetchJson('/api/stats/genres');
-  try {
-    const { genres = [] } = await genreStatsPromise;
-    if (!genres.length) {
-      genreStatsNote.textContent = 'No genre metadata is available yet.';
-      genreStatsChart.innerHTML = '<p class="empty-state">Add shows or enter genres in an artist profile to build this breakdown.</p>';
-      return;
-    }
-    const knownShows = genres.filter((entry) => entry.genre !== 'Unknown').reduce((sum, entry) => sum + entry.shows, 0);
-    genreStatsNote.textContent = `${knownShows.toFixed(knownShows % 1 ? 1 : 0)} show${knownShows === 1 ? '' : 's'} have genre metadata. Percentages divide multi-genre artists evenly.`;
-    const segments = genres.map((entry, index) => `<span class="genre-segment genre-colour-${index % 10}" style="width:${entry.percentage}%" title="${escapeHtml(entry.genre)} · ${entry.percentage}%"></span>`).join('');
-    const legend = genres.map((entry, index) => `<li><i class="genre-colour-${index % 10}"></i><span>${escapeHtml(entry.genre)}</span><strong>${entry.percentage.toFixed(1)}%</strong><small>${entry.shows} show${entry.shows === 1 ? '' : 's'}</small></li>`).join('');
-    genreStatsChart.innerHTML = `<div class="genre-stat-bar" aria-label="Genre percentages">${segments}</div><ul class="genre-stat-legend">${legend}</ul>`;
-  } catch (error) {
-    genreStatsNote.textContent = 'Genre metadata could not be loaded.';
-    genreStatsChart.innerHTML = `<p class="form-message error">${escapeHtml(error.message)}</p>`;
-  }
-}
-
+const overviewPageController = overviewPageModule.createController({
+  page, getGigs: () => gigs, getRemoteShows: remoteSharedArchiveShows,
+  loadMetadata: loadDirectoryMetadata, missingFields: metadataMissingFields,
+  fetchJson, escapeHtml,
+  elements: { dashboard: dashboardStats, genres: genreStats, genreNote: genreStatsNote, genreChart: genreStatsChart }
+});
+function renderDashboardStats() { return overviewPageController.render(); }
 function directoryInitials(name) {
   return directoryUi.initials(name);
 }

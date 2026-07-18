@@ -65,6 +65,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `directory-ui.js` — artist/venue aggregation, metadata completeness, filtering, sorting and editor navigation.
 - `archive-search.js` — search-page filtering, deduplication, category rendering and control binding.
 - `timeline-page.js` — yearly archive aggregation, chart rendering, year navigation and monthly detail.
+- `overview-page.js` — archive totals, rankings, metadata completion, genre charts and API fallback rendering.
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 
