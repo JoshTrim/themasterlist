@@ -25,13 +25,15 @@ function updateJob(id, patch) {
     return;
   }
   list.innerHTML = visibleJobs.map((job) => `<div class="job-entry" data-job-id="${job.id}"><div><strong>${escapeHtml(job.type)}</strong><span>${escapeHtml(job.name)}</span><button class="job-dismiss" type="button" aria-label="Cancel or dismiss job">×</button></div><div class="job-bar"><i style="width:${job.progress || 0}%"></i></div><small>${job.status === 'complete' ? 'Complete' : job.status === 'error' ? 'Failed' : job.status === 'cancelled' ? 'Cancelled' : `${Math.round(job.progress || 0)}%`}</small></div>`).join('');
-  list.querySelectorAll('.job-dismiss').forEach((button) => button.addEventListener('click', () => {
+  list.querySelectorAll('.job-dismiss').forEach((button) => button.addEventListener('click', async () => {
     const job = jobQueue.get(button.closest('.job-entry').dataset.jobId);
     if (!job) return;
     if (job.status === 'running' && job.cancel) job.cancel();
-    else jobQueue.delete(job.id);
+    else if (['running', 'queued'].includes(job.status)) {
+      try { await fetchJson(`/api/jobs/${job.id}`, { method: 'DELETE' }); } catch { /* the process may already have finished */ }
+    } else jobQueue.delete(job.id);
     updateJob(job.id, { status: 'cancelled', progress: 0 });
-    if (job.status !== 'running') jobQueue.delete(job.id);
+    if (!['running', 'queued'].includes(job.status)) jobQueue.delete(job.id);
   }));
   jobPanel.hidden = !visibleJobs.length;
 }
