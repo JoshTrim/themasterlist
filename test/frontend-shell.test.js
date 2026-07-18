@@ -15,10 +15,10 @@ describe('frontend shell contracts', () => {
   });
 
   test('loads shared frontend modules before the application bundle', () => {
-    for (const module of ['formatters', 'navigation', 'auth-state', 'jobs', 'shows', 'show-cards', 'playback-core', 'playback-media', 'theatre', 'media-ui', 'upload-queue', 'media-jobs']) {
+    for (const module of ['formatters', 'navigation', 'auth-state', 'jobs', 'shows', 'show-cards', 'playback-core', 'playback-media', 'theatre', 'media-ui', 'upload-queue', 'media-jobs', 'show-editor']) {
       assert.ok(html.indexOf(`/lib/${module}.js`) < html.indexOf('/app.js'), module);
     }
-    for (const global of ['MasterListFormatters', 'MasterListNavigation', 'MasterListAuthState', 'MasterListJobs', 'MasterListShows', 'MasterListShowCards', 'MasterListPlaybackCore', 'MasterListPlaybackMedia', 'MasterListTheatre', 'MasterListMediaUi', 'MasterListUploadQueue', 'MasterListMediaJobs']) {
+    for (const global of ['MasterListFormatters', 'MasterListNavigation', 'MasterListAuthState', 'MasterListJobs', 'MasterListShows', 'MasterListShowCards', 'MasterListPlaybackCore', 'MasterListPlaybackMedia', 'MasterListTheatre', 'MasterListMediaUi', 'MasterListUploadQueue', 'MasterListMediaJobs', 'MasterListShowEditor']) {
       assert.match(app, new RegExp(`window\\.${global}`), global);
     }
   });

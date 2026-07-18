@@ -6,6 +6,7 @@ const theatreUi = window.MasterListTheatre;
 const mediaUi = window.MasterListMediaUi;
 const uploadQueue = window.MasterListUploadQueue;
 const mediaJobs = window.MasterListMediaJobs;
+const showEditor = window.MasterListShowEditor;
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
 const navSignIn = document.querySelector('#nav-sign-in');
 const jobUi = window.MasterListJobs.createJobQueue({ document, fetchJson, escapeHtml, hideUploads: () => isMobileUpload });
@@ -638,17 +639,8 @@ function formValues() {
   return Object.fromEntries(data.entries());
 }
 
-const duplicateKey = (value) => String(value || '').trim().toLocaleLowerCase();
-
 function findDuplicateShows(values, excludeId = '') {
-  const artist = duplicateKey(values.artist); const venue = duplicateKey(values.venue); const city = duplicateKey(values.city); const date = String(values.date || '').trim();
-  if (!artist || !venue) return [];
-  const localReferences = new Set(gigs.flatMap((gig) => [gig.id, gig.sharedId].filter(Boolean)));
-  const candidates = [
-    ...gigs.filter((gig) => gig.id !== excludeId).map((gig) => ({ ...gig, duplicateSource: 'Your archive' })),
-    ...sharedShows.filter((show) => !localReferences.has(show.id) && !localReferences.has(show.sourceGigId)).map((show) => ({ ...show, duplicateSource: 'Shared by a peer' }))
-  ];
-  return candidates.filter((gig) => duplicateKey(gig.artist) === artist && duplicateKey(gig.venue) === venue && (!city || !gig.city || duplicateKey(gig.city) === city) && String(gig.date || '').trim() === date);
+  return showEditor.findDuplicates(values, { gigs, sharedShows, excludeId });
 }
 
 function showDuplicateWarning(container, values, excludeId = '') {
@@ -671,16 +663,12 @@ function confirmDuplicateSave(container, values, excludeId = '') {
 
 function renderAttendeePicker(container, selected = []) {
   if (!container) return;
-  const owner = account ? { id: account.id, type: 'owner', name: account.name } : null;
-  const selectedIds = new Set((Array.isArray(selected) ? selected : []).map((entry) => entry.id));
-  if (owner) selectedIds.add(owner.id);
-  const options = [owner, ...peers.map((peer) => ({ id: peer.peerId, type: 'peer', name: peer.name }))].filter(Boolean);
-  container.querySelector('.attendee-options').innerHTML = options.length ? options.map((entry) => `<label class="attendee-option"><input type="checkbox" value="${escapeHtml(entry.id)}" data-attendee-type="${entry.type}" ${selectedIds.has(entry.id) ? 'checked' : ''} ${entry.type === 'owner' ? 'disabled' : ''} /><span>${escapeHtml(entry.name)}${entry.type === 'owner' ? ' (you)' : ''}</span></label>`).join('') : '<small>Pair an instance from the Account page to add other attendees.</small>';
+  container.querySelector('.attendee-options').innerHTML = showEditor.attendeeMarkup(showEditor.attendeeOptions(account, peers, selected), escapeHtml);
 }
 
 function readAttendees(container) {
   if (!container) return [];
-  return [...container.querySelectorAll('input[type="checkbox"]:checked')].map((input) => ({ id: input.value, type: input.dataset.attendeeType }));
+  return showEditor.selectedAttendees(container.querySelectorAll('input[type="checkbox"]'));
 }
 
 function ensureEditAttendeePicker() {
@@ -2497,23 +2485,20 @@ function renderEditPage() {
   showDuplicateWarning(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), gig.id);
   let tracks = [...(gig.songs || [])];
   const syncTracksFromInputs = () => {
-    tracks = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row, index) => ({
-      ...(tracks[index] || {}),
+    const rows = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row) => ({
       title: row.querySelector('.edit-track-title').value,
       artist: row.querySelector('.edit-track-artist').value,
       album: row.querySelector('.edit-track-album').value
     }));
+    tracks = showEditor.syncTracks(tracks, rows);
   };
   const clearTrackDropIndicators = () => editSetlistTracks.querySelectorAll('.edit-track').forEach((row) => row.classList.remove('is-dragging', 'drop-before', 'drop-after'));
   const moveTrack = (sourceIndex, targetIndex, placeAfter = false) => {
     syncTracksFromInputs();
-    let insertionIndex = targetIndex + (placeAfter ? 1 : 0);
-    const [movedTrack] = tracks.splice(sourceIndex, 1);
-    if (sourceIndex < insertionIndex) insertionIndex -= 1;
-    insertionIndex = Math.max(0, Math.min(tracks.length, insertionIndex));
-    tracks.splice(insertionIndex, 0, movedTrack);
+    const moved = showEditor.moveTrack(tracks, sourceIndex, targetIndex, placeAfter);
+    tracks = moved.tracks;
     renderTracks();
-    editSetlistTracks.querySelectorAll('.edit-track-drag')[insertionIndex]?.focus();
+    editSetlistTracks.querySelectorAll('.edit-track-drag')[moved.index]?.focus();
   };
   const wireTrackReordering = () => {
     let draggedIndex = null;
@@ -2601,7 +2586,7 @@ function renderEditPage() {
     editSetlistTracks.querySelectorAll('.edit-track-remove').forEach((button) => button.addEventListener('click', () => {
       const trackIndex = Number(button.closest('.edit-track').dataset.trackIndex);
       syncTracksFromInputs();
-      tracks.splice(trackIndex, 1);
+      tracks = showEditor.removeTrack(tracks, trackIndex);
       renderTracks();
     }));
     wireTrackReordering();
@@ -2609,7 +2594,7 @@ function renderEditPage() {
   renderTracks();
   addEditTrack.onclick = () => {
     syncTracksFromInputs();
-    tracks.push({ title: '', artist: editForm.elements.artist.value || gig.artist, album: '' });
+    tracks = showEditor.addTrack(tracks, editForm.elements.artist.value || gig.artist);
     renderTracks();
     editSetlistTracks.lastElementChild?.querySelector('.edit-track-title')?.focus();
   };
@@ -2622,7 +2607,7 @@ function renderEditPage() {
       if (!confirmDuplicateSave(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), gig.id)) return;
       submitButton.disabled = true;
       syncTracksFromInputs();
-      const update = mediaUi.safeShowPatch(Object.fromEntries(new FormData(editForm).entries()), { attendees: readAttendees(ensureEditAttendeePicker()), songs: tracks });
+      const update = showEditor.createEditPayload(Object.fromEntries(new FormData(editForm).entries()), { attendees: readAttendees(ensureEditAttendeePicker()), songs: tracks });
       const saved = await fetchJson(`/api/gigs/${gig.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
       const files = pendingMedia.get(editMediaInput) || [...(editMediaInput?.files || [])];
       if (files.length) await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; });
@@ -3295,8 +3280,7 @@ form.addEventListener('submit', async (event) => {
   const gig = formValues();
   if (!confirmDuplicateSave(addDuplicateWarning, gig)) return;
   const mediaFiles = pendingMedia.get(mediaInput) || [...(mediaInput?.files || [])];
-  delete gig.media;
-  const payload = { ...gig, attendees: readAttendees(addAttendeePicker), songs: selectedSetlist?.songs || [], setlistFmId: selectedSetlist?.id || null, setlistFmUrl: selectedSetlist?.url || null };
+  const payload = showEditor.createAddPayload(gig, { attendees: readAttendees(addAttendeePicker), setlist: selectedSetlist });
   const submitButton = form.querySelector('button[type="submit"]');
   try {
     submitButton.disabled = true;

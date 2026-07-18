@@ -40,6 +40,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `media-ui.js` — media recognition/workspace presentation, bulk selection and media-safe show patches.
 - `upload-queue.js` — serial mobile upload queue state, retry/clear transitions and progress markup.
 - `media-jobs.js` — bounded polling for encoding, rotation, background removal and audio recognition.
+- `show-editor.js` — shared add/edit payloads, duplicate detection, attendees and metadata-preserving track mutations.
 
 ## Testing strategy
 
