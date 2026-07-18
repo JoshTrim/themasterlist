@@ -30,6 +30,7 @@
 - `lib/providers/spotify.js` — track matching, private playlist creation and API-sized batching.
 - `lib/providers/youtube.js` — playlist export, event-specific live-video search, embed checks and playback metadata.
 - `lib/providers/apple-music.js` — catalog matching, library playlist creation and API-sized track batching.
+- `lib/oauth.js` — provider configuration, authorization state, code exchange, connection status and token refresh.
 
 The browser application is progressively split from `public/app.js`. Browser-safe CommonJS/UMD modules under `public/lib/` load before the main application bundle:
 

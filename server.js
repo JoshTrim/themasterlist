@@ -36,6 +36,7 @@ const { createMetadataProvider } = require('./lib/providers/metadata');
 const { createSpotifyProvider } = require('./lib/providers/spotify');
 const { createYouTubeProvider } = require('./lib/providers/youtube');
 const { createAppleMusicProvider } = require('./lib/providers/apple-music');
+const { createOAuthService } = require('./lib/oauth');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -51,7 +52,6 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const PENDING_RESTORE_FILE = path.join(DATA_DIR, 'restore-pending.sqlite');
 const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
 const GEOCODES_FILE = path.join(DATA_DIR, 'geocodes.json');
-const pendingOAuth = new Map();
 const MAX_MEDIA_SIZE = Number(process.env.MAX_MEDIA_SIZE_GB || 50) * 1024 * 1024 * 1024;
 
 legacyFs.mkdirSync(DATA_DIR, { recursive: true });
@@ -114,6 +114,12 @@ const metadataProvider = createMetadataProvider({ fetch, googleApiKey: process.e
 const spotifyProvider = createSpotifyProvider({ requestJson: providerResponse });
 const youtubeProvider = createYouTubeProvider({ requestJson: providerResponse });
 const appleMusicProvider = createAppleMusicProvider({ requestJson: providerResponse, developerToken: process.env.APPLE_MUSIC_DEVELOPER_TOKEN, storefront: process.env.APPLE_MUSIC_STOREFRONT || 'au' });
+const oauthService = createOAuthService({
+  providers: {
+    spotify: { name: 'Spotify', clientId: process.env.SPOTIFY_CLIENT_ID, clientSecret: process.env.SPOTIFY_CLIENT_SECRET, authorizationUrl: 'https://accounts.spotify.com/authorize', tokenUrl: 'https://accounts.spotify.com/api/token', scope: 'playlist-modify-private playlist-modify-public', basicAuth: true },
+    youtube: { name: 'YouTube', clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET, authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth', tokenUrl: 'https://oauth2.googleapis.com/token', scope: 'https://www.googleapis.com/auth/youtube', authorizationParams: { access_type: 'offline', prompt: 'consent' } }
+  }, requestJson: providerResponse, readConnections, writeConnections, randomUUID
+});
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
 const mediaRecognition = createMediaRecognition({
@@ -256,8 +262,7 @@ function appOrigin(request) {
 }
 
 function configured(provider) {
-  if (provider === 'spotify') return Boolean(process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET);
-  if (provider === 'youtube') return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+  if (provider === 'spotify' || provider === 'youtube') return oauthService.configured(provider);
   if (provider === 'apple-music') return Boolean(process.env.APPLE_MUSIC_DEVELOPER_TOKEN);
   if (provider === 'audd') return Boolean(process.env.AUDD_API_TOKEN);
   return false;
@@ -765,21 +770,7 @@ async function serveStatic(request, response, pathname) {
 }
 
 async function getAccessToken(provider) {
-  const connections = await readConnections();
-  const connection = connections[provider];
-  if (!connection?.accessToken) throw new Error(`Connect ${provider === 'youtube' ? 'YouTube' : 'Spotify'} before exporting.`);
-  if (connection.expiresAt > Date.now() + 60_000) return connection.accessToken;
-  if (!connection.refreshToken) throw new Error(`Reconnect ${provider === 'youtube' ? 'YouTube' : 'Spotify'} to continue.`);
-
-  const tokenUrl = provider === 'spotify' ? 'https://accounts.spotify.com/api/token' : 'https://oauth2.googleapis.com/token';
-  const payload = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: connection.refreshToken, client_id: provider === 'spotify' ? process.env.SPOTIFY_CLIENT_ID : process.env.GOOGLE_CLIENT_ID });
-  const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
-  if (provider === 'spotify') headers.Authorization = `Basic ${Buffer.from(`${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`).toString('base64')}`;
-  else payload.set('client_secret', process.env.GOOGLE_CLIENT_SECRET);
-  const refreshed = await providerResponse(tokenUrl, { method: 'POST', headers, body: payload }, provider);
-  connections[provider] = { ...connection, accessToken: refreshed.access_token, refreshToken: refreshed.refresh_token || connection.refreshToken, expiresAt: Date.now() + refreshed.expires_in * 1000 };
-  await writeConnections(connections);
-  return connections[provider].accessToken;
+  return oauthService.accessToken(provider);
 }
 
 async function exportSpotify(gig) {
@@ -853,39 +844,12 @@ async function handleAuth(request, response, url) {
     : `${appOrigin(request)}${callbackPath}`;
 
   if (url.pathname === `/auth/${provider}`) {
-    const state = randomUUID();
-    pendingOAuth.set(state, { provider, callbackUrl, createdAt: Date.now() });
-    const authorizationUrl = new URL(provider === 'spotify' ? 'https://accounts.spotify.com/authorize' : 'https://accounts.google.com/o/oauth2/v2/auth');
-    authorizationUrl.searchParams.set('client_id', provider === 'spotify' ? process.env.SPOTIFY_CLIENT_ID : process.env.GOOGLE_CLIENT_ID);
-    authorizationUrl.searchParams.set('redirect_uri', callbackUrl);
-    authorizationUrl.searchParams.set('response_type', 'code');
-    authorizationUrl.searchParams.set('state', state);
-    authorizationUrl.searchParams.set('scope', provider === 'spotify' ? 'playlist-modify-private playlist-modify-public' : 'https://www.googleapis.com/auth/youtube');
-    if (provider === 'youtube') {
-      authorizationUrl.searchParams.set('access_type', 'offline');
-      authorizationUrl.searchParams.set('prompt', 'consent');
-    }
-    return redirect(response, authorizationUrl);
+    return redirect(response, oauthService.begin(provider, callbackUrl));
   }
 
   if (url.pathname === callbackPath) {
-    const state = url.searchParams.get('state');
-    const pending = pendingOAuth.get(state);
-    pendingOAuth.delete(state);
-    if (!pending || pending.provider !== provider || Date.now() - pending.createdAt > 10 * 60_000) return redirect(response, '/?integrationError=invalid-state');
-    if (url.searchParams.get('error')) return redirect(response, '/?integrationError=authorization-denied');
-    const code = url.searchParams.get('code');
-    if (!code) return redirect(response, '/?integrationError=missing-code');
-    const tokenUrl = provider === 'spotify' ? 'https://accounts.spotify.com/api/token' : 'https://oauth2.googleapis.com/token';
-    const payload = new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: pending.callbackUrl, client_id: provider === 'spotify' ? process.env.SPOTIFY_CLIENT_ID : process.env.GOOGLE_CLIENT_ID });
-    const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
-    if (provider === 'spotify') headers.Authorization = `Basic ${Buffer.from(`${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`).toString('base64')}`;
-    else payload.set('client_secret', process.env.GOOGLE_CLIENT_SECRET);
-    const token = await providerResponse(tokenUrl, { method: 'POST', headers, body: payload }, provider);
-    const connections = await readConnections();
-    connections[provider] = { accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt: Date.now() + token.expires_in * 1000 };
-    await writeConnections(connections);
-    return redirect(response, `/?connected=${provider}`);
+    const result = await oauthService.complete(provider, { state: url.searchParams.get('state'), code: url.searchParams.get('code'), error: url.searchParams.get('error') });
+    return redirect(response, result.error ? `/?integrationError=${result.error}` : `/?connected=${provider}`);
   }
   return sendError(response, 404, 'Not found');
 }
@@ -1001,10 +965,10 @@ async function handleApi(request, response, url) {
   }
 
   if (request.method === 'GET' && url.pathname === '/api/integrations') {
-    const connections = await readConnections();
+    const connections = await oauthService.connectionStatus();
     return sendJson(response, 200, {
-      spotify: { configured: configured('spotify'), connected: Boolean(connections.spotify?.accessToken) },
-      youtube: { configured: configured('youtube'), connected: Boolean(connections.youtube?.accessToken) },
+      spotify: connections.spotify,
+      youtube: connections.youtube,
       appleMusic: { configured: configured('apple-music'), developerToken: process.env.APPLE_MUSIC_DEVELOPER_TOKEN || null }
     });
   }
