@@ -12,6 +12,7 @@
       body[data-page="artists"] #artists-page, body[data-page="venues"] #venues-page,
       body[data-page="timeline"] #timeline-page,
       body[data-page="search"] #search-page, body[data-page="health"] #health-page,
+      body[data-page="maintenance"] #maintenance-page, body[data-page="activity"] #activity-page,
       body[data-page="api-limits"] #api-limits-page, body[data-page="add"] #add-page,
       body[data-page="shows"] #shows-archive, body[data-page="shared"] #shows-archive,
       body[data-page="login"] #shows-shared, body[data-page="artist"] #artist-page,
@@ -21,12 +22,12 @@
       body[data-page="venue-edit"] #venue-edit-page, body[data-page="edit"] #edit-page,
       body[data-page="map"] #map-page, body[data-page="account"] #account-page { display: block; }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=venue-closed-1" />
+    <link rel="stylesheet" href="/styles.css?v=favourite-filter-1" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   </head>
   <body>
     <script>
-      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/artists': 'artists', '/venues': 'venues', '/timeline': 'timeline', '/search': 'search', '/health': 'health', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/artist/edit': 'artist-edit', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
+      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/artists': 'artists', '/venues': 'venues', '/timeline': 'timeline', '/search': 'search', '/health': 'health', '/maintenance': 'maintenance', '/activity': 'activity', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/artist/edit': 'artist-edit', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
     </script>
     <div class="crt-overlay" aria-hidden="true">
       <span class="crt-noise"></span>
@@ -37,7 +38,7 @@
       <nav class="site-nav" id="site-nav" aria-label="Main navigation">
         <div class="site-nav-group"><span>Archive</span><div><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/search">Search</a></div></div>
         <div class="site-nav-group"><span>Explore</span><div><a href="/overview">Overview</a><a href="/artists">Artists</a><a href="/venues">Venues</a><a href="/timeline">Timeline</a><a href="/map">Map</a></div></div>
-        <div class="site-nav-group"><span>System</span><div><a href="/health">Health</a><a href="/api-limits">API limits</a><a href="/account">Account</a><a id="nav-sign-in" href="/login" hidden>Sign in</a></div></div>
+        <div class="site-nav-group"><span>System</span><div><a href="/activity">Activity <b class="nav-count" id="nav-activity-count" hidden></b></a><a href="/health">Metadata</a><a href="/maintenance">Maintenance</a><a href="/api-limits">API limits</a><a href="/account">Account</a><a id="nav-sign-in" href="/login" hidden>Sign in</a></div></div>
       </nav>
       <span class="record-count" id="record-count">0 shows</span>
     </header>
@@ -143,6 +144,15 @@
 
       <section class="health-page" id="health-page" aria-labelledby="health-heading"><div class="section-heading health-heading"><div><p class="eyebrow">08 / Archive maintenance</p><h1 id="health-heading">Metadata health</h1><p class="lede">Find incomplete show, artist, venue and map records.</p></div><div class="health-heading-actions"><button class="button button-secondary" id="repair-all-albums" type="button">Find missing albums</button><button class="button" id="repair-all-metadata" type="button">Repair all available</button></div></div><div class="health-summary" id="health-summary"></div><div class="health-filters" id="health-filters" aria-label="Filter metadata issues"></div><p class="form-message" id="health-message" role="status"></p><div class="health-list" id="health-list"></div></section>
 
+      <section class="maintenance-page" id="maintenance-page" aria-labelledby="maintenance-heading">
+        <div class="section-heading"><p class="eyebrow">System / Safekeeping</p><h1 id="maintenance-heading">Maintenance</h1><p class="lede">Back up the archive, stage a restore and verify that every database record still matches the files on disk.</p></div>
+        <div class="maintenance-summary" id="maintenance-summary"></div>
+        <section class="maintenance-panel" aria-labelledby="backup-heading"><div class="maintenance-panel-heading"><div><p class="eyebrow">Backup & restore</p><h2 id="backup-heading">Protect the archive</h2></div></div><p class="maintenance-security-note">Database backups contain account credentials and peer identity keys. Store them somewhere private. Media files remain separate; use the manifest to verify your media-folder backup.</p><div class="maintenance-actions"><a class="button" id="download-database" href="/api/maintenance/database">Download database</a><a class="button button-secondary" id="download-manifest" href="/api/maintenance/manifest">Download media manifest</a><button class="button button-secondary" id="export-archive" type="button">Export shows as JSON</button><label class="button button-secondary import-archive-label">Import shows JSON<input id="import-archive" type="file" accept="application/json" hidden /></label></div><div class="restore-box"><div><strong>Restore a database</strong><p>The upload is validated and staged. Restart the server to apply it; the current database is preserved automatically.</p></div><label class="maintenance-file-picker">Choose SQLite backup<input id="restore-database" type="file" accept=".sqlite,.db,application/vnd.sqlite3,application/octet-stream" /></label><button class="button button-danger" id="stage-restore" type="button">Stage restore</button></div><p class="form-message" id="maintenance-message" role="status"></p></section>
+        <section class="maintenance-panel" aria-labelledby="integrity-heading"><div class="maintenance-panel-heading"><div><p class="eyebrow">Archive integrity</p><h2 id="integrity-heading">Database ↔ filesystem</h2><p>Checks SQLite integrity, foreign keys, missing files, unused files and duplicate hashes.</p></div><div><button class="button button-secondary" id="refresh-integrity" type="button">Run check</button><button class="button button-secondary" id="cleanup-media" type="button">Remove orphan files</button></div></div><div class="integrity-list" id="integrity-list"></div></section>
+      </section>
+
+      <section class="activity-page" id="activity-page" aria-labelledby="activity-heading"><div class="section-heading activity-heading"><div><p class="eyebrow">Connected archives</p><h1 id="activity-heading">Activity</h1><p class="lede">A persistent history of shows and changes received from your peers.</p></div><button class="button button-secondary" id="mark-all-activity-read" type="button">Mark all read</button></div><div class="activity-filters" id="activity-filters"><button class="active" data-activity-filter="all" type="button">All</button><button data-activity-filter="unread" type="button">Unread</button></div><p class="form-message" id="activity-message" role="status"></p><div class="activity-list" id="activity-list"></div></section>
+
       <section class="artist-page" id="artist-page" aria-labelledby="artist-heading">
         <a class="text-button artist-back" href="/shows">← Back to shows</a>
         <div class="artist-profile" id="artist-profile">
@@ -228,7 +238,7 @@
         </div>
         <div class="profile-bar" id="profile-bar" hidden>
           <label>Signed in as <select id="profile-select" disabled><option value="">Loading…</option></select></label>
-          <button class="button button-secondary" id="create-invite" type="button" hidden>Create invite</button><button class="button button-secondary" id="download-backup" type="button">Download backup</button><button class="button button-secondary" id="export-archive" type="button">Export archive</button><label class="button button-secondary import-archive-label">Import archive<input id="import-archive" type="file" accept="application/json" hidden /></label><button class="button button-secondary" id="cleanup-media" type="button">Clean unused media</button><button class="text-button" id="logout" type="button">Sign out</button>
+          <button class="button button-secondary" id="create-invite" type="button" hidden>Create invite</button><button class="text-button" id="logout" type="button">Sign out</button>
         </div>
         <p class="shared-message" id="shared-message">Create profiles for the people sharing this server, then share shows into the collaborative archive.</p>
         <div class="shared-list" id="shared-list"></div>
@@ -279,6 +289,6 @@
     <div class="media-lightbox" id="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Media viewer"><button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Close media viewer">×</button><img id="media-lightbox-image" alt="" /><video id="media-lightbox-video" controls></video><p id="media-lightbox-caption"></p></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="/app.js?v=venue-closed-1"></script>
+    <script src="/app.js?v=maintenance-1"></script>
   </body>
 </html>

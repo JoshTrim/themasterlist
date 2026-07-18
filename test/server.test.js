@@ -102,6 +102,40 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     assert.match(health.body, /id="repair-all-albums"/);
   });
 
+  test('maintenance page exposes database backups, manifests and integrity checks', async () => {
+    const page = await api('/maintenance');
+    assert.equal(page.response.status, 200);
+    assert.match(page.body, /id="maintenance-page"/);
+    assert.match(page.body, /id="restore-database"/);
+    assert.match(page.body, /href="\/maintenance"/);
+    const status = await api('/api/maintenance/status');
+    assert.equal(status.response.status, 200);
+    assert.equal(status.body.integrity.summary.database, true);
+    assert.ok(Array.isArray(status.body.integrity.issues));
+    const manifest = await api('/api/maintenance/manifest');
+    assert.equal(manifest.response.status, 200);
+    assert.equal(manifest.body.format, 'the-master-list-media-manifest-v1');
+    assert.match(manifest.response.headers.get('content-disposition'), /attachment/);
+    const backup = await api('/api/maintenance/database');
+    assert.equal(backup.response.status, 200);
+    assert.match(backup.response.headers.get('content-type'), /sqlite/);
+    const anonymous = await api('/api/maintenance/status', { cookie: '' });
+    assert.equal(anonymous.response.status, 401);
+  });
+
+  test('peer activity page keeps notification history and bulk read controls', async () => {
+    const page = await api('/activity');
+    assert.equal(page.response.status, 200);
+    assert.match(page.body, /id="activity-page"/);
+    assert.match(page.body, /id="mark-all-activity-read"/);
+    const activity = await api('/api/notifications?scope=all');
+    assert.equal(activity.response.status, 200);
+    assert.ok(Array.isArray(activity.body));
+    const marked = await api('/api/notifications/read-all', { method: 'POST' });
+    assert.equal(marked.response.status, 200);
+    assert.equal(typeof marked.body.updated, 'number');
+  });
+
   test('artist and venue directories expose their page shells and cached metadata feed', async () => {
     const [artists, venues, metadata] = await Promise.all([
       api('/artists'),

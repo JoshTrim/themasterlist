@@ -16,6 +16,8 @@ const DATA_DIR = process.env.MASTER_LIST_DATA_DIR ? path.resolve(process.env.MAS
 const GIGS_FILE = path.join(DATA_DIR, 'gigs.json');
 const DB_FILE = path.join(DATA_DIR, 'master-list.sqlite');
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+const PENDING_RESTORE_FILE = path.join(DATA_DIR, 'restore-pending.sqlite');
 const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
 const GEOCODES_FILE = path.join(DATA_DIR, 'geocodes.json');
 const SETLIST_API = 'https://api.setlist.fm/rest/1.0/search/setlists';
@@ -25,6 +27,16 @@ const uploadSessions = new Map();
 const MAX_MEDIA_SIZE = Number(process.env.MAX_MEDIA_SIZE_GB || 50) * 1024 * 1024 * 1024;
 
 legacyFs.mkdirSync(DATA_DIR, { recursive: true });
+if (legacyFs.existsSync(PENDING_RESTORE_FILE)) {
+  legacyFs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  if (legacyFs.existsSync(DB_FILE)) legacyFs.copyFileSync(DB_FILE, path.join(BACKUP_DIR, `pre-restore-${timestamp}.sqlite`));
+  for (const suffix of ['-wal', '-shm']) {
+    try { legacyFs.rmSync(`${DB_FILE}${suffix}`, { force: true }); } catch { /* best-effort stale SQLite sidecar cleanup */ }
+  }
+  legacyFs.renameSync(PENDING_RESTORE_FILE, DB_FILE);
+  console.log('[maintenance] applied staged database restore');
+}
 const database = new Database(DB_FILE);
 database.pragma('journal_mode = WAL');
 database.exec(`
@@ -1023,12 +1035,13 @@ function applySyncSnapshot(snapshot, originPeer) {
     database.prepare('INSERT INTO sync_events (event_id, origin_instance_id, shared_gig_id, event_type, payload, created_at, applied_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
       snapshot.eventId, originPeer.peer_id, snapshot.sharedGigId, 'shared-gig.snapshot', JSON.stringify(snapshot), contribution.updatedAt || now, now
     );
-    if (isNewPeerContribution) {
-      const notificationId = createHash('sha256').update(`peer-show:${originPeer.peer_id}:${snapshot.sharedGigId}`).digest('hex');
+    {
+      const notificationId = createHash('sha256').update(`peer-show:${originPeer.peer_id}:${snapshot.eventId}`).digest('hex');
+      const notificationType = isNewPeerContribution ? 'peer-show-shared' : 'peer-show-updated';
       database.prepare(`INSERT OR IGNORE INTO notifications
         (id, type, peer_id, shared_gig_id, title, body, created_at)
-        VALUES (?, 'peer-show-shared', ?, ?, ?, ?, ?)`).run(
-        notificationId, originPeer.peer_id, snapshot.sharedGigId, `${originPeer.name} shared a show`,
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+        notificationId, notificationType, originPeer.peer_id, snapshot.sharedGigId, isNewPeerContribution ? `${originPeer.name} shared a show` : `${originPeer.name} updated a shared show`,
         `${show.artist} at ${show.venue}${show.city ? `, ${show.city}` : ''}`, now
       );
     }
@@ -1329,6 +1342,120 @@ async function archiveHealth() {
 
   const counts = issues.reduce((result, issue) => { result[issue.type] = (result[issue.type] || 0) + 1; return result; }, {});
   return { totalShows: gigs.length, healthy: issues.length === 0, counts, issues };
+}
+
+function archiveFileReferences() {
+  const references = new Map();
+  const add = (filename, detail) => {
+    if (!filename) return;
+    if (!references.has(filename)) references.set(filename, []);
+    references.get(filename).push(detail);
+  };
+  const media = database.prepare(`SELECT m.id, m.gig_id AS gigId, m.filename, m.playback_filename AS playbackFilename,
+    m.background_filename AS backgroundFilename, m.external_url AS externalUrl, m.checksum, m.size,
+    g.artist, g.venue FROM gig_media m LEFT JOIN gigs g ON g.id = m.gig_id ORDER BY m.created_at`).all();
+  for (const item of media) {
+    if (!item.externalUrl) add(item.filename, { kind: 'original', mediaId: item.id, gigId: item.gigId, artist: item.artist, venue: item.venue });
+    add(item.playbackFilename, { kind: 'playback', mediaId: item.id, gigId: item.gigId, artist: item.artist, venue: item.venue });
+    add(item.backgroundFilename, { kind: 'cutout', mediaId: item.id, gigId: item.gigId, artist: item.artist, venue: item.venue });
+  }
+  for (const row of [...database.prepare('SELECT lookup_name AS owner, image FROM artist_info').all(), ...database.prepare('SELECT lookup_name AS owner, image FROM venue_info').all()]) {
+    const filename = localProfileImageFilename(row.image);
+    if (filename) add(filename, { kind: 'profile-image', owner: row.owner });
+  }
+  return { media, references };
+}
+
+async function archiveIntegrity() {
+  const { media, references } = archiveFileReferences();
+  let diskEntries = [];
+  try { diskEntries = (await fs.readdir(MEDIA_DIR, { withFileTypes: true })).filter((entry) => entry.isFile()); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const diskFiles = new Map();
+  for (const entry of diskEntries) {
+    try { diskFiles.set(entry.name, (await fs.stat(path.join(MEDIA_DIR, entry.name))).size); } catch { /* file changed during scan */ }
+  }
+  const issues = [];
+  for (const [filename, owners] of references) {
+    if (diskFiles.has(filename)) continue;
+    const owner = owners[0];
+    issues.push({ id: `missing:${filename}`, type: 'missing', title: filename, detail: owner.kind === 'profile-image' ? `Missing profile image referenced by ${owner.owner}` : `Missing ${owner.kind} file for ${owner.artist || 'unknown artist'} at ${owner.venue || 'unknown venue'}`, href: owner.gigId ? `/edit?id=${encodeURIComponent(owner.gigId)}` : '/health' });
+  }
+  for (const [filename, size] of diskFiles) {
+    if (references.has(filename) || /\.(?:uploading|processing|rotating|trimming)(?:\.|$)/i.test(filename)) continue;
+    issues.push({ id: `orphan:${filename}`, type: 'orphan', title: filename, detail: `Unreferenced media file · ${size} bytes`, filename });
+  }
+  const orphanedRows = media.filter((item) => !item.artist);
+  for (const item of orphanedRows) issues.push({ id: `reference:${item.id}`, type: 'reference', title: item.filename || item.id, detail: `Media record points to missing show ${item.gigId}` });
+  const duplicates = database.prepare(`SELECT checksum, COUNT(*) AS count, GROUP_CONCAT(id) AS ids, GROUP_CONCAT(gig_id) AS gigIds
+    FROM gig_media WHERE checksum IS NOT NULL AND checksum <> '' AND external_url IS NULL GROUP BY checksum HAVING COUNT(*) > 1`).all();
+  for (const duplicate of duplicates) issues.push({ id: `duplicate:${duplicate.checksum}`, type: 'duplicate', title: `${duplicate.count} matching uploads`, detail: `These media records share checksum ${duplicate.checksum.slice(0, 12)}…`, mediaIds: duplicate.ids.split(','), href: `/edit?id=${encodeURIComponent(duplicate.gigIds.split(',')[0])}` });
+  const foreignKeys = database.prepare('PRAGMA foreign_key_check').all();
+  if (foreignKeys.length) issues.push({ id: 'database:foreign-keys', type: 'database', title: 'Broken database relationships', detail: `${foreignKeys.length} foreign-key violation${foreignKeys.length === 1 ? '' : 's'} detected` });
+  const quickCheck = database.prepare('PRAGMA quick_check').all().map((row) => Object.values(row)[0]);
+  if (quickCheck.some((value) => value !== 'ok')) issues.push({ id: 'database:quick-check', type: 'database', title: 'SQLite integrity warning', detail: quickCheck.join('; ') });
+  const counts = issues.reduce((result, issue) => { result[issue.type] = (result[issue.type] || 0) + 1; return result; }, {});
+  return {
+    healthy: issues.length === 0,
+    scannedAt: new Date().toISOString(),
+    counts,
+    issues,
+    summary: { database: quickCheck.every((value) => value === 'ok'), records: media.length, referencedFiles: references.size, diskFiles: diskFiles.size, diskBytes: [...diskFiles.values()].reduce((sum, size) => sum + size, 0) }
+  };
+}
+
+async function mediaManifest() {
+  const integrity = await archiveIntegrity();
+  const { media, references } = archiveFileReferences();
+  const files = [];
+  for (const [filename, owners] of references) {
+    try {
+      const stat = await fs.stat(path.join(MEDIA_DIR, filename));
+      files.push({ filename, size: stat.size, present: true, owners });
+    } catch { files.push({ filename, size: null, present: false, owners }); }
+  }
+  return { format: 'the-master-list-media-manifest-v1', createdAt: new Date().toISOString(), databaseFile: path.basename(DB_FILE), mediaRecords: media.length, files, integrity: { healthy: integrity.healthy, counts: integrity.counts } };
+}
+
+async function maintenanceStatus() {
+  const databaseSize = await fs.stat(DB_FILE).then((stat) => stat.size).catch(() => 0);
+  let backups = [];
+  try {
+    backups = (await fs.readdir(BACKUP_DIR, { withFileTypes: true })).filter((entry) => entry.isFile() && entry.name.endsWith('.sqlite')).map((entry) => entry.name).sort().reverse();
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const integrity = await archiveIntegrity();
+  return { databaseSize, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), integrity };
+}
+
+async function receiveDatabaseRestore(request) {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  const temporary = `${PENDING_RESTORE_FILE}.uploading`;
+  const output = legacyFs.createWriteStream(temporary, { mode: 0o600 });
+  let size = 0;
+  try {
+    for await (const chunk of request) {
+      size += chunk.length;
+      if (size > 2 * 1024 * 1024 * 1024) throw new Error('Database restore files must be smaller than 2 GB.');
+      if (!output.write(chunk)) await new Promise((resolve, reject) => { output.once('drain', resolve); output.once('error', reject); });
+    }
+    await new Promise((resolve, reject) => { output.end(resolve); output.once('error', reject); });
+    const handle = await fs.open(temporary, 'r');
+    const header = Buffer.alloc(16);
+    try { await handle.read(header, 0, header.length, 0); } finally { await handle.close(); }
+    if (size < 100 || !header.equals(Buffer.from('SQLite format 3\0'))) throw new Error('Choose a valid SQLite database file.');
+    const candidate = new Database(temporary, { readonly: true, fileMustExist: true });
+    try {
+      const tables = new Set(candidate.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name));
+      for (const required of ['gigs', 'gig_media', 'profiles', 'instance_identity']) if (!tables.has(required)) throw new Error(`Restore database is missing the ${required} table.`);
+      const check = candidate.prepare('PRAGMA quick_check').all().map((row) => Object.values(row)[0]);
+      if (check.some((value) => value !== 'ok')) throw new Error(`Restore database failed its integrity check: ${check.join('; ')}`);
+    } finally { candidate.close(); }
+    await fs.rename(temporary, PENDING_RESTORE_FILE);
+    return { staged: true, size, restartRequired: true };
+  } catch (error) {
+    output.destroy();
+    await fs.rm(temporary, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 async function enrichGigAlbums(gigId, forceMissing = false) {
@@ -1993,9 +2120,17 @@ async function handleApi(request, response, url) {
 
   if (request.method === 'GET' && url.pathname === '/api/notifications') {
     requireAccount(request);
+    const scope = url.searchParams.get('scope') === 'all' ? 'all' : 'unread';
     const notifications = database.prepare(`SELECT id, type, peer_id AS peerId, shared_gig_id AS sharedGigId,
-      title, body, created_at AS createdAt FROM notifications WHERE read_at IS NULL ORDER BY created_at DESC LIMIT 50`).all();
-    return sendJson(response, 200, notifications);
+      title, body, created_at AS createdAt, read_at AS readAt FROM notifications
+      ${scope === 'all' ? '' : 'WHERE read_at IS NULL'} ORDER BY created_at DESC LIMIT 200`).all();
+    return sendJson(response, 200, notifications.map((entry) => ({ ...entry, unread: !entry.readAt })));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/notifications/read-all') {
+    requireAccount(request);
+    const result = database.prepare('UPDATE notifications SET read_at = ? WHERE read_at IS NULL').run(new Date().toISOString());
+    return sendJson(response, 200, { updated: result.changes });
   }
 
   const notificationMatch = url.pathname.match(/^\/api\/notifications\/([a-f0-9]+)$/);
@@ -2175,6 +2310,46 @@ async function handleApi(request, response, url) {
     });
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/maintenance/status') {
+    requireAccount(request);
+    return sendJson(response, 200, await maintenanceStatus());
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/maintenance/database') {
+    requireAccount(request);
+    await fs.mkdir(BACKUP_DIR, { recursive: true });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `the-master-list-${timestamp}.sqlite`;
+    const backupPath = path.join(BACKUP_DIR, filename);
+    await database.backup(backupPath);
+    const stat = await fs.stat(backupPath);
+    response.writeHead(200, {
+      'Content-Type': 'application/vnd.sqlite3',
+      'Content-Length': stat.size,
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store'
+    });
+    return legacyFs.createReadStream(backupPath).pipe(response);
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/maintenance/manifest') {
+    requireAccount(request);
+    const filename = `the-master-list-media-manifest-${new Date().toISOString().slice(0, 10)}.json`;
+    return sendJson(response, 200, await mediaManifest(), { 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store' });
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/maintenance/integrity') {
+    requireAccount(request);
+    return sendJson(response, 200, await archiveIntegrity());
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/maintenance/restore') {
+    requireAccount(request);
+    if (!String(request.headers['content-type'] || '').includes('application/vnd.sqlite3') && !String(request.headers['content-type'] || '').includes('application/octet-stream')) return sendError(response, 415, 'Upload a SQLite database file.');
+    try { return sendJson(response, 202, await receiveDatabaseRestore(request)); }
+    catch (error) { return sendError(response, /smaller than 2 GB/i.test(error.message) ? 413 : 400, error.message); }
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/backup') {
     requireAccount(request);
     const media = database.prepare('SELECT * FROM gig_media ORDER BY created_at').all();
@@ -2259,7 +2434,7 @@ async function handleApi(request, response, url) {
     const profileImages = [...database.prepare('SELECT image FROM artist_info').all(), ...database.prepare('SELECT image FROM venue_info').all()].map((row) => localProfileImageFilename(row.image)).filter(Boolean);
     const referenced = new Set([...database.prepare('SELECT filename, playback_filename, background_filename FROM gig_media').all().flatMap((row) => [row.filename, row.playback_filename, row.background_filename].filter(Boolean)), ...profileImages]);
     const entries = await fs.readdir(MEDIA_DIR, { withFileTypes: true }); let removed = 0;
-    for (const entry of entries) { if (!entry.isFile() || referenced.has(entry.name)) continue; await fs.rm(path.join(MEDIA_DIR, entry.name), { force: true }); removed += 1; }
+    for (const entry of entries) { if (!entry.isFile() || referenced.has(entry.name) || /\.(?:uploading|processing|rotating|trimming)(?:\.|$)/i.test(entry.name)) continue; await fs.rm(path.join(MEDIA_DIR, entry.name), { force: true }); removed += 1; }
     return sendJson(response, 200, { removed });
   }
 
@@ -2901,7 +3076,7 @@ module.exports = {
   server,
   database,
   paths: { data: DATA_DIR, database: DB_FILE, media: MEDIA_DIR },
-  testables: { estimateFullShowTimings, parsePlaybackChapters, suggestPlaybackPlan, youtubeVideoId }
+  testables: { archiveIntegrity, maintenanceStatus, mediaManifest, estimateFullShowTimings, parsePlaybackChapters, suggestPlaybackPlan, youtubeVideoId }
 };
 
 function loadEnvFile() {

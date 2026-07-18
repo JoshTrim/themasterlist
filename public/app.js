@@ -118,10 +118,21 @@ const peerInviteToken = document.querySelector('#peer-invite-token');
 const importPeerInvite = document.querySelector('#import-peer-invite');
 const profileBar = document.querySelector('#profile-bar');
 const inviteButton = document.querySelector('#create-invite');
-const downloadBackupButton = document.querySelector('#download-backup');
 const exportArchiveButton = document.querySelector('#export-archive');
 const importArchiveInput = document.querySelector('#import-archive');
 const cleanupMediaButton = document.querySelector('#cleanup-media');
+const maintenanceSummary = document.querySelector('#maintenance-summary');
+const maintenanceMessage = document.querySelector('#maintenance-message');
+const integrityList = document.querySelector('#integrity-list');
+const refreshIntegrityButton = document.querySelector('#refresh-integrity');
+const restoreDatabaseInput = document.querySelector('#restore-database');
+const stageRestoreButton = document.querySelector('#stage-restore');
+const downloadDatabaseLink = document.querySelector('#download-database');
+const activityList = document.querySelector('#activity-list');
+const activityFilters = document.querySelector('#activity-filters');
+const activityMessage = document.querySelector('#activity-message');
+const markAllActivityRead = document.querySelector('#mark-all-activity-read');
+const navActivityCount = document.querySelector('#nav-activity-count');
 const logoutButton = document.querySelector('#logout');
 let selectedSetlist = null;
 let gigs = [];
@@ -145,6 +156,8 @@ const routeSections = {
   timeline: ['timeline-page'],
   search: ['search-page'],
   health: ['health-page'],
+  maintenance: ['maintenance-page'],
+  activity: ['activity-page'],
   'api-limits': ['api-limits-page'],
   add: ['add-page'],
   shows: ['shows-archive'],
@@ -161,7 +174,7 @@ const routeSections = {
   map: ['map-page'],
   account: ['account-page']
 };
-for (const id of ['home-page', 'overview-page', 'artists-page', 'venues-page', 'timeline-page', 'search-page', 'health-page', 'api-limits-page', 'add-page', 'shows-archive', 'artist-page', 'artist-edit-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
+for (const id of ['home-page', 'overview-page', 'artists-page', 'venues-page', 'timeline-page', 'search-page', 'health-page', 'maintenance-page', 'activity-page', 'api-limits-page', 'add-page', 'shows-archive', 'artist-page', 'artist-edit-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
   document.querySelector(`#${id}`).hidden = !routeSections[page].includes(id);
 }
 const chestButton = document.querySelector('#open-chest');
@@ -776,11 +789,13 @@ async function fetchJson(url, options) {
 function renderPeerNotifications(notifications) {
   const list = notificationPanel.querySelector('.peer-notification-list');
   notificationPanel.hidden = !notifications.length;
+  navActivityCount.hidden = !notifications.length;
+  navActivityCount.textContent = notifications.length > 99 ? '99+' : String(notifications.length);
   list.innerHTML = notifications.map((notification) => `<article class="peer-notification" data-notification-id="${escapeHtml(notification.id)}"><a href="/shows#shared-${encodeURIComponent(notification.sharedGigId || '')}"><strong>${escapeHtml(notification.title)}</strong><span>${escapeHtml(notification.body || '')}</span></a><button type="button" aria-label="Dismiss notification">×</button></article>`).join('');
   list.querySelectorAll('.peer-notification').forEach((item) => {
     const markRead = () => fetchJson(`/api/notifications/${encodeURIComponent(item.dataset.notificationId)}`, { method: 'PATCH' }).catch(() => {});
     item.querySelector('a').addEventListener('click', async (event) => { event.preventDefault(); await markRead(); window.location.assign(event.currentTarget.href); });
-    item.querySelector('button').addEventListener('click', async () => { await markRead(); item.remove(); notificationPanel.hidden = !list.children.length; });
+    item.querySelector('button').addEventListener('click', async () => { await markRead(); item.remove(); notificationPanel.hidden = !list.children.length; navActivityCount.hidden = !list.children.length; navActivityCount.textContent = String(list.children.length); });
   });
 }
 
@@ -2266,6 +2281,87 @@ async function renderApiLimits() {
   }
 }
 
+const formatBytes = (bytes) => {
+  const value = Number(bytes || 0);
+  if (value < 1024) return `${value} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let size = value / 1024; let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit += 1; }
+  return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[unit]}`;
+};
+
+function renderIntegrity(data) {
+  if (!integrityList) return;
+  const summary = data.summary || {};
+  const heading = `<div class="integrity-summary"><article class="${data.healthy ? 'is-healthy' : ''}"><strong>${data.healthy ? '✓' : data.issues.length}</strong><span>${data.healthy ? 'Archive healthy' : 'Issues found'}</span></article><article><strong>${summary.records || 0}</strong><span>Media records</span></article><article><strong>${summary.diskFiles || 0}</strong><span>Files on disk</span></article><article><strong>${formatBytes(summary.diskBytes)}</strong><span>Media storage</span></article></div>`;
+  const issues = data.issues?.length ? `<div class="integrity-issues">${data.issues.map((issue) => `<article class="integrity-issue integrity-${escapeHtml(issue.type)}"><span>${escapeHtml(issue.type)}</span><div><strong>${escapeHtml(issue.title)}</strong><p>${escapeHtml(issue.detail)}</p></div>${issue.href ? `<a class="text-button" href="${escapeHtml(issue.href)}">Open</a>` : ''}</article>`).join('')}</div>` : '<div class="empty-state">SQLite and all referenced files passed the integrity check.</div>';
+  integrityList.innerHTML = heading + issues;
+  cleanupMediaButton.disabled = !data.counts?.orphan;
+}
+
+function renderMaintenanceStatus(data) {
+  if (!maintenanceSummary) return;
+  maintenanceSummary.innerHTML = `<article><strong>${formatBytes(data.databaseSize)}</strong><span>Database size</span></article><article><strong>${data.backupCount}</strong><span>Saved database backups</span></article><article><strong>${data.latestBackup ? escapeHtml(data.latestBackup.replace(/^the-master-list-|^pre-restore-/, '').replace(/\.sqlite$/, '')) : '—'}</strong><span>Latest backup</span></article><article class="${data.restorePending ? 'has-warning' : ''}"><strong>${data.restorePending ? '!' : '✓'}</strong><span>${data.restorePending ? 'Restore staged — restart required' : 'No restore pending'}</span></article>`;
+  renderIntegrity(data.integrity);
+}
+
+async function renderMaintenance() {
+  if (page !== 'maintenance' || !maintenanceSummary) return;
+  try { renderMaintenanceStatus(await fetchJson('/api/maintenance/status')); }
+  catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); }
+}
+
+refreshIntegrityButton?.addEventListener('click', async () => {
+  refreshIntegrityButton.disabled = true; refreshIntegrityButton.textContent = 'Checking…'; maintenanceMessage.textContent = 'Scanning database and media files…'; maintenanceMessage.classList.remove('error');
+  try { renderIntegrity(await fetchJson('/api/maintenance/integrity')); maintenanceMessage.textContent = 'Integrity check complete.'; }
+  catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); }
+  finally { refreshIntegrityButton.disabled = false; refreshIntegrityButton.textContent = 'Run check'; }
+});
+
+downloadDatabaseLink?.addEventListener('click', () => { maintenanceMessage.textContent = 'Creating a consistent SQLite snapshot…'; setTimeout(renderMaintenance, 1800); });
+
+stageRestoreButton?.addEventListener('click', async () => {
+  const file = restoreDatabaseInput.files?.[0];
+  if (!file) { maintenanceMessage.textContent = 'Choose a SQLite backup first.'; maintenanceMessage.classList.add('error'); return; }
+  if (!confirm('Stage this database for restore? It will replace the live database the next time the server starts.')) return;
+  stageRestoreButton.disabled = true; maintenanceMessage.classList.remove('error'); maintenanceMessage.textContent = `Validating ${file.name}…`;
+  try {
+    const result = await fetchJson('/api/maintenance/restore', { method: 'POST', headers: { 'Content-Type': 'application/vnd.sqlite3' }, body: file });
+    maintenanceMessage.textContent = `Restore staged (${formatBytes(result.size)}). Restart the server to apply it.`;
+    await renderMaintenance();
+  } catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); }
+  finally { stageRestoreButton.disabled = false; }
+});
+
+let activityData = [];
+let activityFilter = 'all';
+function renderActivityList() {
+  if (!activityList) return;
+  const visible = activityData.filter((entry) => activityFilter === 'all' || entry.unread);
+  activityFilters.querySelectorAll('button').forEach((button) => button.classList.toggle('active', button.dataset.activityFilter === activityFilter));
+  activityList.innerHTML = visible.length ? visible.map((entry) => `<article class="activity-entry ${entry.unread ? 'is-unread' : ''}" data-activity-id="${escapeHtml(entry.id)}"><i aria-hidden="true"></i><div><span>${entry.type === 'peer-show-updated' ? 'Show updated' : 'New shared show'} · ${escapeHtml(new Date(entry.createdAt).toLocaleString())}</span><h2>${escapeHtml(entry.title)}</h2><p>${escapeHtml(entry.body || '')}</p></div><div class="activity-entry-actions"><a class="button button-secondary" href="/shows#shared-${encodeURIComponent(entry.sharedGigId || '')}">Open show</a>${entry.unread ? '<button class="text-button activity-read" type="button">Mark read</button>' : '<small>Read</small>'}</div></article>`).join('') : '<div class="empty-state">No peer activity matches this filter.</div>';
+  activityList.querySelectorAll('.activity-entry').forEach((item) => {
+    const entry = activityData.find((candidate) => candidate.id === item.dataset.activityId);
+    const markRead = async () => { if (!entry?.unread) return; await fetchJson(`/api/notifications/${encodeURIComponent(entry.id)}`, { method: 'PATCH' }); entry.unread = false; entry.readAt = new Date().toISOString(); };
+    item.querySelector('.activity-read')?.addEventListener('click', async () => { await markRead(); renderActivityList(); await loadPeerNotifications(); });
+    item.querySelector('a')?.addEventListener('click', async (event) => { event.preventDefault(); await markRead(); window.location.assign(event.currentTarget.href); });
+  });
+  markAllActivityRead.disabled = !activityData.some((entry) => entry.unread);
+}
+
+async function renderActivity() {
+  if (page !== 'activity' || !activityList) return;
+  try { activityData = await fetchJson('/api/notifications?scope=all'); renderActivityList(); }
+  catch (error) { activityMessage.textContent = error.message; activityMessage.classList.add('error'); }
+}
+
+activityFilters?.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => { activityFilter = button.dataset.activityFilter; renderActivityList(); }));
+markAllActivityRead?.addEventListener('click', async () => {
+  markAllActivityRead.disabled = true;
+  try { await fetchJson('/api/notifications/read-all', { method: 'POST' }); activityData.forEach((entry) => { entry.unread = false; entry.readAt ||= new Date().toISOString(); }); renderActivityList(); await loadPeerNotifications(); activityMessage.textContent = 'All activity marked as read.'; }
+  catch (error) { activityMessage.textContent = error.message; activityMessage.classList.add('error'); }
+});
+
 let healthData = null;
 let healthFilter = 'all';
 const healthTypeLabels = { setlist: 'Setlists', albums: 'Albums', artist: 'Artists', venue: 'Venues', location: 'Map' };
@@ -3231,20 +3327,9 @@ inviteButton.addEventListener('click', async () => {
     setSharedMessage('Invite link copied. It expires in seven days.');
   } catch (error) { setSharedMessage(error.message, true); }
 });
-downloadBackupButton.addEventListener('click', async () => {
-  try {
-    downloadBackupButton.disabled = true;
-    const backup = await fetchJson('/api/backup');
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([JSON.stringify(backup)], { type: 'application/json' }));
-    link.download = `the-master-list-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-  } catch (error) { setSharedMessage(error.message, true); } finally { downloadBackupButton.disabled = false; }
-});
-exportArchiveButton?.addEventListener('click', async () => { try { const data = await fetchJson('/api/archive/export'); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `the-master-list-export-${new Date().toISOString().slice(0, 10)}.json`; link.click(); URL.revokeObjectURL(link.href); } catch (error) { setSharedMessage(error.message, true); } });
-importArchiveInput?.addEventListener('change', async () => { const file = importArchiveInput.files?.[0]; if (!file) return; try { const data = JSON.parse(await file.text()); await fetchJson('/api/archive/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); setSharedMessage(`Imported ${data.gigs?.length || 0} shows.`); window.location.reload(); } catch (error) { setSharedMessage(error.message, true); } finally { importArchiveInput.value = ''; } });
-cleanupMediaButton?.addEventListener('click', async () => { if (!confirm('Delete media files that are no longer referenced by a show?')) return; try { const result = await fetchJson('/api/media/cleanup', { method: 'POST' }); setSharedMessage(`Removed ${result.removed} unused media file${result.removed === 1 ? '' : 's'}.`); } catch (error) { setSharedMessage(error.message, true); } });
+exportArchiveButton?.addEventListener('click', async () => { try { const data = await fetchJson('/api/archive/export'); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `the-master-list-export-${new Date().toISOString().slice(0, 10)}.json`; link.click(); URL.revokeObjectURL(link.href); maintenanceMessage.textContent = 'Shows JSON exported.'; } catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); } });
+importArchiveInput?.addEventListener('change', async () => { const file = importArchiveInput.files?.[0]; if (!file) return; try { const data = JSON.parse(await file.text()); await fetchJson('/api/archive/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); maintenanceMessage.textContent = `Imported ${data.gigs?.length || 0} shows. Reloading…`; window.location.reload(); } catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); } finally { importArchiveInput.value = ''; } });
+cleanupMediaButton?.addEventListener('click', async () => { if (!confirm('Permanently delete files that are not referenced by any show or profile?')) return; cleanupMediaButton.disabled = true; try { const result = await fetchJson('/api/media/cleanup', { method: 'POST' }); maintenanceMessage.textContent = `Removed ${result.removed} orphan file${result.removed === 1 ? '' : 's'}.`; await renderMaintenance(); } catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); } finally { cleanupMediaButton.disabled = false; } });
 
 document.querySelector('#find-setlist').addEventListener('click', async () => {
   const gig = formValues();
@@ -3740,6 +3825,8 @@ async function initializeApp() {
     renderGlobalSearch();
     await renderArchiveHealth();
     await renderApiLimits();
+    await renderMaintenance();
+    await renderActivity();
     renderProfiles();
     renderSharedShows();
     await renderInstanceSettings();
