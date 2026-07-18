@@ -3,6 +3,9 @@ const { escapeHtml, formatGigDate, formatBytes, providerName } = window.MasterLi
 const playbackCore = window.MasterListPlaybackCore;
 const playbackMedia = window.MasterListPlaybackMedia;
 const theatreUi = window.MasterListTheatre;
+const mediaUi = window.MasterListMediaUi;
+const uploadQueue = window.MasterListUploadQueue;
+const mediaJobs = window.MasterListMediaJobs;
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
 const navSignIn = document.querySelector('#nav-sign-in');
 const jobUi = window.MasterListJobs.createJobQueue({ document, fetchJson, escapeHtml, hideUploads: () => isMobileUpload });
@@ -184,7 +187,7 @@ const editMediaInput = document.querySelector('#edit-media-input');
 const addAttendeePicker = document.querySelector('#add-attendee-picker');
 let editAttendeePicker = document.querySelector('#edit-attendee-picker');
 const pendingMedia = new WeakMap();
-const selectedMediaIds = new Set();
+const mediaSelection = mediaUi.createSelection();
 const mobileUploadStates = new WeakMap();
 const mobileUploadRenderTimers = new WeakMap();
 const isMobileUpload = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
@@ -195,9 +198,9 @@ function releaseUploadWakeLock() { if (!isMobileUpload) return; activeWakeLockUs
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && activeWakeLockUsers && !uploadWakeLock) retainUploadWakeLock(); });
 function mobileUploadStateFor(input, gigId = '', category = 'show') {
   let state = mobileUploadStates.get(input);
-  if (!state) { state = { gigId: '', category, items: [], processing: false, startTimer: null, onUploaded: null, onDrained: null, completedSinceDrain: 0, releaseAfterDrain: false }; mobileUploadStates.set(input, state); }
-  if (gigId) state.gigId = gigId;
-  if (category) state.category = category;
+  if (!state) { state = uploadQueue.createState(category); mobileUploadStates.set(input, state); }
+  if (gigId) uploadQueue.bindGig(state, gigId, category);
+  else if (category) state.category = category;
   return state;
 }
 function uploadStatusContainer(input) { return input?.closest('.media-upload')?.querySelector('.media-upload-status'); }
@@ -218,15 +221,10 @@ function renderMobileUploadState(input, state = mobileUploadStates.get(input)) {
   const items = state?.items?.slice(-6) || [];
   container.hidden = !items.length;
   if (!items.length) { container.replaceChildren(); return; }
-  container.innerHTML = items.map((item) => {
-    const label = item.status === 'waiting' ? 'Waiting for show' : item.status === 'queued' ? 'Queued' : item.status === 'uploading' ? `Uploading ${Math.round(item.progress || 0)}%` : item.status === 'complete' ? 'Uploaded' : `Failed · ${item.error || 'Try again'}`;
-    const retry = item.status === 'error' ? `<button type="button" class="mobile-upload-retry" data-upload-item="${item.id}">Retry</button>` : '';
-    return `<div class="mobile-upload-item"><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(label)} · ${escapeHtml(formatUploadSize(item.size))}</span>${retry}</div><div class="mobile-upload-bar"><i style="width:${item.progress || (item.status === 'complete' ? 100 : 0)}%"></i></div></div>`;
-  }).join('');
+  container.innerHTML = uploadQueue.queueMarkup(state, { escapeHtml, formatSize: formatUploadSize });
   container.querySelectorAll('.mobile-upload-retry').forEach((button) => button.addEventListener('click', () => {
-    const item = state.items.find((entry) => entry.id === button.dataset.uploadItem);
+    const item = uploadQueue.retry(state, button.dataset.uploadItem);
     if (!item) return;
-    item.status = 'queued'; item.error = ''; item.progress = 0;
     renderMobileUploadState(input, state);
     processMobileUploadQueue(input, state);
   }));
@@ -235,8 +233,7 @@ function queueMobileFiles(input, files) {
   const state = mobileUploadStateFor(input);
   const selectedFiles = files.filter((file) => file && file.size > 0);
   if (!selectedFiles.length) return;
-  const items = selectedFiles.map((file) => ({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, file, name: file.name, size: file.size, status: state.gigId ? 'queued' : 'waiting', progress: 0, error: '' }));
-  state.items.push(...items);
+  uploadQueue.enqueueFiles(state, selectedFiles);
   if (!state.gigId) pendingMedia.set(input, [...(pendingMedia.get(input) || []), ...selectedFiles]);
   renderMobileUploadState(input, state);
   if (state.gigId && !state.startTimer) {
@@ -252,7 +249,7 @@ async function processMobileUploadQueue(input, state = mobileUploadStates.get(in
   await retainUploadWakeLock();
   state.runningPromise = (async () => {
     while (true) {
-      const item = state.items.find((entry) => entry.status === 'queued');
+      const item = uploadQueue.nextQueued(state);
       if (!item) break;
       item.status = 'uploading'; item.progress = 0; renderMobileUploadState(input, state);
       try {
@@ -282,7 +279,7 @@ function startMobileUploadQueue(input, gigId, onUploaded, onDrained, category = 
   const state = mobileUploadStateFor(input, gigId, category);
   state.onUploaded = onUploaded || state.onUploaded;
   state.onDrained = onDrained || state.onDrained;
-  state.items.filter((item) => item.status === 'waiting').forEach((item) => { item.status = 'queued'; });
+  uploadQueue.bindGig(state, gigId, category);
   pendingMedia.set(input, []);
   renderMobileUploadState(input, state);
   return processMobileUploadQueue(input, state);
@@ -299,7 +296,7 @@ function setupMobileFileQueue(input, category = 'show') {
 }
 setupMobileFileQueue(mediaInput);
 setupMobileFileQueue(editMediaInput);
-function addFileClearButton(input) { if (!input) return; const button = document.createElement('button'); button.type = 'button'; button.className = 'button button-secondary file-clear'; button.textContent = 'Clear queued files'; button.addEventListener('click', () => { input.value = ''; if (pendingMedia.has(input)) pendingMedia.set(input, []); const state = mobileUploadStates.get(input); if (state) { if (state.startTimer) { clearTimeout(state.startTimer); state.startTimer = null; } state.items = state.items.filter((item) => item.status === 'uploading' || item.status === 'complete'); if (!state.items.some((item) => item.status === 'uploading')) { state.gigId = ''; state.releaseAfterDrain = false; } renderMobileUploadState(input, state); } }); input.insertAdjacentElement('afterend', button); }
+function addFileClearButton(input) { if (!input) return; const button = document.createElement('button'); button.type = 'button'; button.className = 'button button-secondary file-clear'; button.textContent = 'Clear queued files'; button.addEventListener('click', () => { input.value = ''; if (pendingMedia.has(input)) pendingMedia.set(input, []); const state = mobileUploadStates.get(input); if (state) { if (state.startTimer) { clearTimeout(state.startTimer); state.startTimer = null; } uploadQueue.clearPending(state); if (!state.items.some((item) => item.status === 'uploading')) { state.gigId = ''; state.releaseAfterDrain = false; } renderMobileUploadState(input, state); } }); input.insertAdjacentElement('afterend', button); }
 addFileClearButton(mediaInput);
 addFileClearButton(editMediaInput);
 const editGallery = document.querySelector('#edit-gallery');
@@ -807,12 +804,7 @@ async function renderInstanceSettings() {
 }
 
 async function pollMediaRecognition(gigId, onMedia) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const refreshed = await fetchJson(`/api/gigs/${gigId}/media`);
-    onMedia(refreshed);
-    if (!refreshed.some((item) => ['queued', 'running'].includes(item.recognitionStatus))) break;
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-  }
+  return mediaJobs.pollRecognition({ fetchMedia: () => fetchJson(`/api/gigs/${gigId}/media`), onUpdate: onMedia });
 }
 
 async function fileAsBase64(file) {
@@ -921,42 +913,32 @@ mediaLightboxClose.addEventListener('click', () => { mediaLightbox.hidden = true
 mediaLightbox.addEventListener('click', (event) => { if (event.target === mediaLightbox) mediaLightboxClose.click(); });
 
 function mediaRecognitionMarkup(item, songs = []) {
-  if (item.recognitionOverride) {
-    const manualTitle = item.songIndex !== null && item.songIndex !== undefined && songs[item.songIndex] ? songs[item.songIndex].title : 'Unassigned';
-    return `<small class="media-detection media-detection-manual">Manual override: ${escapeHtml(manualTitle)}</small>`;
-  }
-  if (item.recognitionStatus === 'queued') return '<small class="media-detection">Queued for track detection…</small>';
-  if (item.recognitionStatus === 'running') return '<small class="media-detection">Detecting track…</small>';
-  if (item.recognitionStatus === 'error') return '<small class="media-detection media-detection-error">Track detection failed</small>';
-  if (!item.recognitionTitle) return '';
-  const details = [item.recognitionTitle, item.recognitionArtist].filter(Boolean).join(' — ');
-  const status = item.recognitionStatus === 'matched' ? ' · matched to setlist' : '';
-  return `<small class="media-detection">Detected: ${escapeHtml(details)}${status}</small>`;
+  return mediaUi.recognitionMarkup(item, songs, escapeHtml);
 }
 
 function renderMediaGallery(container, media = [], { editable = false, songs = [], allowCover = true, onDelete = () => {}, afterRender = () => {} } = {}) {
   container.replaceChildren();
   if (!media.length) { afterRender(container, media); return; }
       const redraw = () => renderMediaGallery(container, media, { editable, songs, allowCover, onDelete, afterRender });
-      for (const id of [...selectedMediaIds]) if (!media.some((item) => item.id === id)) selectedMediaIds.delete(id);
-      const selectedCount = media.filter((item) => selectedMediaIds.has(item.id)).length;
-      container.innerHTML = `${editable && selectedCount ? `<div class="media-bulk-actions"><span>${selectedCount} selected</span><button type="button" class="media-bulk-delete">Remove selected</button><button type="button" class="media-bulk-clear">Clear</button></div>` : ''}${media.map((item, index) => `<figure class="media-item${item.isCover ? ' is-cover' : ''}${item.useBackgroundRemoved ? ' is-cutout' : ''}${selectedMediaIds.has(item.id) ? ' is-selected' : ''}" data-media-id="${item.id}">${editable ? `<button type="button" class="media-delete-corner" aria-label="${selectedMediaIds.has(item.id) ? 'Deselect media' : 'Select media for removal'}" title="${selectedMediaIds.has(item.id) ? 'Deselect media' : 'Select media for removal'}" aria-pressed="${selectedMediaIds.has(item.id)}">×</button>` : ''}${item.mimeType === 'video/youtube' ? `<iframe src="${youtubeEmbedUrl(item.url)}" title="${escapeHtml(item.caption || 'YouTube video')}" loading="lazy" allowfullscreen></iframe>` : item.mimeType.startsWith('video/') ? `<video src="${item.url}" controls preload="${isMobileUpload ? 'none' : 'metadata'}"></video>` : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" style="transform:rotate(${item.rotation || 0}deg)" /></button>`}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${item.backgroundStatus === 'running' ? '<small class="media-background-status">Removing background…</small>' : item.backgroundStatus === 'error' ? `<small class="media-background-status media-detection-error">${escapeHtml(item.backgroundError || 'Background removal failed')}</small>` : item.useBackgroundRemoved ? '<small class="media-background-status">Transparent cutout</small>' : ''}${mediaRecognitionMarkup(item, songs)}${editable ? `<div class="media-actions"><button type="button" class="media-menu-toggle" aria-expanded="false">⋮ Options</button><div class="media-action-menu" hidden>${songs.length && item.category !== 'artifact' ? `<label class="media-song-label">Setlist track${item.recognitionOverride ? ' · manual override' : ''}<select class="media-song-select"><option value="">Unassigned</option>${songs.map((song, songIndex) => `<option value="${songIndex}" ${item.songIndex === songIndex ? 'selected' : ''}>${songIndex + 1}. ${escapeHtml(song.title)}</option>`).join('')}</select></label>` : ''}<button class="media-caption" type="button">Caption</button>${allowCover && item.category !== 'artifact' ? `<button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button>` : ''}${item.category === 'artifact' && item.mimeType.startsWith('image/') ? `${item.backgroundFilename ? `<button type="button" class="media-background-toggle">${item.useBackgroundRemoved ? 'Use original photo' : 'Use transparent cutout'}</button>` : ''}<button type="button" class="media-background-remove" ${item.backgroundStatus === 'running' ? 'disabled' : ''}>${item.backgroundFilename ? 'Recreate cutout' : item.backgroundStatus === 'error' ? 'Retry background removal' : 'Remove background'}</button>` : ''}${item.mimeType.startsWith('video/') && item.mimeType !== 'video/youtube' ? '<button type="button" class="media-trim">Trim video</button><button type="button" class="media-rotate media-rotate-cw">↻ Clockwise</button><button type="button" class="media-rotate media-rotate-ccw">↺ Counter-clockwise</button>' : ''}<button type="button" class="media-up" ${index === 0 ? 'disabled' : ''}>↑ Move earlier</button><button type="button" class="media-down" ${index === media.length - 1 ? 'disabled' : ''}>↓ Move later</button></div></div>` : ''}</figure>`).join('')}`;
+      mediaSelection.prune(media);
+      const selectedCount = mediaSelection.selected(media).length;
+      container.innerHTML = `${editable && selectedCount ? `<div class="media-bulk-actions"><span>${selectedCount} selected</span><button type="button" class="media-bulk-delete">Remove selected</button><button type="button" class="media-bulk-clear">Clear</button></div>` : ''}${media.map((item, index) => `<figure class="media-item${item.isCover ? ' is-cover' : ''}${item.useBackgroundRemoved ? ' is-cutout' : ''}${mediaSelection.has(item.id) ? ' is-selected' : ''}" data-media-id="${item.id}">${editable ? `<button type="button" class="media-delete-corner" aria-label="${mediaSelection.has(item.id) ? 'Deselect media' : 'Select media for removal'}" title="${mediaSelection.has(item.id) ? 'Deselect media' : 'Select media for removal'}" aria-pressed="${mediaSelection.has(item.id)}">×</button>` : ''}${item.mimeType === 'video/youtube' ? `<iframe src="${youtubeEmbedUrl(item.url)}" title="${escapeHtml(item.caption || 'YouTube video')}" loading="lazy" allowfullscreen></iframe>` : item.mimeType.startsWith('video/') ? `<video src="${item.url}" controls preload="${isMobileUpload ? 'none' : 'metadata'}"></video>` : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" style="transform:rotate(${item.rotation || 0}deg)" /></button>`}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${item.backgroundStatus === 'running' ? '<small class="media-background-status">Removing background…</small>' : item.backgroundStatus === 'error' ? `<small class="media-background-status media-detection-error">${escapeHtml(item.backgroundError || 'Background removal failed')}</small>` : item.useBackgroundRemoved ? '<small class="media-background-status">Transparent cutout</small>' : ''}${mediaRecognitionMarkup(item, songs)}${editable ? `<div class="media-actions"><button type="button" class="media-menu-toggle" aria-expanded="false">⋮ Options</button><div class="media-action-menu" hidden>${songs.length && item.category !== 'artifact' ? `<label class="media-song-label">Setlist track${item.recognitionOverride ? ' · manual override' : ''}<select class="media-song-select"><option value="">Unassigned</option>${songs.map((song, songIndex) => `<option value="${songIndex}" ${item.songIndex === songIndex ? 'selected' : ''}>${songIndex + 1}. ${escapeHtml(song.title)}</option>`).join('')}</select></label>` : ''}<button class="media-caption" type="button">Caption</button>${allowCover && item.category !== 'artifact' ? `<button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button>` : ''}${item.category === 'artifact' && item.mimeType.startsWith('image/') ? `${item.backgroundFilename ? `<button type="button" class="media-background-toggle">${item.useBackgroundRemoved ? 'Use original photo' : 'Use transparent cutout'}</button>` : ''}<button type="button" class="media-background-remove" ${item.backgroundStatus === 'running' ? 'disabled' : ''}>${item.backgroundFilename ? 'Recreate cutout' : item.backgroundStatus === 'error' ? 'Retry background removal' : 'Remove background'}</button>` : ''}${item.mimeType.startsWith('video/') && item.mimeType !== 'video/youtube' ? '<button type="button" class="media-trim">Trim video</button><button type="button" class="media-rotate media-rotate-cw">↻ Clockwise</button><button type="button" class="media-rotate media-rotate-ccw">↺ Counter-clockwise</button>' : ''}<button type="button" class="media-up" ${index === 0 ? 'disabled' : ''}>↑ Move earlier</button><button type="button" class="media-down" ${index === media.length - 1 ? 'disabled' : ''}>↓ Move later</button></div></div>` : ''}</figure>`).join('')}`;
   container.querySelectorAll('.media-open').forEach((button, index) => button.addEventListener('click', () => openMediaLightbox(media[index])));
   if (editable) {
     container.querySelectorAll('.media-delete-corner').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
       if (!item) return;
-      if (selectedMediaIds.has(item.id)) selectedMediaIds.delete(item.id); else selectedMediaIds.add(item.id);
+      mediaSelection.toggle(item.id);
       redraw();
     }));
-    container.querySelector('.media-bulk-clear')?.addEventListener('click', () => { selectedMediaIds.clear(); redraw(); });
+    container.querySelector('.media-bulk-clear')?.addEventListener('click', () => { mediaSelection.clear(); redraw(); });
     container.querySelector('.media-bulk-delete')?.addEventListener('click', async (event) => {
-      const selected = media.filter((item) => selectedMediaIds.has(item.id));
+      const selected = mediaSelection.selected(media);
       if (!selected.length || !confirm(`Remove ${selected.length} selected media item${selected.length === 1 ? '' : 's'}?`)) return;
       event.currentTarget.disabled = true;
       try {
         await Promise.all(selected.map((item) => fetchJson(`/api/media/${item.id}`, { method: 'DELETE' })));
-        selected.forEach((item) => { selectedMediaIds.delete(item.id); media.splice(media.indexOf(item), 1); });
+        selected.forEach((item) => { mediaSelection.delete(item.id); media.splice(media.indexOf(item), 1); });
         onDelete(selected);
         redraw();
       } catch (error) { event.currentTarget.disabled = false; event.currentTarget.textContent = error.message; }
@@ -997,12 +979,7 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
         const job = await fetchJson(`/api/media/${item.id}/remove-background`, { method: 'POST' });
         item.backgroundStatus = 'running';
         updateJob(job.jobId, { id: job.jobId, type: 'Remove background', name: item.caption || item.filename, status: 'running', progress: 10 });
-        let status;
-        do {
-          await new Promise((resolve) => setTimeout(resolve, 900));
-          status = await fetchJson(`/api/jobs/${job.jobId}`);
-          updateJob(job.jobId, status);
-        } while (status.status === 'running' || status.status === 'queued');
+        const status = await mediaJobs.poll({ fetchStatus: () => fetchJson(`/api/jobs/${job.jobId}`), onUpdate: (current) => updateJob(job.jobId, current), interval: 900 });
         if (status.status === 'error') throw new Error(status.error || 'Background removal failed.');
         item.backgroundStatus = 'complete';
         item.backgroundFilename = `${item.id}.cutout.png`;
@@ -1024,7 +1001,7 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
       const start = prompt('Trim start time in seconds', '0'); if (start === null) return;
       const end = prompt('Trim end time in seconds', ''); if (end === null || end === '' || Number(end) <= Number(start)) return;
       button.disabled = true; button.textContent = 'Trimming…';
-      try { const job = await fetchJson(`/api/media/${item.id}/trim?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, { method: 'POST' }); let status; do { await new Promise((resolve) => setTimeout(resolve, 1000)); status = await fetchJson(`/api/media/rotate/${job.jobId}`); button.textContent = `Trimming ${status.progress}%`; } while (status.status === 'running'); if (status.status === 'error') throw new Error(status.error || 'Video trim failed.'); redraw(); } catch (error) { button.textContent = error.message; } finally { button.disabled = false; }
+      try { const job = await fetchJson(`/api/media/${item.id}/trim?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, { method: 'POST' }); const status = await mediaJobs.poll({ fetchStatus: () => fetchJson(`/api/media/rotate/${job.jobId}`), isActive: (current) => current.status === 'running', onUpdate: (current) => { button.textContent = `Trimming ${current.progress}%`; } }); if (status.status === 'error') throw new Error(status.error || 'Video trim failed.'); redraw(); } catch (error) { button.textContent = error.message; } finally { button.disabled = false; }
     }));
     container.querySelectorAll('.media-rotate').forEach((button) => button.addEventListener('click', async () => {
       const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
@@ -1032,7 +1009,7 @@ function renderMediaGallery(container, media = [], { editable = false, songs = [
         button.disabled = true; button.textContent = 'Rotating…';
         const direction = button.classList.contains('media-rotate-ccw') ? 'counterclockwise' : 'clockwise';
         const job = await fetchJson(`/api/media/${item.id}/rotate?direction=${direction}`, { method: 'POST' });
-        let status; do { await new Promise((resolve) => setTimeout(resolve, 1000)); status = await fetchJson(`/api/media/rotate/${job.jobId}`); button.textContent = `Rotating ${status.progress}%`; } while (status.status === 'running');
+        const status = await mediaJobs.poll({ fetchStatus: () => fetchJson(`/api/media/rotate/${job.jobId}`), isActive: (current) => current.status === 'running', onUpdate: (current) => { button.textContent = `Rotating ${current.progress}%`; } });
         if (status.status === 'error') throw new Error(status.error || 'Video rotation failed.');
       } else {
         item.rotation = ((item.rotation || 0) + 90) % 360;
@@ -1056,15 +1033,7 @@ let mediaWorkspaceFilter = 'all';
 let activeEditGig = null;
 
 function mediaWorkspaceState(item) {
-  const uploadedVideo = String(item.mimeType || '').startsWith('video/') && item.mimeType !== 'video/youtube';
-  if (item.originalExists === false) return { key: 'failed', label: 'Missing original', detail: 'The database entry exists, but its file is missing from disk.' };
-  if (item.backgroundStatus === 'error' || item.recognitionStatus === 'error' || (uploadedVideo && ['error', 'not_started'].includes(item.playbackStatus))) return { key: 'failed', label: 'Needs attention', detail: item.backgroundError || item.recognitionError || item.playbackError || 'A mobile playback copy still needs to be created.' };
-  if (item.backgroundStatus === 'running') return { key: 'processing', label: 'Removing background', detail: 'Creating a transparent artifact cutout.' };
-  if (item.recognitionStatus === 'running') return { key: 'processing', label: 'Detecting track', detail: item.playbackStatus === 'encoding' ? 'Track detection and playback encoding are running.' : 'Listening for a matching setlist track.' };
-  if (item.recognitionStatus === 'queued') return { key: 'processing', label: 'Detection queued', detail: item.playbackStatus === 'encoding' ? 'Playback encoding is also running.' : 'Waiting to identify the track.' };
-  if (uploadedVideo && item.playbackStatus === 'encoding') return { key: 'processing', label: 'Encoding playback', detail: 'Creating the mobile-friendly H.264 playback copy.' };
-  if (String(item.mimeType || '').startsWith('video/') && item.category !== 'artifact' && (item.songIndex === null || item.songIndex === undefined)) return { key: 'unassigned', label: 'Unassigned', detail: 'Choose the matching setlist track.' };
-  return { key: 'ready', label: 'Ready', detail: item.playbackStatus === 'ready' ? 'Original and playback copy are available.' : 'Available in the show memory.' };
+  return mediaUi.workspaceState(item);
 }
 
 function applyMediaWorkspaceFilter() {
@@ -1087,9 +1056,7 @@ async function refreshEditMediaWorkspace(gig = activeEditGig) {
 }
 
 function decorateMediaWorkspace(container, media, gig) {
-  const states = media.map((item) => mediaWorkspaceState(item));
-  const totals = { all: media.length, processing: 0, failed: 0, unassigned: 0, ready: 0 };
-  states.forEach((state) => { totals[state.key] += 1; });
+  const totals = mediaUi.workspaceTotals(media);
   mediaWorkspaceStats.innerHTML = `<span><b>${totals.all}</b>Total</span><span><b>${totals.processing}</b>Processing</span><span><b>${totals.failed}</b>Needs attention</span><span><b>${totals.unassigned}</b>Unassigned</span><span><b>${totals.ready}</b>Ready</span>`;
   container.querySelectorAll('.media-item').forEach((card) => {
     const item = media.find((entry) => entry.id === card.dataset.mediaId);
@@ -1110,8 +1077,7 @@ function decorateMediaWorkspace(container, media, gig) {
         try {
           const job = await fetchJson(`/api/media/${item.id}/retry-encode`, { method: 'POST' });
           updateJob(job.jobId, { id: job.jobId, type: 'Encode video', name: item.caption || item.filename, status: 'running', progress: 1 });
-          let status;
-          do { await new Promise((resolve) => setTimeout(resolve, 1000)); status = await fetchJson(`/api/jobs/${job.jobId}`); updateJob(job.jobId, status); } while (['queued', 'running'].includes(status.status));
+          const status = await mediaJobs.poll({ fetchStatus: () => fetchJson(`/api/jobs/${job.jobId}`), onUpdate: (current) => updateJob(job.jobId, current) });
           if (status.status === 'error') throw new Error(status.error || 'Playback encoding failed.');
           await refreshEditMediaWorkspace(gig);
         } catch (error) { retryEncode.disabled = false; retryEncode.textContent = error.message; }
@@ -2655,10 +2621,8 @@ function renderEditPage() {
     try {
       if (!confirmDuplicateSave(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), gig.id)) return;
       submitButton.disabled = true;
-      const update = Object.fromEntries(new FormData(editForm).entries());
-      update.attendees = readAttendees(ensureEditAttendeePicker());
       syncTracksFromInputs();
-      update.songs = tracks;
+      const update = mediaUi.safeShowPatch(Object.fromEntries(new FormData(editForm).entries()), { attendees: readAttendees(ensureEditAttendeePicker()), songs: tracks });
       const saved = await fetchJson(`/api/gigs/${gig.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
       const files = pendingMedia.get(editMediaInput) || [...(editMediaInput?.files || [])];
       if (files.length) await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; });

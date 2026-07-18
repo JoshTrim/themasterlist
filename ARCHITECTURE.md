@@ -37,6 +37,9 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `playback-core.js` — playback sources, clip bounds, queue construction, gap handling and timeline interpolation.
 - `playback-media.js` — YouTube/upload source presentation and player-stage markup.
 - `theatre.js` — fullscreen presentation, keyboard commands and control auto-hide rules.
+- `media-ui.js` — media recognition/workspace presentation, bulk selection and media-safe show patches.
+- `upload-queue.js` — serial mobile upload queue state, retry/clear transitions and progress markup.
+- `media-jobs.js` — bounded polling for encoding, rotation, background removal and audio recognition.
 
 ## Testing strategy
 
