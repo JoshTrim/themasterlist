@@ -32,6 +32,7 @@ const { createPeerTransport } = require('./lib/peer-transport');
 const { createPeerSync } = require('./lib/peer-sync');
 const { createPeerRoutes } = require('./lib/routes/peers');
 const { createSetlistFmProvider } = require('./lib/providers/setlist-fm');
+const { createMetadataProvider } = require('./lib/providers/metadata');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -106,6 +107,7 @@ const mediaRows = mediaRepository.list;
 const gigRepository = createGigRepository({ database, mediaRows });
 const { readAll: readGigs, writeAll: writeGigs, find: findGigSync } = gigRepository;
 const setlistProvider = createSetlistFmProvider({ apiKey: process.env.SETLIST_FM_API_KEY, fetch, recordUsage, normaliseSongs });
+const metadataProvider = createMetadataProvider({ fetch, googleApiKey: process.env.GOOGLE_CUSTOM_SEARCH_API_KEY, googleEngineId: process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID });
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
 const mediaRecognition = createMediaRecognition({
@@ -291,14 +293,7 @@ async function fetchArtistGenres(name) {
   if (cached) return cached.genres;
   let genres = [];
   try {
-    const endpoint = new URL('https://itunes.apple.com/search');
-    endpoint.searchParams.set('term', artistName); endpoint.searchParams.set('entity', 'musicArtist'); endpoint.searchParams.set('limit', '8');
-    const response = await fetch(endpoint);
-    const results = response.ok ? (await response.json()).results || [] : [];
-    const clean = (value) => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-    const wanted = clean(artistName);
-    const match = results.find((entry) => clean(entry.artistName) === wanted) || results.find((entry) => clean(entry.artistName).includes(wanted) || wanted.includes(clean(entry.artistName)));
-    genres = normaliseGenres(match?.primaryGenreName || '');
+    genres = normaliseGenres(await metadataProvider.artistGenre(artistName));
   } catch { /* Keep an empty cached result so Overview remains fast offline. */ }
   return saveArtistGenres(artistName, genres, 'itunes');
 }
@@ -331,23 +326,7 @@ async function fetchArtistInfo(name) {
   const lookupName = requestedName.toLowerCase();
   const cached = database.prepare('SELECT title, description, bio, image, image_position AS imagePosition, is_manual AS isManual, source FROM artist_info WHERE lookup_name = ?').get(lookupName);
   if (cached) return { name: requestedName, ...cached };
-  const headers = { 'User-Agent': 'TheMasterList/0.1 personal-live-music-archive', 'Accept-Language': 'en' };
-  let title = requestedName;
-  const searchUrl = new URL('https://en.wikipedia.org/w/api.php');
-  searchUrl.searchParams.set('action', 'query'); searchUrl.searchParams.set('list', 'search');
-  searchUrl.searchParams.set('srsearch', `${requestedName} musician`); searchUrl.searchParams.set('srlimit', '1'); searchUrl.searchParams.set('format', 'json');
-  const searchResponse = await fetch(searchUrl, { headers });
-  const result = searchResponse.ok ? await searchResponse.json() : null;
-  title = result?.query?.search?.[0]?.title || requestedName;
-  let response = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, '_'))}`, { headers });
-  if (!response.ok && title !== requestedName) response = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(requestedName.replace(/ /g, '_'))}`, { headers });
-  if (!response.ok) {
-    const fallback = { name: requestedName, title: requestedName, bio: '', description: '', image: null, source: null };
-    database.prepare('INSERT OR REPLACE INTO artist_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, fallback.title, fallback.description, fallback.bio, fallback.image, fallback.source, new Date().toISOString());
-    return fallback;
-  }
-  const summary = await response.json();
-  const info = { name: requestedName, title: summary.title || requestedName, description: summary.description || '', bio: summary.extract || '', image: summary.thumbnail?.source || summary.originalimage?.source || null, source: summary.content_urls?.desktop?.page || null };
+  const info = await metadataProvider.artistInfo(requestedName);
   database.prepare('INSERT OR REPLACE INTO artist_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
   return info;
 }
@@ -361,53 +340,7 @@ async function fetchVenueInfo(name, city = '') {
   const cached = database.prepare('SELECT title, description, bio, image, image_position AS imagePosition, is_manual AS isManual, is_closed AS isClosed, source FROM venue_info WHERE lookup_name = ?').get(lookupName);
   if (cached && (cached.isManual || (venueWords.every((word) => cached.title.toLowerCase().includes(word)) && (cached.bio || cached.description || cached.image)))) return { name: requestedName, city: requestedCity, ...cached };
   if (cached) database.prepare('DELETE FROM venue_info WHERE lookup_name = ?').run(lookupName);
-  const headers = { 'User-Agent': 'TheMasterList/0.1 personal-live-music-archive', 'Accept-Language': 'en' };
-  const officialSources = { 'fortitude music hall|brisbane': 'https://www.thefortitude.com.au/venue-history' };
-  const officialUrl = officialSources[lookupName];
-  if (officialUrl) {
-    const officialResponse = await fetch(officialUrl, { headers });
-    if (officialResponse.ok) {
-      const html = await officialResponse.text();
-      const title = html.match(/<title[^>]*>([^<]+)/i)?.[1]?.replace(/\s*[-|].*$/, '').trim() || requestedName;
-      const description = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)/i)?.[1] || '';
-      const image = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)/i)?.[1] || null;
-      const bio = description || `${title} is a live music venue in ${requestedCity}.`;
-      const info = { name: requestedName, city: requestedCity, title, description, bio, image, source: officialUrl };
-      database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
-      return info;
-    }
-  }
-  if (process.env.GOOGLE_CUSTOM_SEARCH_API_KEY && process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID) {
-    const googleUrl = new URL('https://www.googleapis.com/customsearch/v1');
-    googleUrl.searchParams.set('key', process.env.GOOGLE_CUSTOM_SEARCH_API_KEY);
-    googleUrl.searchParams.set('cx', process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID);
-    googleUrl.searchParams.set('q', `${requestedName} ${requestedCity} official venue`);
-    const googleResponse = await fetch(googleUrl, { headers });
-    const result = googleResponse.ok ? await googleResponse.json() : null;
-    const officialResult = result?.items?.find((item) => /official|venue|music|theatre|theater/i.test(`${item.title} ${item.snippet}`));
-    if (officialResult?.link) {
-      const pageResponse = await fetch(officialResult.link, { headers });
-      if (pageResponse.ok) {
-        const html = await pageResponse.text();
-        const title = html.match(/<title[^>]*>([^<]+)/i)?.[1]?.replace(/\s*[-|].*$/, '').trim() || requestedName;
-        const description = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)/i)?.[1] || officialResult.snippet || '';
-        const image = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)/i)?.[1] || null;
-        const info = { name: requestedName, city: requestedCity, title, description, bio: description, image, source: officialResult.link };
-        database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
-        return info;
-      }
-    }
-  }
-  const searchUrl = new URL('https://en.wikipedia.org/w/api.php');
-  searchUrl.searchParams.set('action', 'query'); searchUrl.searchParams.set('list', 'search'); searchUrl.searchParams.set('srlimit', '1'); searchUrl.searchParams.set('format', 'json');
-  searchUrl.searchParams.set('srsearch', `${requestedName} ${requestedCity} concert venue`);
-  const searchResponse = await fetch(searchUrl, { headers });
-  const result = searchResponse.ok ? await searchResponse.json() : null;
-  const candidates = result?.query?.search || [];
-  const title = candidates.find((candidate) => venueWords.every((word) => candidate.title.toLowerCase().includes(word)))?.title || requestedName;
-  const response = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, '_'))}`, { headers });
-  const summary = response.ok ? await response.json() : {};
-  const info = { name: requestedName, city: requestedCity, title: summary.title || requestedName, description: summary.description || '', bio: summary.extract || '', image: summary.thumbnail?.source || summary.originalimage?.source || null, source: summary.content_urls?.desktop?.page || null };
+  const info = await metadataProvider.venueInfo(requestedName, requestedCity);
   database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
   return info;
 }
@@ -800,37 +733,7 @@ async function resolveAlbum(artist, title) {
   const cached = database.prepare('SELECT album, created_at AS createdAt FROM album_lookup_cache WHERE cache_key = ?').get(key);
   if (cached?.album) return cached.album;
   if (cached && Date.now() - new Date(cached.createdAt).getTime() < 7 * 24 * 60 * 60 * 1000) return null;
-  let album = null;
-  const clean = (value) => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/&/g, ' and ').replace(/\b(feat\.?|ft\.?).*$/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
-  const wantedArtist = clean(artist);
-  const wantedTitle = clean(title);
-  try {
-    const result = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(`${artist} ${title}`)}&entity=song&limit=8`);
-    if (result.ok) {
-      const matches = (await result.json()).results || [];
-      const scored = matches.map((entry) => {
-        const entryTitle = clean(entry.trackName); const entryArtist = clean(entry.artistName);
-        const titleMatch = entryTitle === wantedTitle ? 3 : (entryTitle.includes(wantedTitle) || wantedTitle.includes(entryTitle) ? 1 : 0);
-        const artistMatch = entryArtist === wantedArtist ? 3 : (entryArtist.includes(wantedArtist) || wantedArtist.includes(entryArtist) ? 1 : 0);
-        return { entry, score: titleMatch + artistMatch };
-      }).filter((candidate) => candidate.score >= 5).sort((a, b) => b.score - a.score);
-      const exact = scored.find(({ entry }) => entry.collectionType === 'Album' && Number(entry.trackCount) > 1) || scored[0]?.entry;
-      if (exact) album = exact.collectionType === 'single' || Number(exact.trackCount) === 1 ? 'Single' : (exact.collectionName || null);
-    }
-  } catch {}
-  if (!album) {
-    try {
-      const query = `artist:"${artist.replace(/"/g, '')}" AND recording:"${title.replace(/"/g, '')}"`;
-      const result = await fetch(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(query)}&fmt=json&limit=8`, { headers: { 'User-Agent': 'TheMasterList/0.1 (personal music archive)' } });
-      if (result.ok) {
-        const recordings = (await result.json()).recordings || [];
-        const recording = recordings.find((entry) => clean(entry.title) === wantedTitle) || recordings[0];
-        const releases = (recording?.releases || []).filter((release) => release.title);
-        const albumRelease = releases.find((release) => release['release-group']?.['primary-type'] === 'Album' && release.status === 'Official') || releases.find((release) => release['release-group']?.['primary-type'] === 'Album');
-        album = albumRelease?.title || (releases.length === 1 ? 'Single' : null);
-      }
-    } catch {}
-  }
+  const album = await metadataProvider.album(artist, title);
   database.prepare('INSERT OR REPLACE INTO album_lookup_cache (cache_key, album, created_at) VALUES (?, ?, ?)').run(key, album, new Date().toISOString());
   return album;
 }
