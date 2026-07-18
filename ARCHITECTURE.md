@@ -63,6 +63,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `show-editor.js` — shared add/edit payloads, duplicate detection, attendees and metadata-preserving track mutations.
 - `show-form-controller.js` — ordered add/edit persistence, upload dispatch, external media and refresh workflows.
 - `directory-ui.js` — artist/venue aggregation, metadata completeness, filtering, sorting and editor navigation.
+- `archive-search.js` — search-page filtering, deduplication, category rendering and control binding.
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 
