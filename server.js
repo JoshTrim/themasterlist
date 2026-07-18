@@ -22,6 +22,10 @@ const { createBackgroundJobs } = require('./lib/background-jobs');
 const { createMediaRepository } = require('./lib/media-repository');
 const { createMediaProcessor } = require('./lib/media-processing');
 const { createMediaUploadRoutes } = require('./lib/routes/media-uploads');
+const { createMediaMutationRoutes } = require('./lib/routes/media-mutations');
+const { createMediaEncoding } = require('./lib/media-encoding');
+const { createMediaRecognition } = require('./lib/media-recognition');
+const { recoverMediaWork } = require('./lib/media-recovery');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -102,21 +106,34 @@ const handleAuthApi = createAuthRoutes({ database, auth: authService, appOrigin 
 const backupService = createBackupService({ database, fs, path, backupDir: BACKUP_DIR, getSetting: appSetting, setSetting: setAppSetting });
 const { settings: backupSettings, prune: pruneScheduledBackups, create: createScheduledBackup, runCheck: runScheduledBackupCheck } = backupService;
 const backgroundJobs = createBackgroundJobs({ database });
-const saveBackgroundJob = backgroundJobs.save;
 const mediaRepository = createMediaRepository({ database, mediaDir: MEDIA_DIR, path, existsSync: legacyFs.existsSync, statSync: legacyFs.statSync });
 const mediaRows = mediaRepository.list;
+const gigRepository = createGigRepository({ database, mediaRows });
+const { readAll: readGigs, writeAll: writeGigs, find: findGigSync } = gigRepository;
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
-const { createPlaybackProxy, probeDuration, rotateVideo: rotateVideoFile, trimVideo: trimVideoFile, extractRecognitionSample, removeImageBackground } = mediaProcessor;
+const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
+const mediaRecognition = createMediaRecognition({
+  database, fs, token: () => process.env.AUDD_API_TOKEN, jobs: backgroundJobs,
+  processor: mediaProcessor, providerResponse, findGig: findGigSync, recognitionKey, randomUUID
+});
 const handleMediaUpload = createMediaUploadRoutes({
   database, fs, legacyFs, path, mediaDir: MEDIA_DIR, maxMediaSize: MAX_MEDIA_SIZE,
   randomUUID, createHash, mediaExtension, mediaCategory, hashFile, mediaRows,
-  readBody, sendJson, sendError, startPlaybackEncode, recognizeVideoTrack,
+  readBody, sendJson, sendError,
+  startPlaybackEncode: mediaEncoding.start, recognizeVideoTrack: mediaRecognition.recognize,
   auddConfigured: () => Boolean(process.env.AUDD_API_TOKEN)
 });
-const gigRepository = createGigRepository({ database, mediaRows });
-const { readAll: readGigs, writeAll: writeGigs, find: findGigSync } = gigRepository;
+const handleMediaMutation = createMediaMutationRoutes({
+  database, fs, existsSync: legacyFs.existsSync, path, mediaDir: MEDIA_DIR, randomUUID,
+  requireAccount, readBody, sendJson, sendError, mediaRows, hashFile,
+  encoding: mediaEncoding, recognition: mediaRecognition, processor: mediaProcessor, jobs: backgroundJobs
+});
 const conflictStore = createConflictStore({ database, payloadFromGig: conflictPayloadFromGig, payloadFromSnapshot: conflictPayloadFromSnapshot, findGig: findGigSync });
 const { detect: detectSyncConflict, list: peerConflictRows } = conflictStore;
+
+const mediaRecoveryPromise = recoverMediaWork({ database, fs, path, mediaDir: MEDIA_DIR }).then((result) => {
+  if (Object.values(result).some(Boolean)) console.log('[media] recovered interrupted work:', result);
+}).catch((error) => console.error('[media] recovery failed:', error.message));
 
 function usageDay() {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
@@ -852,81 +869,6 @@ function createSharedShow(sourceGigId, profileId) {
     gig.favorite ? 1 : 0, gig.performanceNotes || gig.notes || '', gig.venueNotes || '', JSON.stringify(gig.media || []), now
   );
   return id;
-}
-
-function startPlaybackEncode(mediaId, gigId, sourceFilename, displayName) {
-  const media = database.prepare('SELECT id, playback_status FROM gig_media WHERE id = ? AND gig_id = ?').get(mediaId, gigId);
-  if (!media) throw new Error('Media not found.');
-  const gigInfo = database.prepare('SELECT artist, venue, date FROM gigs WHERE id = ?').get(gigId);
-  const proxyName = `${safeMediaName(gigInfo?.artist)}-${safeMediaName(gigInfo?.venue)}-${safeMediaName(gigInfo?.date)}-${mediaId.slice(0, 8)}-playback.mp4`;
-  const sourcePath = path.join(MEDIA_DIR, sourceFilename);
-  const outputPath = path.join(MEDIA_DIR, proxyName);
-  const jobId = randomUUID();
-  const jobName = displayName || sourceFilename;
-  database.prepare("UPDATE gig_media SET playback_status = 'encoding', playback_error = NULL WHERE id = ?").run(mediaId);
-  saveBackgroundJob(jobId, 'Encode video', jobName, 'running', 1);
-  setImmediate(async () => {
-    const duration = await probeDuration(sourcePath, { onProcess: (child) => backgroundJobs.attach(jobId, child) });
-    if (backgroundJobs.get(jobId)?.status === 'cancelled') {
-      database.prepare("UPDATE gig_media SET playback_status = 'not_started', playback_error = 'Encoding cancelled.' WHERE id = ?").run(mediaId);
-      return;
-    }
-    const encoded = await createPlaybackProxy(sourcePath, outputPath, {
-      onProcess: (child) => backgroundJobs.attach(jobId, child),
-      onProgress: (microseconds) => {
-        const progress = duration ? Math.min(99, Math.max(1, Math.round((microseconds / 1_000_000 / duration) * 100))) : 10;
-        saveBackgroundJob(jobId, 'Encode video', jobName, 'running', progress);
-      }
-    });
-    if (encoded) {
-      database.prepare("UPDATE gig_media SET playback_filename = ?, playback_mime = ?, playback_status = 'ready', playback_error = NULL WHERE id = ?").run(proxyName, 'video/mp4', mediaId);
-      saveBackgroundJob(jobId, 'Encode video', jobName, 'complete', 100);
-    } else if (backgroundJobs.get(jobId)?.status === 'cancelled') {
-      await fs.rm(outputPath, { force: true }).catch(() => {});
-      database.prepare("UPDATE gig_media SET playback_status = 'not_started', playback_error = 'Encoding cancelled.' WHERE id = ?").run(mediaId);
-    } else {
-      database.prepare("UPDATE gig_media SET playback_status = 'error', playback_error = 'Playback encode failed.' WHERE id = ?").run(mediaId);
-      saveBackgroundJob(jobId, 'Encode video', jobName, 'error', 0, 'Playback encode failed.');
-    }
-  });
-  return jobId;
-}
-
-async function recognizeVideoTrack(gigId, mediaId, filePath, filename) {
-  if (!process.env.AUDD_API_TOKEN) return;
-  const jobId = randomUUID();
-  const samplePath = `${filePath}.${mediaId}.recognition.mp3`;
-  saveBackgroundJob(jobId, 'Detect track', filename, 'running', 5);
-  database.prepare("UPDATE gig_media SET recognition_status = 'running', recognition_error = NULL WHERE id = ?").run(mediaId);
-  try {
-    const duration = await probeDuration(filePath, { onProcess: (child) => backgroundJobs.attach(jobId, child) });
-    if (backgroundJobs.get(jobId)?.status === 'cancelled') throw new Error('Track detection was cancelled.');
-    const start = duration > 18 ? Math.max(0, Math.min(120, (duration / 2) - 6)) : 0;
-    await extractRecognitionSample(filePath, samplePath, start, { onProcess: (child) => backgroundJobs.attach(jobId, child) });
-    saveBackgroundJob(jobId, 'Detect track', filename, 'running', 45);
-    const audio = await fs.readFile(samplePath);
-    const form = new FormData();
-    form.append('api_token', process.env.AUDD_API_TOKEN);
-    form.append('return', 'apple_music,spotify');
-    form.append('file', new Blob([audio], { type: 'audio/mpeg' }), `${mediaId}.mp3`);
-    const payload = await providerResponse('https://api.audd.io/', { method: 'POST', body: form }, 'audd');
-    if (payload?.status !== 'success') throw new Error(payload?.error?.error_message || payload?.error || 'AudD could not identify this clip.');
-    const result = payload.result || null;
-    const title = result?.title ? String(result.title) : null;
-    const artist = result?.artist ? String(result.artist) : null;
-    const album = result?.album ? String(result.album) : null;
-    const songs = findGigSync(gigId).songs || [];
-    const matchIndex = title ? songs.findIndex((song) => recognitionKey(song.title) === recognitionKey(title)) : -1;
-    const status = matchIndex >= 0 ? 'matched' : result ? 'identified' : 'not_found';
-    database.prepare(`UPDATE gig_media SET recognition_status = ?, recognition_result = ?, recognition_title = ?, recognition_artist = ?, recognition_album = ?, recognition_error = NULL,
-      song_index = CASE WHEN song_index IS NULL AND recognition_override = 0 AND ? >= 0 THEN ? ELSE song_index END WHERE id = ?`).run(status, result ? JSON.stringify(result) : null, title, artist, album, matchIndex, matchIndex >= 0 ? matchIndex : null, mediaId);
-    saveBackgroundJob(jobId, 'Detect track', filename, 'complete', 100);
-  } catch (error) {
-    database.prepare("UPDATE gig_media SET recognition_status = 'error', recognition_error = ? WHERE id = ?").run(error.message, mediaId);
-    saveBackgroundJob(jobId, 'Detect track', filename, 'error', 0, error.message);
-  } finally {
-    await fs.rm(samplePath, { force: true }).catch(() => {});
-  }
 }
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -2074,142 +2016,7 @@ async function handleApi(request, response, url) {
 
   const gigMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)$/);
   if (await handleMediaUpload(request, response, url)) return;
-  const retryEncodeMatch = url.pathname.match(/^\/api\/media\/([\w-]+)\/retry-encode$/);
-  if (request.method === 'POST' && retryEncodeMatch) {
-    requireAccount(request);
-    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(retryEncodeMatch[1]);
-    if (!media || !String(media.mime_type || '').startsWith('video/') || media.external_url) return sendError(response, 400, 'Only uploaded videos can create a playback copy.');
-    if (media.playback_status === 'encoding') return sendError(response, 409, 'Playback encoding is already running.');
-    if (!legacyFs.existsSync(path.join(MEDIA_DIR, media.filename))) return sendError(response, 409, 'The original media file is missing from disk.');
-    const jobId = startPlaybackEncode(media.id, media.gig_id, media.filename, media.caption || media.filename);
-    return sendJson(response, 202, { jobId });
-  }
-  const retryRecognitionMatch = url.pathname.match(/^\/api\/media\/([\w-]+)\/retry-recognition$/);
-  if (request.method === 'POST' && retryRecognitionMatch) {
-    requireAccount(request);
-    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(retryRecognitionMatch[1]);
-    if (!media || !String(media.mime_type || '').startsWith('video/') || media.external_url) return sendError(response, 400, 'Only uploaded videos can use track detection.');
-    if (['queued', 'running'].includes(media.recognition_status)) return sendError(response, 409, 'Track detection is already running.');
-    if (!process.env.AUDD_API_TOKEN) return sendError(response, 409, 'AudD is not configured.');
-    const sourcePath = path.join(MEDIA_DIR, media.filename);
-    if (!legacyFs.existsSync(sourcePath)) return sendError(response, 409, 'The original media file is missing from disk.');
-    database.prepare("UPDATE gig_media SET recognition_status = 'queued', recognition_error = NULL WHERE id = ?").run(media.id);
-    setImmediate(() => recognizeVideoTrack(media.gig_id, media.id, sourcePath, media.caption || media.filename));
-    return sendJson(response, 202, { ok: true });
-  }
-  const mediaMatch = url.pathname.match(/^\/api\/media\/([\w-]+)$/);
-  if (request.method === 'PATCH' && mediaMatch) {
-    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(mediaMatch[1]);
-    if (!media) return sendError(response, 404, 'Media not found.');
-    const body = await readBody(request);
-    const playbackStart = 'playbackStart' in body && body.playbackStart !== '' && body.playbackStart !== null ? Number(body.playbackStart) : null;
-    const playbackEnd = 'playbackEnd' in body && body.playbackEnd !== '' && body.playbackEnd !== null ? Number(body.playbackEnd) : null;
-    if ('playbackStart' in body && playbackStart !== null && (!Number.isFinite(playbackStart) || playbackStart < 0)) return sendError(response, 400, 'Playback start must be zero or greater.');
-    if ('playbackEnd' in body && playbackEnd !== null && (!Number.isFinite(playbackEnd) || playbackEnd <= 0)) return sendError(response, 400, 'Playback end must be greater than zero.');
-    const effectiveStart = 'playbackStart' in body ? playbackStart : media.playback_start;
-    const effectiveEnd = 'playbackEnd' in body ? playbackEnd : media.playback_end;
-    if (effectiveStart !== null && effectiveEnd !== null && Number(effectiveEnd) <= Number(effectiveStart)) return sendError(response, 400, 'Playback end must be after playback start.');
-    const nextSongIndex = 'songIndex' in body ? (body.songIndex === null || body.songIndex === '' ? null : Number(body.songIndex)) : media.song_index;
-    const nextPreferred = 'playbackPreferred' in body ? Boolean(body.playbackPreferred) : Boolean(media.playback_preferred);
-    if (nextPreferred && nextSongIndex !== null) database.prepare('UPDATE gig_media SET playback_preferred = 0 WHERE gig_id = ? AND song_index = ? AND id <> ?').run(media.gig_id, nextSongIndex, media.id);
-    if ('isCover' in body && body.isCover) database.prepare('UPDATE gig_media SET is_cover = 0 WHERE gig_id = ?').run(media.gig_id);
-    database.prepare('UPDATE gig_media SET caption = COALESCE(?, caption), is_cover = COALESCE(?, is_cover), sort_order = COALESCE(?, sort_order), rotation = COALESCE(?, rotation), song_index = CASE WHEN ? THEN ? ELSE song_index END, recognition_override = COALESCE(?, recognition_override), use_background_removed = COALESCE(?, use_background_removed), playback_preferred = COALESCE(?, playback_preferred), playback_start = CASE WHEN ? THEN ? ELSE playback_start END, playback_end = CASE WHEN ? THEN ? ELSE playback_end END WHERE id = ?').run('caption' in body ? String(body.caption || '').trim() : null, 'isCover' in body ? (body.isCover ? 1 : 0) : null, 'sortOrder' in body ? Number(body.sortOrder) : null, 'rotation' in body ? ((Number(body.rotation) % 360) + 360) % 360 : null, 'songIndex' in body ? 1 : 0, nextSongIndex, 'recognitionOverride' in body ? (body.recognitionOverride ? 1 : 0) : null, 'useBackgroundRemoved' in body ? (body.useBackgroundRemoved ? 1 : 0) : null, 'playbackPreferred' in body ? (body.playbackPreferred ? 1 : 0) : null, 'playbackStart' in body ? 1 : 0, playbackStart, 'playbackEnd' in body ? 1 : 0, playbackEnd, mediaMatch[1]);
-    return sendJson(response, 200, mediaRows(media.gig_id).find((entry) => entry.id === mediaMatch[1]));
-  }
-  if (request.method === 'DELETE' && mediaMatch) {
-    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(mediaMatch[1]);
-    if (!media) return sendError(response, 404, 'Media not found.');
-    await fs.rm(path.join(MEDIA_DIR, media.filename), { force: true });
-    if (media.playback_filename) await fs.rm(path.join(MEDIA_DIR, media.playback_filename), { force: true });
-    if (media.background_filename) await fs.rm(path.join(MEDIA_DIR, media.background_filename), { force: true });
-    database.prepare('DELETE FROM gig_media WHERE id = ?').run(mediaMatch[1]);
-    return sendJson(response, 200, { ok: true });
-  }
-  const backgroundMatch = url.pathname.match(/^\/api\/media\/([\w-]+)\/remove-background$/);
-  if (request.method === 'POST' && backgroundMatch) {
-    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(backgroundMatch[1]);
-    if (!media) return sendError(response, 404, 'Media not found.');
-    if (media.category !== 'artifact' || !media.mime_type.startsWith('image/')) return sendError(response, 400, 'Background removal is only available for artifact photos.');
-    if (media.background_status === 'running') return sendError(response, 409, 'Background removal is already running.');
-    const inputPath = path.join(MEDIA_DIR, media.filename);
-    const outputName = `${path.parse(media.filename).name}.cutout.png`;
-    const outputPath = path.join(MEDIA_DIR, outputName);
-    const temporaryOutputPath = `${outputPath}.processing.png`;
-    const jobId = randomUUID();
-    database.prepare("UPDATE gig_media SET background_status = 'running', background_error = NULL WHERE id = ?").run(media.id);
-    saveBackgroundJob(jobId, 'Remove background', media.caption || media.filename, 'running', 10);
-    setImmediate(async () => {
-      try {
-        saveBackgroundJob(jobId, 'Remove background', media.caption || media.filename, 'running', 25);
-        await removeImageBackground(inputPath, temporaryOutputPath, { onProcess: (child) => backgroundJobs.attach(jobId, child) });
-        saveBackgroundJob(jobId, 'Remove background', media.caption || media.filename, 'running', 90);
-        await fs.rename(temporaryOutputPath, outputPath);
-        database.prepare("UPDATE gig_media SET background_filename = ?, background_status = 'complete', background_error = NULL, use_background_removed = 1 WHERE id = ?").run(outputName, media.id);
-        saveBackgroundJob(jobId, 'Remove background', media.caption || media.filename, 'complete', 100);
-      } catch (error) {
-        await fs.rm(temporaryOutputPath, { force: true }).catch(() => {});
-        database.prepare("UPDATE gig_media SET background_status = 'error', background_error = ? WHERE id = ?").run(error.message, media.id);
-        saveBackgroundJob(jobId, 'Remove background', media.caption || media.filename, 'error', 0, error.message);
-      }
-    });
-    return sendJson(response, 202, { jobId });
-  }
-  const trimMatch = url.pathname.match(/^\/api\/media\/([\w-]+)\/trim$/);
-  if (request.method === 'POST' && trimMatch) {
-    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(trimMatch[1]);
-    if (!media || !media.mime_type.startsWith('video/')) return sendError(response, 400, 'Only uploaded videos can be trimmed.');
-    const start = Number(url.searchParams.get('start')); const end = Number(url.searchParams.get('end'));
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) return sendError(response, 400, 'Trim times are invalid.');
-    const inputPath = path.join(MEDIA_DIR, media.filename); const outputPath = `${inputPath}.trimming.mp4`; const jobId = randomUUID(); saveBackgroundJob(jobId, 'Trim video', media.filename, 'running', 5);
-    setImmediate(async () => {
-      try {
-        await trimVideoFile(inputPath, outputPath, start, end - start, {
-          onProcess: (child) => backgroundJobs.attach(jobId, child),
-          onProgress: (microseconds) => saveBackgroundJob(jobId, 'Trim video', media.filename, 'running', Math.min(99, Math.round((microseconds / 1_000_000 / (end - start)) * 100)))
-        });
-        await fs.rename(outputPath, inputPath);
-        if (media.playback_filename) await fs.rm(path.join(MEDIA_DIR, media.playback_filename), { force: true });
-        database.prepare("UPDATE gig_media SET playback_filename = NULL, playback_mime = NULL, playback_status = 'not_started', playback_error = NULL, size = ?, checksum = ? WHERE id = ?").run((await fs.stat(inputPath)).size, await hashFile(inputPath), media.id);
-        saveBackgroundJob(jobId, 'Trim video', media.filename, 'complete', 100);
-      } catch (error) {
-        await fs.rm(outputPath, { force: true });
-        saveBackgroundJob(jobId, 'Trim video', media.filename, 'error', 0, error.message);
-      }
-    });
-    return sendJson(response, 202, { jobId });
-  }
-  const rotateMatch = url.pathname.match(/^\/api\/media\/([\w-]+)\/rotate$/);
-  if (request.method === 'POST' && rotateMatch) {
-    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(rotateMatch[1]);
-    if (!media) return sendError(response, 404, 'Media not found.');
-    if (!media.mime_type.startsWith('video/')) return sendError(response, 400, 'Only video files can be rotated this way.');
-    const inputPath = path.join(MEDIA_DIR, media.playback_filename || media.filename);
-    const outputPath = `${inputPath}.rotating.mp4`;
-    const direction = url.searchParams.get('direction') === 'counterclockwise' ? 'counterclockwise' : 'clockwise';
-    const jobId = randomUUID(); saveBackgroundJob(jobId, 'Rotate video', media.filename, 'running', 5);
-    setImmediate(async () => {
-      try {
-        const duration = await probeDuration(inputPath, { onProcess: (child) => backgroundJobs.attach(jobId, child) });
-        if (backgroundJobs.get(jobId)?.status === 'cancelled') return;
-        await rotateVideoFile(inputPath, outputPath, direction, {
-          onProcess: (child) => backgroundJobs.attach(jobId, child),
-          onProgress: (microseconds) => {
-            const progress = duration ? Math.min(99, Math.round((microseconds / 1_000_000 / duration) * 100)) : 10;
-            saveBackgroundJob(jobId, 'Rotate video', media.filename, 'running', progress);
-          }
-        });
-        await fs.rename(outputPath, inputPath);
-        database.prepare('UPDATE gig_media SET rotation = 0 WHERE id = ?').run(media.id);
-        saveBackgroundJob(jobId, 'Rotate video', media.filename, 'complete', 100);
-      } catch (error) {
-        await fs.rm(outputPath, { force: true });
-        saveBackgroundJob(jobId, 'Rotate video', media.filename, 'error', 0, error.message);
-      }
-    });
-    return sendJson(response, 202, { jobId });
-  }
-  const rotateStatusMatch = url.pathname.match(/^\/api\/media\/rotate\/([\w-]+)$/);
-  if (request.method === 'GET' && rotateStatusMatch) return sendJson(response, 200, backgroundJobs.get(rotateStatusMatch[1]) || { status: 'missing', progress: 0 });
+  if (await handleMediaMutation(request, response, url)) return;
   const playbackSuggestMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/playback-plan\/suggest$/);
   if (request.method === 'POST' && playbackSuggestMatch) {
     requireAccount(request);
@@ -2396,12 +2203,14 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-if (require.main === module) server.listen(PORT, HOST, () => {
-  console.log(`The Master List is running at http://${HOST}:${PORT}`);
-  const initialBackupCheck = setTimeout(runScheduledBackupCheck, 10_000);
-  initialBackupCheck.unref?.();
-  const backupTimer = setInterval(runScheduledBackupCheck, 60 * 60 * 1000);
-  backupTimer.unref?.();
+if (require.main === module) mediaRecoveryPromise.finally(() => {
+  server.listen(PORT, HOST, () => {
+    console.log(`The Master List is running at http://${HOST}:${PORT}`);
+    const initialBackupCheck = setTimeout(runScheduledBackupCheck, 10_000);
+    initialBackupCheck.unref?.();
+    const backupTimer = setInterval(runScheduledBackupCheck, 60 * 60 * 1000);
+    backupTimer.unref?.();
+  });
 });
 
 module.exports = {
