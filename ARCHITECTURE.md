@@ -63,6 +63,8 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 
+Styles retain their original cascade order through `public/styles.css`: `shell-and-forms.css`, `components.css`, `playback.css`, then page-specific `pages.css`.
+
 ## Testing strategy
 
 - Pure domain tests run without a server or network port.
