@@ -2,6 +2,7 @@ const form = document.querySelector('#gig-form');
 const { escapeHtml, formatGigDate, formatBytes, providerName } = window.MasterListFormatters;
 const playbackCore = window.MasterListPlaybackCore;
 const playbackMedia = window.MasterListPlaybackMedia;
+const playbackEditor = window.MasterListPlaybackEditor;
 const theatreUi = window.MasterListTheatre;
 const mediaUi = window.MasterListMediaUi;
 const uploadQueue = window.MasterListUploadQueue;
@@ -1194,74 +1195,28 @@ function playbackEditorRowSources(gig, row) {
   return sources;
 }
 
-function playbackEditorHealthCheck(gig) {
-  const rows = [...playbackEditorList.querySelectorAll('.playback-editor-row')];
-  const errors = [];
-  const warnings = [];
-  const clipsByMedia = new Map();
-  let assigned = 0;
-  rows.forEach((row) => {
-    row.classList.remove('is-invalid', 'has-warning');
-    const rowHealth = row.querySelector('.playback-row-health');
-    rowHealth.textContent = '';
-    const songIndex = Number(row.dataset.songIndex);
-    const rowErrors = [];
-    const rowWarnings = [];
-    const sources = playbackEditorRowSources(gig, row);
-    const primaryId = row.querySelector('.playback-source').value;
-    if (!primaryId && sources.length) rowErrors.push('Choose a primary source before adding fallbacks.');
-    if (!primaryId) {
-      if (rowErrors.length) { row.classList.add('is-invalid'); rowHealth.textContent = rowErrors.join(' '); errors.push(...rowErrors.map((message) => `${gig.songs[songIndex].title}: ${message}`)); }
-      return;
-    }
-    assigned += 1;
-    const seenMedia = new Set();
-    sources.forEach((source) => {
-      const { media } = source;
-      const start = source.startValue === '' ? null : Number(source.startValue);
-      const end = source.endValue === '' ? null : Number(source.endValue);
-      const duration = source.priority === 0 ? Number(row.dataset.mediaDuration) || null : null;
-      const prefix = source.priority ? `Backup ${source.priority}: ` : '';
-      if (!media) { rowErrors.push(`${prefix}Source is unavailable.`); return; }
-      if (seenMedia.has(media.id)) rowErrors.push(`${prefix}Source is already used for this track.`);
-      seenMedia.add(media.id);
-      if (media.originalExists === false) rowErrors.push(`${prefix}Source file is missing from disk.`);
-      if (source.priority === 0 && row.dataset.previewUnavailable === 'true') rowErrors.push('Primary source could not be loaded in the preview player.');
-      if (media.mimeType !== 'video/youtube' && media.playbackStatus === 'encoding') rowWarnings.push(`${prefix}Mobile playback copy is still encoding.`);
-      if (media.mimeType !== 'video/youtube' && media.playbackStatus === 'error') rowWarnings.push(`${prefix}Playback copy failed; the original file will be used.`);
-      if (start !== null && (!Number.isFinite(start) || start < 0)) rowErrors.push(`${prefix}Start must be zero or greater.`);
-      if (end !== null && (!Number.isFinite(end) || end <= 0)) rowErrors.push(`${prefix}End must be greater than zero.`);
-      if (start !== null && end !== null && end <= start) rowErrors.push(`${prefix}End must be after start.`);
-      if (duration && start !== null && start >= duration) rowErrors.push('Start is beyond the end of the primary video.');
-      if (duration && end !== null && end > duration + .1) rowErrors.push('End is beyond the end of the primary video.');
-      if (!clipsByMedia.has(media.id)) clipsByMedia.set(media.id, []);
-      clipsByMedia.get(media.id).push({ row, songIndex, start, end, title: gig.songs[songIndex].title });
-    });
-    if (rowErrors.length) { row.classList.add('is-invalid'); rowHealth.textContent = rowErrors.join(' '); errors.push(...rowErrors.map((message) => `${gig.songs[songIndex].title}: ${message}`)); }
-    else if (rowWarnings.length) { row.classList.add('has-warning'); rowHealth.textContent = rowWarnings.join(' '); warnings.push(...rowWarnings.map((message) => `${gig.songs[songIndex].title}: ${message}`)); }
-  });
-  clipsByMedia.forEach((clips) => {
-    clips.sort((a, b) => a.songIndex - b.songIndex);
-    for (let index = 1; index < clips.length; index += 1) {
-      const previous = clips[index - 1];
-      const current = clips[index];
-      let message = '';
-      if (previous.start !== null && current.start !== null && current.start < previous.start) message = `Starts before the earlier track “${previous.title}”.`;
-      else if (previous.end !== null && current.start !== null && current.start < previous.end) message = `Overlaps “${previous.title}” on the same video.`;
-      if (!message) continue;
-      current.row.classList.add('is-invalid');
-      const rowHealth = current.row.querySelector('.playback-row-health');
-      rowHealth.textContent = `${rowHealth.textContent} ${message}`.trim();
-      errors.push(`${current.title}: ${message}`);
-    }
-  });
-  const gaps = rows.length - assigned;
-  playbackEditorHealth.innerHTML = `<span class="playback-health-ready">${assigned}/${rows.length} tracks assigned</span><span class="playback-health-gap">${gaps} gap${gaps === 1 ? '' : 's'}</span><span class="${errors.length ? 'playback-health-error' : 'playback-health-ok'}">${errors.length ? `${errors.length} issue${errors.length === 1 ? '' : 's'} to fix` : 'No blocking issues'}</span>${warnings.length ? `<span class="playback-health-warning">${warnings.length} warning${warnings.length === 1 ? '' : 's'}</span>` : ''}`;
-  savePlaybackPlan.disabled = Boolean(errors.length);
-  savePlaybackPlan.title = errors.length ? errors[0] : '';
-  return { errors, warnings, gaps };
+function playbackEditorRows(gig) {
+  return [...playbackEditorList.querySelectorAll('.playback-editor-row')].map((row) => ({
+    element: row, songIndex: Number(row.dataset.songIndex), primaryId: row.querySelector('.playback-source').value,
+    duration: Number(row.dataset.mediaDuration) || null, previewUnavailable: row.dataset.previewUnavailable === 'true',
+    sources: playbackEditorRowSources(gig, row)
+  }));
 }
 
+function playbackEditorHealthCheck(gig) {
+  const editorRows = playbackEditorRows(gig);
+  const health = playbackEditor.validatePlan(gig.songs || [], editorRows);
+  health.rows.forEach((result) => {
+    const row = editorRows.find((entry) => entry.songIndex === result.songIndex).element;
+    const rowHealth = row.querySelector('.playback-row-health');
+    row.classList.remove('is-invalid', 'has-warning'); rowHealth.textContent = '';
+    if (result.errors.length) { row.classList.add('is-invalid'); rowHealth.textContent = result.errors.join(' '); }
+    else if (result.warnings.length) { row.classList.add('has-warning'); rowHealth.textContent = result.warnings.join(' '); }
+  });
+  playbackEditorHealth.innerHTML = `<span class="playback-health-ready">${health.assigned}/${editorRows.length} tracks assigned</span><span class="playback-health-gap">${health.gaps} gap${health.gaps === 1 ? '' : 's'}</span><span class="${health.errors.length ? 'playback-health-error' : 'playback-health-ok'}">${health.errors.length ? `${health.errors.length} issue${health.errors.length === 1 ? '' : 's'} to fix` : 'No blocking issues'}</span>${health.warnings.length ? `<span class="playback-health-warning">${health.warnings.length} warning${health.warnings.length === 1 ? '' : 's'}</span>` : ''}`;
+  savePlaybackPlan.disabled = Boolean(health.errors.length); savePlaybackPlan.title = health.errors[0] || '';
+  return health;
+}
 function openPlaybackEditorPreview(gig, row) {
   if (activePlaybackEditorPreview?.row === row) { closePlaybackEditorPreview(); return; }
   closePlaybackEditorPreview();
@@ -1351,18 +1306,10 @@ function restorePlaybackEditorDraft(gig, draft) {
   });
 }
 function playbackSuggestionConfidence(suggestion) {
-  const value = Number(suggestion?.confidence) || 0;
-  if (value >= .9) return 'High confidence';
-  if (value >= .75) return 'Good confidence';
-  if (/interpolated/i.test(suggestion?.reason || '')) return 'Timing estimate';
-  if (/estimated/i.test(suggestion?.reason || '')) return 'Rough timing';
-  return 'Possible match';
+  return playbackEditor.suggestionConfidence(suggestion);
 }
 function playbackSuggestionTiming(suggestion) {
-  if (suggestion.startSeconds === null || suggestion.startSeconds === undefined) return 'Timing not detected';
-  const start = formatPlaybackTime(suggestion.startSeconds);
-  const end = suggestion.endSeconds === null || suggestion.endSeconds === undefined ? 'video end' : formatPlaybackTime(suggestion.endSeconds);
-  return `${start}–${end}`;
+  return playbackEditor.suggestionTiming(suggestion, formatPlaybackTime);
 }
 function addSuggestedPlaybackFallback(gig, row, suggestion) {
   const media = (gig.media || []).find((item) => item.id === suggestion.mediaId);
@@ -1493,18 +1440,7 @@ function renderPlaybackEditor(gig) {
     savePlaybackPlan.disabled = true;
     playbackEditorMessage.textContent = 'Saving playback plan…'; playbackEditorMessage.classList.remove('error');
     try {
-      const clips = [];
-      for (const row of playbackEditorList.querySelectorAll('.playback-editor-row')) {
-        const songIndex = Number(row.dataset.songIndex);
-        for (const source of playbackEditorRowSources(gig, row)) {
-          const start = source.startValue === '' ? null : Number(source.startValue);
-          const end = source.endValue === '' ? null : Number(source.endValue);
-          if (start !== null && (!Number.isFinite(start) || start < 0)) throw new Error(`Invalid start point for ${gig.songs[songIndex].title}.`);
-          if (end !== null && (!Number.isFinite(end) || end <= 0)) throw new Error(`Invalid end point for ${gig.songs[songIndex].title}.`);
-          if (start !== null && end !== null && end <= start) throw new Error(`End must be after start for ${gig.songs[songIndex].title}.`);
-          clips.push({ mediaId: source.media.id, songIndex, startSeconds: start, endSeconds: end, priority: source.priority });
-        }
-      }
+      const clips = playbackEditor.clipsFromRows(playbackEditorRows(gig));
       const updated = await fetchJson(`/api/gigs/${gig.id}/playback-plan`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clips }) });
       gig.media = updated.media;
       gigs = gigs.map((entry) => entry.id === gig.id ? gig : entry);

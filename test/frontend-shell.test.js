@@ -15,10 +15,10 @@ describe('frontend shell contracts', () => {
   });
 
   test('loads shared frontend modules before the application bundle', () => {
-    for (const module of ['api-client', 'page-runtime', 'formatters', 'navigation', 'auth-state', 'jobs', 'shows', 'show-cards', 'playback-core', 'playback-media', 'theatre', 'media-ui', 'upload-queue', 'media-jobs', 'show-editor']) {
+    for (const module of ['api-client', 'page-runtime', 'formatters', 'navigation', 'auth-state', 'jobs', 'shows', 'show-cards', 'playback-core', 'playback-media', 'playback-editor', 'theatre', 'media-ui', 'upload-queue', 'media-jobs', 'show-editor']) {
       assert.ok(html.indexOf(`/lib/${module}.js`) < html.indexOf('/app.js'), module);
     }
-    for (const global of ['MasterListApiClient', 'MasterListPageRuntime', 'MasterListFormatters', 'MasterListNavigation', 'MasterListAuthState', 'MasterListJobs', 'MasterListShows', 'MasterListShowCards', 'MasterListPlaybackCore', 'MasterListPlaybackMedia', 'MasterListTheatre', 'MasterListMediaUi', 'MasterListUploadQueue', 'MasterListMediaJobs', 'MasterListShowEditor']) {
+    for (const global of ['MasterListApiClient', 'MasterListPageRuntime', 'MasterListFormatters', 'MasterListNavigation', 'MasterListAuthState', 'MasterListJobs', 'MasterListShows', 'MasterListShowCards', 'MasterListPlaybackCore', 'MasterListPlaybackMedia', 'MasterListPlaybackEditor', 'MasterListTheatre', 'MasterListMediaUi', 'MasterListUploadQueue', 'MasterListMediaJobs', 'MasterListShowEditor']) {
       assert.match(app, new RegExp(`window\\.${global}`), global);
     }
   });
