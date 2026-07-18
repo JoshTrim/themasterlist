@@ -40,6 +40,7 @@ const { createOAuthService } = require('./lib/oauth');
 const { createGeocodingService, validCoordinates } = require('./lib/geocoding');
 const { createArchiveHealthService } = require('./lib/archive-health');
 const { createArchiveIntegrityService } = require('./lib/archive-integrity');
+const { createMaintenanceRoutes } = require('./lib/routes/maintenance');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -130,6 +131,7 @@ const archiveHealthService = createArchiveHealthService({
   venueInfo: (key) => database.prepare('SELECT bio, description, image FROM venue_info WHERE lookup_name = ?').get(key)
 });
 const archiveIntegrityService = createArchiveIntegrityService({ database, fs, path, mediaDir: MEDIA_DIR, databaseFile: DB_FILE, profileImageFilename: localProfileImageFilename });
+const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup, manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore });
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
 const mediaRecognition = createMediaRecognition({
@@ -862,30 +864,7 @@ async function handleApi(request, response, url) {
     });
   }
 
-  if (request.method === 'GET' && url.pathname === '/api/maintenance/status') {
-    requireAccount(request);
-    return sendJson(response, 200, await maintenanceStatus());
-  }
-
-  if (request.method === 'PATCH' && url.pathname === '/api/maintenance/backup-settings') {
-    const account = requireAccount(request);
-    if (!account.isAdmin) return sendError(response, 403, 'Only the instance owner can change backup settings.');
-    const body = await readBody(request);
-    const intervalHours = Math.max(1, Math.min(24 * 30, Math.round(Number(body.intervalHours) || 24)));
-    const retentionCount = Math.max(1, Math.min(365, Math.round(Number(body.retentionCount) || 14)));
-    setAppSetting('backup_enabled', body.enabled === false ? 'false' : 'true');
-    setAppSetting('backup_interval_hours', intervalHours);
-    setAppSetting('backup_retention_count', retentionCount);
-    await pruneScheduledBackups(retentionCount);
-    return sendJson(response, 200, backupSettings());
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/maintenance/backup-now') {
-    const account = requireAccount(request);
-    if (!account.isAdmin) return sendError(response, 403, 'Only the instance owner can run backups.');
-    try { return sendJson(response, 201, await createScheduledBackup({ force: true })); }
-    catch (error) { return sendError(response, 500, error.message); }
-  }
+  if (await handleMaintenanceRoute(request, response, url)) return;
 
   if (request.method === 'GET' && url.pathname === '/api/maintenance/database') {
     requireAccount(request);
@@ -904,23 +883,6 @@ async function handleApi(request, response, url) {
     return legacyFs.createReadStream(backupPath).pipe(response);
   }
 
-  if (request.method === 'GET' && url.pathname === '/api/maintenance/manifest') {
-    requireAccount(request);
-    const filename = `the-master-list-media-manifest-${new Date().toISOString().slice(0, 10)}.json`;
-    return sendJson(response, 200, await mediaManifest(), { 'Content-Disposition': `attachment; filename="${filename}"`, 'Cache-Control': 'no-store' });
-  }
-
-  if (request.method === 'GET' && url.pathname === '/api/maintenance/integrity') {
-    requireAccount(request);
-    return sendJson(response, 200, await archiveIntegrity());
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/maintenance/restore') {
-    requireAccount(request);
-    if (!String(request.headers['content-type'] || '').includes('application/vnd.sqlite3') && !String(request.headers['content-type'] || '').includes('application/octet-stream')) return sendError(response, 415, 'Upload a SQLite database file.');
-    try { return sendJson(response, 202, await receiveDatabaseRestore(request)); }
-    catch (error) { return sendError(response, /smaller than 2 GB/i.test(error.message) ? 413 : 400, error.message); }
-  }
 
   if (request.method === 'GET' && url.pathname === '/api/backup') {
     requireAccount(request);
