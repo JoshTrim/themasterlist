@@ -31,6 +31,7 @@ const { createPeerIdentity } = require('./lib/peer-identity');
 const { createPeerTransport } = require('./lib/peer-transport');
 const { createPeerSync } = require('./lib/peer-sync');
 const { createPeerRoutes } = require('./lib/routes/peers');
+const { createSetlistFmProvider } = require('./lib/providers/setlist-fm');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -46,7 +47,6 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const PENDING_RESTORE_FILE = path.join(DATA_DIR, 'restore-pending.sqlite');
 const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
 const GEOCODES_FILE = path.join(DATA_DIR, 'geocodes.json');
-const SETLIST_API = 'https://api.setlist.fm/rest/1.0/search/setlists';
 const pendingOAuth = new Map();
 const MAX_MEDIA_SIZE = Number(process.env.MAX_MEDIA_SIZE_GB || 50) * 1024 * 1024 * 1024;
 
@@ -105,6 +105,7 @@ const mediaRepository = createMediaRepository({ database, mediaDir: MEDIA_DIR, p
 const mediaRows = mediaRepository.list;
 const gigRepository = createGigRepository({ database, mediaRows });
 const { readAll: readGigs, writeAll: writeGigs, find: findGigSync } = gigRepository;
+const setlistProvider = createSetlistFmProvider({ apiKey: process.env.SETLIST_FM_API_KEY, fetch, recordUsage, normaliseSongs });
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
 const mediaRecognition = createMediaRecognition({
@@ -1693,44 +1694,11 @@ async function handleApi(request, response, url) {
   }
 
   if (request.method === 'GET' && url.pathname === '/api/setlists/search') {
-    if (!process.env.SETLIST_FM_API_KEY || process.env.SETLIST_FM_API_KEY === 'replace-me') {
-      return sendError(response, 503, 'Add SETLIST_FM_API_KEY to .env before searching setlist.fm.');
-    }
     const artistName = url.searchParams.get('artistName')?.trim();
     const cityName = url.searchParams.get('cityName')?.trim();
     const eventDate = url.searchParams.get('eventDate')?.trim();
-    if (!artistName || !cityName) return sendError(response, 400, 'Artist and city are required.');
-
-    const upstream = new URL(SETLIST_API);
-    upstream.searchParams.set('artistName', artistName);
-    upstream.searchParams.set('cityName', cityName);
-    if (eventDate) upstream.searchParams.set('date', eventDate.split('-').reverse().join('-'));
-    const headers = { Accept: 'application/json', 'x-api-key': process.env.SETLIST_FM_API_KEY };
-    let setlistResponse = await fetch(upstream, { headers });
-    recordApiUsage('setlist.fm', 'search/setlists', 1, setlistResponse.status);
-
-    // Venue city labels are not always how concertgoers name the place
-    // (e.g. Hollywood Bowl is recorded as Los Angeles). Retry by artist/date.
-    if (setlistResponse.status === 404) {
-      upstream.searchParams.delete('cityName');
-      setlistResponse = await fetch(upstream, { headers });
-      recordApiUsage('setlist.fm', 'search/setlists retry', 1, setlistResponse.status);
-    }
-    if (setlistResponse.status === 404) return sendJson(response, 200, { total: 0, setlists: [] });
-    if (!setlistResponse.ok) {
-      return sendError(response, setlistResponse.status, 'setlist.fm could not complete this search.');
-    }
-    const result = await setlistResponse.json();
-    const setlists = (result.setlist || []).map((setlist) => ({
-      id: setlist.id,
-      artist: setlist.artist?.name || artistName,
-      venue: setlist.venue?.name || '',
-      city: setlist.venue?.city?.name || cityName,
-      date: setlist.eventDate,
-      url: setlist.url,
-      songs: normaliseSongs(setlist)
-    }));
-    return sendJson(response, 200, { total: result.total || 0, setlists });
+    try { return sendJson(response, 200, await setlistProvider.search({ artistName, cityName, eventDate })); }
+    catch (error) { return sendError(response, error.status || 502, error.message); }
   }
 
   return sendError(response, 404, 'Not found');

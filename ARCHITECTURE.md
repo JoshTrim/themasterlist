@@ -25,6 +25,7 @@
 - `lib/media-utils.js` — media naming, categorisation and duplicate hashes.
 - `lib/validation.js` — account, show, metadata and rating validation.
 - `lib/env.js` — `.env` parsing without overwriting process-level settings.
+- `lib/providers/setlist-fm.js` — setlist.fm request construction, retry behavior, usage accounting and response normalization.
 
 The browser application is progressively split from `public/app.js`. Browser-safe CommonJS/UMD modules under `public/lib/` load before the main application bundle:
 
