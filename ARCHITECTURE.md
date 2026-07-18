@@ -26,15 +26,22 @@
 - `lib/validation.js` — account, show, metadata and rating validation.
 - `lib/env.js` — `.env` parsing without overwriting process-level settings.
 
-The browser application is still progressively split from `public/app.js`. Shared browser-safe helpers live under `public/lib/` and load before the main application bundle.
+The browser application is progressively split from `public/app.js`. Browser-safe CommonJS/UMD modules under `public/lib/` load before the main application bundle:
+
+- `formatters.js` — display-safe escaping, dates, byte sizes and provider labels.
+- `navigation.js` — active-link and mobile-menu behavior.
+- `auth-state.js` — deterministic authentication view state and visibility updates.
+- `jobs.js` — persistent background-job queue state and panel rendering.
+- `shows.js` — archive filtering, ordering and combined local/peer statistics.
 
 ## Testing strategy
 
 - Pure domain tests run without a server or network port.
 - Route-handler tests call handler factories directly with in-memory SQLite databases.
+- Frontend modules are dependency-injected and tested with small DOM doubles, avoiding a browser build step or heavyweight test DOM.
 - `test/server.test.js` remains the end-to-end HTTP contract suite and uses a temporary database and ephemeral localhost port.
 - `npm run test:coverage` uses Node's built-in coverage report; no external test runner is required.
 
 ## Next extraction boundaries
 
-The remaining backend code should move in behavior-preserving slices: external integrations, metadata providers, then the HTTP composition root. The remaining frontend should be separated by page/workflow after browser-level tests are introduced.
+The remaining backend code should move in behavior-preserving slices: external integrations, metadata providers, then the HTTP composition root. Remaining frontend rendering can now move page-by-page behind the tested browser module boundaries.

@@ -1,49 +1,20 @@
 const form = document.querySelector('#gig-form');
-const mobileMenuToggle = document.querySelector('#mobile-menu-toggle');
-const siteNav = document.querySelector('#site-nav');
-const navSignIn = document.querySelector('#nav-sign-in');
-mobileMenuToggle?.addEventListener('click', () => { const open = siteNav.classList.toggle('is-open'); mobileMenuToggle.setAttribute('aria-expanded', String(open)); mobileMenuToggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation'); });
-siteNav?.querySelectorAll('a').forEach((link) => {
-  if (link.pathname === window.location.pathname) link.setAttribute('aria-current', 'page');
-  link.addEventListener('click', () => { siteNav.classList.remove('is-open'); mobileMenuToggle?.setAttribute('aria-expanded', 'false'); });
-});
-const jobQueue = new Map();
-const jobPanel = document.createElement('aside'); jobPanel.className = 'job-queue'; jobPanel.hidden = true; jobPanel.innerHTML = '<p class="eyebrow">Background jobs</p><div class="job-queue-list"></div>'; document.body.append(jobPanel);
 const { escapeHtml, formatGigDate, formatBytes, providerName } = window.MasterListFormatters;
+const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
+const navSignIn = document.querySelector('#nav-sign-in');
+const jobUi = window.MasterListJobs.createJobQueue({ document, fetchJson, escapeHtml, hideUploads: () => isMobileUpload });
+const jobQueue = jobUi.queue;
+const updateJob = jobUi.update;
+const loadPersistentJobs = jobUi.loadPersistent;
 const notificationPanel = document.createElement('aside'); notificationPanel.className = 'peer-notifications'; notificationPanel.hidden = true; notificationPanel.innerHTML = '<p class="eyebrow">From your peers</p><div class="peer-notification-list"></div>'; document.body.append(notificationPanel);
 let peerPollRunning = false;
 let peerPollTimer;
-function updateJob(id, patch) {
-  jobQueue.set(id, { ...jobQueue.get(id), ...patch });
-  // Mobile uploads have their own queue directly beneath the file picker. Keep
-  // them out of the floating background panel so the same upload is not shown twice.
-  const visibleJobs = [...jobQueue.values()].filter((job) => !isMobileUpload || job.type !== 'Uploading');
-  const list = jobPanel.querySelector('.job-queue-list');
-  if (!visibleJobs.length) {
-    jobPanel.hidden = true;
-    if (list.childElementCount) list.replaceChildren();
-    return;
-  }
-  list.innerHTML = visibleJobs.map((job) => `<div class="job-entry" data-job-id="${job.id}"><div><strong>${escapeHtml(job.type)}</strong><span>${escapeHtml(job.name)}</span><button class="job-dismiss" type="button" aria-label="Cancel or dismiss job">×</button></div><div class="job-bar"><i style="width:${job.progress || 0}%"></i></div><small>${job.status === 'complete' ? 'Complete' : job.status === 'error' ? 'Failed' : job.status === 'cancelled' ? 'Cancelled' : `${Math.round(job.progress || 0)}%`}</small></div>`).join('');
-  list.querySelectorAll('.job-dismiss').forEach((button) => button.addEventListener('click', async () => {
-    const job = jobQueue.get(button.closest('.job-entry').dataset.jobId);
-    if (!job) return;
-    if (job.status === 'running' && job.cancel) job.cancel();
-    else if (['running', 'queued'].includes(job.status)) {
-      try { await fetchJson(`/api/jobs/${job.id}`, { method: 'DELETE' }); } catch { /* the process may already have finished */ }
-    } else jobQueue.delete(job.id);
-    updateJob(job.id, { status: 'cancelled', progress: 0 });
-    if (!['running', 'queued'].includes(job.status)) jobQueue.delete(job.id);
-  }));
-  jobPanel.hidden = !visibleJobs.length;
-}
 window.addEventListener('beforeunload', (event) => {
   const activeJob = [...jobQueue.values()].some((job) => job.type === 'Uploading' && job.status === 'running');
   const mobileState = mobileUploadStates.get(editMediaInput);
   const queuedMobileUpload = mobileState?.items?.some((item) => ['queued', 'uploading'].includes(item.status));
   if (activeJob || queuedMobileUpload) { event.preventDefault(); event.returnValue = ''; }
 });
-async function loadPersistentJobs() { try { const jobs = await fetchJson('/api/jobs'); jobs.forEach((job) => updateJob(job.id, job)); } catch {} }
 const message = document.querySelector('#form-message');
 const results = document.querySelector('#search-results');
 const gigList = document.querySelector('#gig-list');
@@ -3625,24 +3596,16 @@ function renderRemoteSharedGig(show) {
 function renderGigs() {
   const remoteShows = remoteSharedArchiveShows();
   const allShows = [...gigs, ...remoteShows];
+  const stats = window.MasterListShows.archiveStats(gigs, remoteShows);
   count.textContent = `${allShows.length} show${allShows.length === 1 ? '' : 's'}`;
-  archiveStats.innerHTML = `<span>${allShows.length} shows</span><span>${new Set(allShows.map((gig) => gig.artist.toLowerCase())).size} artists</span><span>${new Set(allShows.map((gig) => `${gig.venue}|${gig.city}`.toLowerCase())).size} venues</span><span>${gigs.filter((gig) => gig.favorite).length + remoteShows.filter((show) => show.contributions.some((entry) => entry.favorite)).length} favourites</span><span>${allShows.reduce((total, gig) => total + (gig.songs?.length || 0), 0)} songs</span>`;
+  archiveStats.innerHTML = `<span>${stats.shows} shows</span><span>${stats.artists} artists</span><span>${stats.venues} venues</span><span>${stats.favourites} favourites</span><span>${stats.songs} songs</span>`;
   const query = showFilter?.value.trim().toLowerCase() || '';
   const year = yearFilter?.value || '';
   const sort = sortFilter?.value || 'newest';
-  const compareDates = (a, b, oldestFirst = false) => {
-    const first = String(a || '');
-    const second = String(b || '');
-    if (!first && !second) return 0;
-    if (!first) return 1;
-    if (!second) return -1;
-    return oldestFirst ? first.localeCompare(second) : second.localeCompare(first);
-  };
-  const filtered = gigs.filter((gig) => (!query || [gig.artist, gig.venue, gig.city].some((value) => value.toLowerCase().includes(query))) && (!year || gig.date.startsWith(year)) && (!favouriteFilter?.checked || gig.favorite));
-  const remoteFiltered = remoteShows.filter((show) => (!query || [show.artist, show.venue, show.city, ...show.contributions.map((entry) => entry.participantName || '')].some((value) => value.toLowerCase().includes(query))) && (!year || show.date.startsWith(year)) && (!favouriteFilter?.checked || show.contributions.some((entry) => entry.favorite)));
-  emptyState.hidden = Boolean(filtered.length || remoteFiltered.length);
+  const { local: orderedGigs, remote: orderedRemoteShows } = window.MasterListShows.selectArchiveShows({ gigs, remoteShows, query, year, favouritesOnly: Boolean(favouriteFilter?.checked), sort });
+  const { compareDates } = window.MasterListShows;
+  emptyState.hidden = Boolean(orderedGigs.length || orderedRemoteShows.length);
   gigList.replaceChildren();
-  const orderedGigs = [...filtered].sort((a, b) => sort === 'oldest' ? compareDates(a.date, b.date, true) : sort === 'rating' ? (Number(b.performanceRating || 0) - Number(a.performanceRating || 0)) || compareDates(a.date, b.date) : compareDates(a.date, b.date));
   for (const gig of orderedGigs) {
     const card = document.querySelector('#gig-template').content.cloneNode(true);
     const article = card.querySelector('.gig-card');
@@ -3715,7 +3678,6 @@ function renderGigs() {
     });
     gigList.append(card);
   }
-  const orderedRemoteShows = [...remoteFiltered].sort((a, b) => sort === 'oldest' ? compareDates(a.date, b.date, true) : sort === 'rating' ? Math.max(...b.contributions.map((entry) => Number(entry.performanceRating || 0))) - Math.max(...a.contributions.map((entry) => Number(entry.performanceRating || 0))) || compareDates(a.date, b.date) : compareDates(a.date, b.date));
   for (const show of orderedRemoteShows) gigList.append(renderRemoteSharedGig(show));
   const cards = [...gigList.children].sort((a, b) => sort === 'oldest'
     ? compareDates(a.dataset.showDate, b.dataset.showDate, true)
@@ -3873,16 +3835,13 @@ async function authorizeAppleMusic(developerToken) {
 async function initializeApp() {
   if (page === 'shared') { window.location.replace('/shows'); return; }
   const auth = await fetchJson('/api/auth/status');
-  account = auth.account;
-  if (navSignIn) navSignIn.hidden = Boolean(account);
-  if (accountForm && account) accountForm.elements.name.value = account.name;
-  if (!account) {
-    if (page === 'home') { window.location.replace('/login'); return; }
+  const authState = window.MasterListAuthState.resolveAuthState(auth, page);
+  account = authState.account;
+  window.MasterListAuthState.applyAuthState(authState, { navSignIn, authPanel, profileBar, inviteButton, accountName: accountForm?.elements.name });
+  if (authState.redirectToLogin) { window.location.replace('/login'); return; }
+  if (!authState.authenticated) {
     showAuth(auth);
   } else {
-    authPanel.hidden = true;
-    profileBar.hidden = false;
-    inviteButton.hidden = !account.isAdmin;
     activeProfileId = account.id;
   }
   const [gigData, integrationData, profileData, showData, peerData] = await Promise.all([fetchJson('/api/gigs'), fetchJson('/api/integrations'), fetchJson('/api/profiles'), fetchJson('/api/shared/shows'), account ? fetchJson('/api/peers') : Promise.resolve([])]);
