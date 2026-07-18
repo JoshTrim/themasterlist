@@ -9,6 +9,7 @@ const mediaUploaderModule = window.MasterListMediaUploader;
 const uploadQueue = window.MasterListUploadQueue;
 const mediaJobs = window.MasterListMediaJobs;
 const showEditor = window.MasterListShowEditor;
+const directoryUi = window.MasterListDirectoryUi;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1521,8 +1522,7 @@ function bindMetadataEditorPreview(form, preview) {
 
 function imageUploadPayload(file) {
   if (!file) return Promise.resolve(null);
-  if (file.size > 8 * 1024 * 1024) return Promise.reject(new Error('Profile photos must be 8 MB or smaller.'));
-  if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) return Promise.reject(new Error('Choose a JPEG, PNG, WebP or GIF image.'));
+  try { directoryUi.validateImage(file); } catch (error) { return Promise.reject(error); }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('The selected image could not be read.'));
@@ -1561,14 +1561,7 @@ function populateVenueLocationFields(info) {
 }
 
 function renderMetadataEditorStepper(container, type, currentName, currentCity = '') {
-  const entities = new Map();
-  for (const gig of [...gigs, ...remoteSharedArchiveShows()]) {
-    const name = type === 'artist' ? gig.artist : gig.venue;
-    const city = type === 'venue' ? gig.city : '';
-    const key = `${name}|${city}`.toLocaleLowerCase();
-    if (name && !entities.has(key)) entities.set(key, { name, city });
-  }
-  const ordered = [...entities.values()].sort((a, b) => a.name.localeCompare(b.name) || a.city.localeCompare(b.city));
+  const ordered = directoryUi.editorEntries([...gigs, ...remoteSharedArchiveShows()], type);
   const currentKey = `${currentName}|${type === 'venue' ? currentCity : ''}`.toLocaleLowerCase();
   const index = ordered.findIndex((entry) => `${entry.name}|${entry.city}`.toLocaleLowerCase() === currentKey);
   const linkFor = (entry) => type === 'artist' ? `/artist/edit?name=${encodeURIComponent(entry.name)}` : `/venue/edit?name=${encodeURIComponent(entry.name)}&city=${encodeURIComponent(entry.city)}`;
@@ -1657,13 +1650,11 @@ async function renderGenreStats() {
 }
 
 function directoryInitials(name) {
-  return String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '♪';
+  return directoryUi.initials(name);
 }
 
 function directoryRatingFor(show) {
-  const localRating = Number(show.performanceRating || 0);
-  if (localRating) return localRating;
-  return Math.max(0, ...(show.contributions || []).map((entry) => Number(entry.performanceRating || 0)));
+  return directoryUi.ratingFor(show);
 }
 
 let directoryMetadataPromise;
@@ -1673,18 +1664,11 @@ function loadDirectoryMetadata() {
 }
 
 function metadataMissingFields(type, info = {}, hasLocation = true) {
-  const missing = [];
-  if (!String(info.image || '').trim()) missing.push('photo');
-  if (!String(info.bio || (type === 'venue' ? info.description : '') || '').trim()) missing.push('bio');
-  if (!String(info.source || '').trim()) missing.push('source');
-  if (type === 'venue' && !hasLocation) missing.push('location');
-  return missing;
+  return directoryUi.missingFields(type, info, hasLocation);
 }
 
 function metadataFilterMatches(entity, filter) {
-  if (!filter || filter === 'all') return true;
-  if (filter === 'incomplete') return entity.missingMetadata.length > 0;
-  return entity.missingMetadata.includes(filter.replace('missing-', ''));
+  return directoryUi.filterMatches(entity, filter);
 }
 
 function metadataBadges(entity) {
@@ -1778,31 +1762,10 @@ async function renderEntityDirectories() {
   const requestedMetadataFilter = new URLSearchParams(window.location.search).get('metadata');
 
   if (page === 'artists') {
-    const records = new Map();
-    for (const show of archiveShows) {
-      const key = show.artist.trim().toLocaleLowerCase();
-      if (!records.has(key)) records.set(key, { key, name: show.artist, shows: 0, venues: new Set(), latestDate: '', ratings: [], favourites: 0 });
-      const record = records.get(key);
-      record.shows += 1;
-      record.venues.add(`${show.venue}|${show.city}`.toLocaleLowerCase());
-      if (show.date > record.latestDate) record.latestDate = show.date;
-      const rating = directoryRatingFor(show);
-      if (rating) record.ratings.push(rating);
-      if (show.favorite || show.contributions?.some((entry) => entry.favorite)) record.favourites += 1;
-    }
-    const artists = [...records.values()].map((record) => {
-      const info = artistMetadata.get(record.key) || {};
-      return { ...record, image: info.image || '', imagePosition: info.imagePosition || 'center', description: info.description || '', missingMetadata: metadataMissingFields('artist', info), averageRating: record.ratings.length ? record.ratings.reduce((sum, rating) => sum + rating, 0) / record.ratings.length : 0 };
-    });
+    const artists = directoryUi.buildArtists(archiveShows, artistMetadata);
     if ([...artistsMetadataFilter.options].some((option) => option.value === requestedMetadataFilter)) artistsMetadataFilter.value = requestedMetadataFilter;
     const drawArtists = () => {
-      const query = artistsFilter.value.trim().toLocaleLowerCase();
-      const visible = artists.filter((artist) => (!query || artist.name.toLocaleLowerCase().includes(query)) && metadataFilterMatches(artist, artistsMetadataFilter.value)).sort((a, b) => {
-        if (artistsSort.value === 'name') return a.name.localeCompare(b.name);
-        if (artistsSort.value === 'recent') return (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
-        if (artistsSort.value === 'rating') return b.averageRating - a.averageRating || b.shows - a.shows || a.name.localeCompare(b.name);
-        return b.shows - a.shows || (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
-      });
+      const visible = directoryUi.visibleEntities(artists, { type: 'artist', query: artistsFilter.value, metadata: artistsMetadataFilter.value, sort: artistsSort.value });
       const incomplete = artists.filter((artist) => artist.missingMetadata.length).length;
       artistsSummary.textContent = `${visible.length} of ${artists.length} artist${artists.length === 1 ? '' : 's'} · ${incomplete} need review`;
       artistsGrid.innerHTML = visible.map((artist) => `<article class="entity-card entity-card-artist" data-entity-name="${escapeHtml(artist.name)}"><a class="entity-card-profile" href="/artist?name=${encodeURIComponent(artist.name)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(artist.name))}</span>${artist.image ? `<img src="${escapeHtml(artist.image)}" alt="" loading="lazy" decoding="async" style="object-position:${escapeHtml(artist.imagePosition)}" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${artist.shows} show${artist.shows === 1 ? '' : 's'} · ${artist.venues.size} venue${artist.venues.size === 1 ? '' : 's'}</p><h2>${escapeHtml(artist.name)}</h2><p>${escapeHtml(artist.description || (artist.latestDate ? `Last seen ${formatGigDate(artist.latestDate)}` : 'An undated archive memory'))}</p><div class="entity-card-stats"><span><strong>${artist.averageRating ? artist.averageRating.toFixed(1) : '—'}</strong>Avg rating</span><span><strong>${artist.favourites}</strong>Favourite${artist.favourites === 1 ? '' : 's'}</span><span><strong>${artist.latestDate ? artist.latestDate.slice(0, 4) : '—'}</strong>Last seen</span></div></div></a><div class="entity-card-metadata">${metadataBadges(artist)}</div><a class="entity-card-edit" href="/artist/edit?name=${encodeURIComponent(artist.name)}" aria-label="Edit ${escapeHtml(artist.name)} metadata">✎ <span>Edit</span></a></article>`).join('') || '<p class="empty-state entity-directory-empty">No artists match those filters.</p>';
@@ -1816,25 +1779,10 @@ async function renderEntityDirectories() {
   }
 
   if (page === 'venues') {
-    const records = new Map();
-    for (const show of archiveShows) {
-      const key = `${show.venue}|${show.city}`.toLocaleLowerCase();
-      if (!records.has(key)) records.set(key, { key, name: show.venue, city: show.city, shows: 0, artists: new Set(), latestDate: '', favourites: 0 });
-      const record = records.get(key);
-      record.shows += 1;
-      record.artists.add(show.artist.toLocaleLowerCase());
-      if (show.date > record.latestDate) record.latestDate = show.date;
-      if (show.favorite || show.contributions?.some((entry) => entry.favorite)) record.favourites += 1;
-    }
-    const venues = [...records.values()].map((record) => { const info = venueMetadata.get(record.key) || {}; return { ...record, image: info.image || '', imagePosition: info.imagePosition || 'center', description: info.description || '', isClosed: Boolean(info.isClosed), missingMetadata: metadataMissingFields('venue', info, locations.has(record.key)), hasLocation: locations.has(record.key) }; });
+    const venues = directoryUi.buildVenues(archiveShows, venueMetadata, locations);
     if ([...venuesMetadataFilter.options].some((option) => option.value === requestedMetadataFilter)) venuesMetadataFilter.value = requestedMetadataFilter;
     const drawVenues = () => {
-      const query = venuesFilter.value.trim().toLocaleLowerCase();
-      const visible = venues.filter((venue) => (!query || `${venue.name} ${venue.city}`.toLocaleLowerCase().includes(query)) && metadataFilterMatches(venue, venuesMetadataFilter.value)).sort((a, b) => {
-        if (venuesSort.value === 'name') return a.name.localeCompare(b.name) || a.city.localeCompare(b.city);
-        if (venuesSort.value === 'recent') return (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
-        return b.shows - a.shows || (b.latestDate || '').localeCompare(a.latestDate || '') || a.name.localeCompare(b.name);
-      });
+      const visible = directoryUi.visibleEntities(venues, { type: 'venue', query: venuesFilter.value, metadata: venuesMetadataFilter.value, sort: venuesSort.value });
       const incomplete = venues.filter((venue) => venue.missingMetadata.length).length;
       venuesSummary.textContent = `${visible.length} of ${venues.length} venue${venues.length === 1 ? '' : 's'} · ${incomplete} need review`;
       venuesGrid.innerHTML = visible.map((venue) => `<article class="entity-card entity-card-venue" data-entity-name="${escapeHtml(venue.name)}" data-entity-city="${escapeHtml(venue.city)}" data-has-location="${venue.hasLocation}"><a class="entity-card-profile" href="/venue?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(venue.name))}</span>${venue.image ? `<img src="${escapeHtml(venue.image)}" alt="" loading="lazy" decoding="async" style="object-position:${escapeHtml(venue.imagePosition)}" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${escapeHtml(venue.city || 'Location unknown')}</p><h2>${escapeHtml(venue.name)}</h2><p>${escapeHtml(venue.description || (venue.latestDate ? `Last visited ${formatGigDate(venue.latestDate)}` : 'An undated archive location'))}</p><div class="entity-card-stats"><span><strong>${venue.shows}</strong>Visit${venue.shows === 1 ? '' : 's'}</span><span><strong>${venue.artists.size}</strong>Artist${venue.artists.size === 1 ? '' : 's'}</span><span><strong>${venue.latestDate ? venue.latestDate.slice(0, 4) : '—'}</strong>Last visit</span></div></div></a><div class="entity-card-metadata">${venueMetadataBadges(venue)}</div><a class="entity-card-edit" href="/venue/edit?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}" aria-label="Edit ${escapeHtml(venue.name)} metadata">✎ <span>Edit</span></a></article>`).join('') || '<p class="empty-state entity-directory-empty">No venues match those filters.</p>';
