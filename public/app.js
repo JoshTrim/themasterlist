@@ -3472,34 +3472,11 @@ function remoteSharedArchiveShows() {
 }
 
 function setupShowMediaSection(card, media = [], options = {}) {
-  const section = card.querySelector('.show-media-section');
-  const gallery = section?.querySelector('.media-gallery');
-  if (!section || !gallery) return;
-  section.hidden = media.length === 0;
-  if (!media.length) return;
-  section.querySelector('summary span').textContent = media.length ? `Media · ${media.length}` : 'Media';
-  renderMediaGallery(gallery, media, options);
+  window.MasterListShowCards.setupMediaSection(card, media, options, renderMediaGallery);
 }
 
 function setupArtifactSection(card, gig) {
-  const section = card.querySelector('.artifact-section');
-  const gallery = card.querySelector('.artifact-gallery');
-  if (!section || !gallery) return;
-  let artifacts = (gig.media || []).filter((item) => item.category === 'artifact');
-  const syncArtifactVisibility = () => {
-    section.hidden = artifacts.length === 0;
-  };
-  const renderArtifacts = () => {
-    syncArtifactVisibility();
-    section.querySelector('summary span').textContent = artifacts.length ? `Artifacts · ${artifacts.length}` : 'Artifacts';
-    renderMediaGallery(gallery, artifacts, { editable: true, allowCover: false, onDelete: (removed) => {
-      const removedIds = new Set(removed.map((item) => item.id));
-      gig.media = (gig.media || []).filter((item) => !removedIds.has(item.id));
-      section.querySelector('summary span').textContent = artifacts.length ? `Artifacts · ${artifacts.length}` : 'Artifacts';
-      syncArtifactVisibility();
-    } });
-  };
-  renderArtifacts();
+  window.MasterListShowCards.setupArtifactSection(card, gig, renderMediaGallery);
 }
 
 function setupArchiveArtistVisual(card, artist) {
@@ -3559,38 +3536,7 @@ function hydrateArchiveArtistImages() {
 }
 
 function renderRemoteSharedGig(show) {
-  const card = document.querySelector('#gig-template').content.cloneNode(true);
-  const article = card.querySelector('.gig-card');
-  article.id = `shared-${show.id}`;
-  article.classList.add('remote-shared-gig');
-  article.dataset.showDate = show.date || '';
-  article.dataset.showRating = String(Math.max(0, ...show.contributions.map((entry) => Number(entry.performanceRating || 0))));
-  article.dataset.showFavorite = show.contributions.some((entry) => entry.favorite) ? '1' : '0';
-  setupArchiveArtistVisual(card, show.artist);
-  card.querySelectorAll('.artifact-section, .add-artifact-gig').forEach((element) => element.remove());
-  card.querySelector('.gig-date').textContent = formatGigDate(show.date);
-  card.querySelector('h3').innerHTML = `<a class="artist-link" href="/artist?name=${encodeURIComponent(show.artist)}">${escapeHtml(show.artist)}</a>`;
-  card.querySelector('.gig-place').innerHTML = `<a class="venue-link" href="/venue?name=${encodeURIComponent(show.venue)}&city=${encodeURIComponent(show.city)}">${escapeHtml(show.venue)}</a> · <a class="venue-link" href="/city?name=${encodeURIComponent(show.city)}">${escapeHtml(show.city)}</a>`;
-  const participants = show.contributions.map((entry) => entry.participantName || 'Peer');
-  card.querySelector('.gig-notes').textContent = `Shared by ${participants.join(', ')}`;
-  const mediaTotal = show.contributions.reduce((sum, entry) => sum + (entry.media?.length || 0), 0);
-  card.querySelector('.venue-notes').textContent = `${mediaTotal} media item${mediaTotal === 1 ? '' : 's'} listed on peer instances`;
-  const ratings = card.querySelector('.gig-ratings');
-  ratings.innerHTML = show.contributions.map((entry) => `<span class="remote-rating"><b>${escapeHtml(entry.participantName || 'Peer')}</b> · ${entry.performanceRating ? `Performance ${entry.performanceRating}/5` : 'Performance unrated'} · ${entry.venueRating ? `Venue ${entry.venueRating}/5` : 'Venue unrated'}${entry.favorite ? ' · ♥ Favourite' : ''}</span>`).join('');
-  const heart = card.querySelector('.heart-toggle');
-  heart.textContent = show.contributions.some((entry) => entry.favorite) ? '♥' : '♡';
-  heart.disabled = true;
-  heart.title = 'Favourite status belongs to the contributing peer';
-  card.querySelectorAll('.show-detail-link, .play-gig, .share-gig, .edit-gig, .delete-gig').forEach((control) => control.remove());
-  if (show.songs?.length) {
-    setupArchiveSetlist(card.querySelector('.setlist'), show, { fetchAlbums: false });
-  }
-  const contributions = card.querySelector('.media-gallery');
-  card.querySelector('.show-media-section').hidden = mediaTotal === 0;
-  contributions.className = 'remote-contributions local-shared-attendees';
-  contributions.innerHTML = show.contributions.map((entry) => `<div><strong>${escapeHtml(entry.participantName || 'Peer')}</strong><span>${entry.media?.length || 0} media · synced ${escapeHtml(new Date(entry.updatedAt).toLocaleString())}</span>${entry.performanceNotes || entry.venueNotes ? `<small>${escapeHtml(entry.performanceNotes || entry.venueNotes)}</small>` : ''}</div>`).join('');
-  card.querySelector('.show-media-section summary span').textContent = `Peer media · ${mediaTotal}`;
-  return card;
+  return window.MasterListShowCards.createRemoteCard({ template: document.querySelector('#gig-template'), show, formatGigDate, escapeHtml, setupArtistVisual: setupArchiveArtistVisual, setupSetlist: setupArchiveSetlist });
 }
 
 function renderGigs() {
@@ -3607,74 +3553,25 @@ function renderGigs() {
   emptyState.hidden = Boolean(orderedGigs.length || orderedRemoteShows.length);
   gigList.replaceChildren();
   for (const gig of orderedGigs) {
-    const card = document.querySelector('#gig-template').content.cloneNode(true);
-    const article = card.querySelector('.gig-card');
-    article.id = `gig-${gig.id}`;
-    article.dataset.showDate = gig.date || '';
-    article.dataset.showRating = String(Number(gig.performanceRating || 0));
-    article.dataset.showFavorite = gig.favorite ? '1' : '0';
-    setupArchiveArtistVisual(card, gig.artist);
-    card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
-    card.querySelector('.show-detail-link').href = `/show?id=${encodeURIComponent(gig.id)}`;
-    card.querySelector('.play-gig').href = `/playback?id=${encodeURIComponent(gig.id)}`;
-    card.querySelector('.play-gig').textContent = '▶';
-    card.querySelector('.play-gig').setAttribute('aria-label', 'Play set');
-    const date = formatGigDate(gig.date);
-    card.querySelector('.gig-date').textContent = date;
-    card.querySelector('h3').innerHTML = `<a class="artist-link" href="/artist?name=${encodeURIComponent(gig.artist)}">${escapeHtml(gig.artist)}</a>`;
-    card.querySelector('.gig-place').innerHTML = `<a class="venue-link" href="/venue?name=${encodeURIComponent(gig.venue)}&city=${encodeURIComponent(gig.city)}">${escapeHtml(gig.venue)}</a> · <a class="venue-link" href="/city?name=${encodeURIComponent(gig.city)}">${escapeHtml(gig.city)}</a>`;
-    card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
-    card.querySelector('.venue-notes').textContent = gig.venueNotes ? `Venue: ${gig.venueNotes}` : '';
-    renderAttendeeSummary(card.querySelector('.gig-summary'), gig);
-    const syncedShow = sharedShows.find((show) => show.id === gig.sharedId || show.sourceGigId === gig.id);
-    const peerContributions = (syncedShow?.contributions || []).filter((entry) => entry.localGigId !== gig.id);
-    if (peerContributions.length) {
-      const details = document.createElement('details');
-      details.className = 'peer-contribution-summary';
-      details.innerHTML = `<summary>${peerContributions.length} peer contribution${peerContributions.length === 1 ? '' : 's'}</summary>${peerContributions.map((entry) => `<div><strong>${escapeHtml(entry.participantName || 'Peer')}</strong><span>${entry.performanceRating ? `Performance ${entry.performanceRating}/5` : 'Performance unrated'} · ${entry.venueRating ? `Venue ${entry.venueRating}/5` : 'Venue unrated'} · ${entry.media?.length || 0} media</span>${entry.performanceNotes || entry.venueNotes ? `<small>${escapeHtml(entry.performanceNotes || entry.venueNotes)}</small>` : ''}</div>`).join('')}`;
-      card.querySelector('.gig-summary').append(details);
-    }
-    const ratings = card.querySelector('.gig-ratings');
-    ratings.innerHTML = quickRating('performanceRating', 'Performance', gig.performanceRating);
-    ratings.querySelectorAll('.quick-star').forEach((button) => button.addEventListener('click', async () => {
-      try {
-        const updated = await fetchJson(`/api/gigs/${gig.id}`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [button.dataset.field]: Number(button.dataset.rating) })
-        });
-        gigs = gigs.map((entry) => entry.id === gig.id ? updated : entry);
-        renderGigs();
-      } catch (error) {
-        setMessage(error.message, true);
-      }
-    }));
-    const heart = card.querySelector('.heart-toggle');
-    heart.textContent = gig.favorite ? '♥' : '♡';
-    heart.classList.toggle('favorite', Boolean(gig.favorite));
-    heart.setAttribute('aria-label', gig.favorite ? 'Remove from favourites' : 'Mark as favourite');
-    heart.addEventListener('click', async () => {
-      try {
-        const updated = await fetchJson(`/api/gigs/${gig.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ favorite: !gig.favorite }) });
-        gigs = gigs.map((entry) => entry.id === gig.id ? updated : entry);
-        renderGigs();
-      } catch (error) {
-        setMessage(error.message, true);
-      }
-    });
-    const setlist = card.querySelector('.setlist');
-    const exports = card.querySelector('.exports');
-    exports.hidden = true;
-    if (gig.songs?.length) {
-      setupArchiveSetlist(setlist, gig);
-      exports.hidden = false;
-      setupExportButtons(exports, gig);
-    }
-    setupShowMediaSection(card, (gig.media || []).filter((item) => item.category !== 'artifact'), { songs: gig.songs || [] });
-    setupArtifactSection(card, gig);
-    card.querySelector('.delete-gig').addEventListener('click', async () => {
-      if (!confirm(`Remove ${gig.artist} at ${gig.venue}?`)) return;
-      await fetchJson(`/api/gigs/${gig.id}`, { method: 'DELETE' });
-      gigs = gigs.filter((item) => item.id !== gig.id);
-      renderGigs();
+    const card = window.MasterListShowCards.createLocalCard({
+      document,
+      template: document.querySelector('#gig-template'),
+      gig,
+      sharedShows,
+      formatGigDate,
+      escapeHtml,
+      setupArtistVisual: setupArchiveArtistVisual,
+      renderAttendeeSummary,
+      setupSetlist: setupArchiveSetlist,
+      setupExports: setupExportButtons,
+      setupMedia: setupShowMediaSection,
+      setupArtifacts: setupArtifactSection,
+      patchGig: (id, body) => fetchJson(`/api/gigs/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+      deleteGig: (id) => fetchJson(`/api/gigs/${id}`, { method: 'DELETE' }),
+      onUpdate: (updated) => { gigs = gigs.map((entry) => entry.id === updated.id ? updated : entry); renderGigs(); },
+      onDelete: (removed) => { gigs = gigs.filter((item) => item.id !== removed.id); renderGigs(); },
+      onError: (error) => setMessage(error.message, true),
+      confirm: window.confirm.bind(window)
     });
     gigList.append(card);
   }
@@ -3707,11 +3604,6 @@ function populateYearFilter() {
 }
 
 [showFilter, yearFilter, sortFilter, favouriteFilter].forEach((control) => control?.addEventListener('input', renderGigs));
-
-function quickRating(field, label, value) {
-  const rating = Number(value) || 0;
-  return `<span class="quick-rating"><span class="rating-label">${label}</span>${[1, 2, 3, 4, 5].map((star) => `<button class="quick-star${star <= rating ? ' selected' : ''}" type="button" data-field="${field}" data-rating="${star}" aria-label="Rate ${label.toLowerCase()} ${star} out of 5">★</button>`).join('')}</span>`;
-}
 
 loadMapButton.addEventListener('click', async () => {
   if (!gigs.length) {

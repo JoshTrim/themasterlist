@@ -15,10 +15,10 @@ describe('frontend shell contracts', () => {
   });
 
   test('loads shared frontend modules before the application bundle', () => {
-    for (const module of ['formatters', 'navigation', 'auth-state', 'jobs', 'shows']) {
+    for (const module of ['formatters', 'navigation', 'auth-state', 'jobs', 'shows', 'show-cards']) {
       assert.ok(html.indexOf(`/lib/${module}.js`) < html.indexOf('/app.js'), module);
     }
-    for (const global of ['MasterListFormatters', 'MasterListNavigation', 'MasterListAuthState', 'MasterListJobs', 'MasterListShows']) {
+    for (const global of ['MasterListFormatters', 'MasterListNavigation', 'MasterListAuthState', 'MasterListJobs', 'MasterListShows', 'MasterListShowCards']) {
       assert.match(app, new RegExp(`window\\.${global}`), global);
     }
   });

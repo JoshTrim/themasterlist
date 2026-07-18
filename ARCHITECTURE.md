@@ -33,6 +33,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `auth-state.js` — deterministic authentication view state and visibility updates.
 - `jobs.js` — persistent background-job queue state and panel rendering.
 - `shows.js` — archive filtering, ordering and combined local/peer statistics.
+- `show-cards.js` — local and peer show-card factories, card actions and media/artifact accordion presentation.
 
 ## Testing strategy
 
