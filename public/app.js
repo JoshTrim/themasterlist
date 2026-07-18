@@ -10,6 +10,7 @@ const mediaGalleryModule = window.MasterListMediaGallery;
 const uploadQueue = window.MasterListUploadQueue;
 const mediaJobs = window.MasterListMediaJobs;
 const showEditor = window.MasterListShowEditor;
+const showFormController = window.MasterListShowFormController;
 const directoryUi = window.MasterListDirectoryUi;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
@@ -2316,17 +2317,20 @@ function renderEditPage() {
       submitButton.disabled = true;
       syncTracksFromInputs();
       const update = showEditor.createEditPayload(Object.fromEntries(new FormData(editForm).entries()), { attendees: readAttendees(ensureEditAttendeePicker()), songs: tracks });
-      const saved = await fetchJson(`/api/gigs/${gig.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(update) });
       const files = pendingMedia.get(editMediaInput) || [...(editMediaInput?.files || [])];
-      if (files.length) await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; });
-      await addYouTubeMedia(gig.id, editYoutubeMediaInput);
+      const { saved, media } = await showFormController.updateShow({
+        gig, update, mediaFiles: files,
+        saveShow: (record, payload) => fetchJson(`/api/gigs/${record.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
+        uploadFiles: (record, uploads) => uploadGigMedia(record.id, uploads, (file, fraction) => { editMessage.textContent = fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; }),
+        addExternalMedia: (record) => addYouTubeMedia(record.id, editYoutubeMediaInput),
+        refreshMedia: (record) => fetchJson(`/api/gigs/${record.id}/media`)
+      });
       Object.assign(gig, saved);
       gigs = gigs.map((entry) => entry.id === gig.id ? gig : entry);
       editMessage.textContent = files.length ? 'Show and media saved.' : 'Show saved.';
       editMessage.classList.remove('error');
       editMediaInput.value = '';
-      const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`);
-      renderEditMediaWorkspace(gig, refreshed);
+      renderEditMediaWorkspace(gig, media);
       renderGigs();
     } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); } finally { submitButton.disabled = false; }
   });
@@ -2992,26 +2996,28 @@ form.addEventListener('submit', async (event) => {
   const submitButton = form.querySelector('button[type="submit"]');
   try {
     submitButton.disabled = true;
-    const saved = await fetchJson('/api/gigs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (mediaFiles.length) {
-      if (isMobileUpload) {
-        const uploadState = mobileUploadStateFor(mediaInput, saved.id);
+    const { saved, uploadsQueued } = await showFormController.createShow({
+      payload, mediaFiles, mobile: isMobileUpload,
+      saveShow: (body) => fetchJson('/api/gigs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+      queueMobileUploads: async (record) => {
+        const uploadState = mobileUploadStateFor(mediaInput, record.id);
         uploadState.releaseAfterDrain = true;
-        startMobileUploadQueue(mediaInput, saved.id, (item) => {
+        startMobileUploadQueue(mediaInput, record.id, (item) => {
           setMessage(`${item.name} uploaded. Continuing the queue…`);
         }, async () => {
-          try { await pollMediaRecognition(saved.id, (refreshed) => { gigs = gigs.map((entry) => entry.id === saved.id ? { ...entry, media: refreshed } : entry); renderGigs(); }); } catch { /* the upload itself already succeeded */ }
+          try { await pollMediaRecognition(record.id, (refreshed) => { gigs = gigs.map((entry) => entry.id === record.id ? { ...entry, media: refreshed } : entry); renderGigs(); }); } catch { /* the upload itself already succeeded */ }
         });
-      } else await uploadGigMedia(saved.id, mediaFiles, (file, fraction) => setMessage(fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`));
-    }
-    await addYouTubeMedia(saved.id, youtubeMediaInput);
+      },
+      uploadFiles: (record, uploads) => uploadGigMedia(record.id, uploads, (file, fraction) => setMessage(fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`)),
+      addExternalMedia: (record) => addYouTubeMedia(record.id, youtubeMediaInput)
+    });
     gigs.unshift(saved);
     form.reset();
     resetReviewForm();
     selectedSetlist = null;
     results.hidden = true;
     addDuplicateWarning.hidden = true;
-    setMessage(isMobileUpload && mediaFiles.length ? 'Show saved. Uploads are continuing in the queue.' : 'Show saved to The Master List.');
+    setMessage(uploadsQueued ? 'Show saved. Uploads are continuing in the queue.' : 'Show saved to The Master List.');
     renderGigs();
     await loadPersistentJobs();
     await renderDashboardStats();
