@@ -4,9 +4,22 @@ const fs = require('node:fs/promises');
 const legacyFs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash, generateKeyPairSync, sign: signPayload, verify: verifyPayload } = require('node:crypto');
+const { randomUUID, randomBytes, createHash, generateKeyPairSync, sign: signPayload, verify: verifyPayload } = require('node:crypto');
+const playback = require('./lib/playback');
+const { recognitionKey, youtubeVideoId, isoDurationSeconds, parsePlaybackChapters, estimateFullShowTimings, suggestPlaybackPlan } = playback;
+const { normaliseGenres, normaliseImagePosition, normaliseSongs, validateGig, normaliseRating } = require('./lib/validation');
+const { createAuth } = require('./lib/auth');
+const { sendJson, sendError, redirect, readBody } = require('./lib/http');
+const { syncPayloadHash, mergeText, mergeSongs, averageRating } = require('./lib/sync-merge');
+const { createBackupService } = require('./lib/backups');
+const { mediaExtension, mediaCategory, safeMediaName, hashFile } = require('./lib/media-utils');
+const { createAuthRoutes } = require('./lib/routes/auth');
+const { createConflictStore } = require('./lib/conflicts');
+const { migrateSchema } = require('./lib/schema');
+const { loadEnvFile } = require('./lib/env');
+const { createGigRepository } = require('./lib/gigs');
 
-if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile();
+if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -41,292 +54,7 @@ if (legacyFs.existsSync(PENDING_RESTORE_FILE)) {
 }
 const database = new Database(DB_FILE);
 database.pragma('journal_mode = WAL');
-database.exec(`
-  CREATE TABLE IF NOT EXISTS gigs (
-    id TEXT PRIMARY KEY,
-    artist TEXT NOT NULL,
-    venue TEXT NOT NULL,
-    city TEXT NOT NULL,
-    date TEXT NOT NULL,
-    notes TEXT NOT NULL DEFAULT '',
-    performance_notes TEXT NOT NULL DEFAULT '',
-    venue_notes TEXT NOT NULL DEFAULT '',
-    performance_rating REAL,
-    venue_rating REAL,
-    favorite INTEGER NOT NULL DEFAULT 0,
-    setlist_fm_id TEXT,
-    setlist_fm_url TEXT,
-    songs TEXT NOT NULL DEFAULT '[]',
-    created_at TEXT NOT NULL
-  )
-`);
-database.exec(`
-  CREATE TABLE IF NOT EXISTS artist_info (
-    lookup_name TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    bio TEXT NOT NULL DEFAULT '',
-    image TEXT,
-    image_position TEXT NOT NULL DEFAULT 'center',
-    is_manual INTEGER NOT NULL DEFAULT 0,
-    source TEXT,
-    updated_at TEXT NOT NULL
-  )
-`);
-database.exec(`
-  CREATE TABLE IF NOT EXISTS venue_info (
-    lookup_name TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    bio TEXT NOT NULL DEFAULT '',
-    image TEXT,
-    image_position TEXT NOT NULL DEFAULT 'center',
-    is_manual INTEGER NOT NULL DEFAULT 0,
-    is_closed INTEGER NOT NULL DEFAULT 0,
-    source TEXT,
-    updated_at TEXT NOT NULL
-  )
-`);
-database.exec(`
-  CREATE TABLE IF NOT EXISTS artist_genres (
-    lookup_name TEXT PRIMARY KEY,
-    artist_name TEXT NOT NULL,
-    genres TEXT NOT NULL DEFAULT '[]',
-    source TEXT NOT NULL DEFAULT 'itunes',
-    updated_at TEXT NOT NULL
-  )
-`);
-database.exec(`
-  CREATE TABLE IF NOT EXISTS gig_media (
-    id TEXT PRIMARY KEY,
-    gig_id TEXT NOT NULL,
-    filename TEXT NOT NULL,
-    mime_type TEXT NOT NULL,
-    caption TEXT NOT NULL DEFAULT '',
-    is_cover INTEGER NOT NULL DEFAULT 0,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    rotation INTEGER NOT NULL DEFAULT 0,
-    category TEXT NOT NULL DEFAULT 'show',
-    external_url TEXT,
-    song_index INTEGER,
-    size INTEGER NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (gig_id) REFERENCES gigs(id) ON DELETE CASCADE
-  )
-`);
-database.exec(`CREATE TABLE IF NOT EXISTS youtube_search_cache (cache_key TEXT PRIMARY KEY, results TEXT NOT NULL, created_at TEXT NOT NULL)`);
-database.exec(`CREATE TABLE IF NOT EXISTS album_lookup_cache (cache_key TEXT PRIMARY KEY, album TEXT, created_at TEXT NOT NULL)`);
-database.exec(`CREATE TABLE IF NOT EXISTS background_jobs (id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL, progress INTEGER NOT NULL DEFAULT 0, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
-database.exec(`CREATE TABLE IF NOT EXISTS api_usage (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  provider TEXT NOT NULL,
-  operation TEXT NOT NULL,
-  quota_units INTEGER NOT NULL DEFAULT 1,
-  status INTEGER,
-  requested_at TEXT NOT NULL,
-  usage_day TEXT NOT NULL
-)`);
-database.exec('CREATE INDEX IF NOT EXISTS api_usage_day_provider ON api_usage (usage_day, provider)');
-database.prepare("UPDATE background_jobs SET status = 'error', error = 'Interrupted by server restart', updated_at = ? WHERE status = 'running'").run(new Date().toISOString());
-addColumnIfMissing('artist_info', 'image_position', "TEXT NOT NULL DEFAULT 'center'");
-addColumnIfMissing('venue_info', 'image_position', "TEXT NOT NULL DEFAULT 'center'");
-addColumnIfMissing('artist_info', 'is_manual', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('venue_info', 'is_manual', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('venue_info', 'is_closed', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('gig_media', 'caption', "TEXT NOT NULL DEFAULT ''");
-addColumnIfMissing('gig_media', 'is_cover', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('gig_media', 'sort_order', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('gig_media', 'rotation', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('gig_media', 'category', "TEXT NOT NULL DEFAULT 'show'");
-addColumnIfMissing('gig_media', 'external_url', 'TEXT');
-addColumnIfMissing('gig_media', 'song_index', 'INTEGER');
-addColumnIfMissing('gig_media', 'playback_filename', 'TEXT');
-addColumnIfMissing('gig_media', 'playback_mime', 'TEXT');
-addColumnIfMissing('gig_media', 'playback_status', "TEXT NOT NULL DEFAULT 'not_started'");
-addColumnIfMissing('gig_media', 'playback_error', 'TEXT');
-addColumnIfMissing('gig_media', 'checksum', 'TEXT');
-addColumnIfMissing('gig_media', 'recognition_status', "TEXT NOT NULL DEFAULT 'not_started'");
-addColumnIfMissing('gig_media', 'recognition_result', 'TEXT');
-addColumnIfMissing('gig_media', 'recognition_title', 'TEXT');
-addColumnIfMissing('gig_media', 'recognition_artist', 'TEXT');
-addColumnIfMissing('gig_media', 'recognition_album', 'TEXT');
-addColumnIfMissing('gig_media', 'recognition_error', 'TEXT');
-addColumnIfMissing('gig_media', 'recognition_override', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('gig_media', 'background_filename', 'TEXT');
-addColumnIfMissing('gig_media', 'background_status', "TEXT NOT NULL DEFAULT 'not_started'");
-addColumnIfMissing('gig_media', 'background_error', 'TEXT');
-addColumnIfMissing('gig_media', 'use_background_removed', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('gig_media', 'playback_preferred', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('gig_media', 'playback_start', 'REAL');
-addColumnIfMissing('gig_media', 'playback_end', 'REAL');
-addColumnIfMissing('gig_media', 'playback_clips_initialized', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('gig_media', 'source_description', "TEXT NOT NULL DEFAULT ''");
-addColumnIfMissing('gig_media', 'source_duration', 'REAL');
-addColumnIfMissing('gig_media', 'source_metadata_at', 'TEXT');
-database.exec(`
-  CREATE TABLE IF NOT EXISTS media_playback_clips (
-    media_id TEXT NOT NULL,
-    song_index INTEGER NOT NULL,
-    start_seconds REAL,
-    end_seconds REAL,
-    priority INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (media_id, song_index),
-    FOREIGN KEY (media_id) REFERENCES gig_media(id) ON DELETE CASCADE
-  )
-`);
-addColumnIfMissing('media_playback_clips', 'priority', 'INTEGER NOT NULL DEFAULT 0');
-database.prepare(`INSERT OR IGNORE INTO media_playback_clips (media_id, song_index, start_seconds, end_seconds, created_at, updated_at)
-  SELECT id, song_index, playback_start, playback_end, created_at, ? FROM gig_media
-  WHERE playback_clips_initialized = 0 AND song_index IS NOT NULL AND mime_type LIKE 'video/%' AND category <> 'artifact'`).run(new Date().toISOString());
-database.prepare("UPDATE gig_media SET playback_clips_initialized = 1 WHERE playback_clips_initialized = 0 AND mime_type LIKE 'video/%'").run();
-database.prepare("UPDATE gig_media SET background_status = 'error', background_error = 'Interrupted by server restart' WHERE background_status = 'running'").run();
-database.prepare("UPDATE gig_media SET playback_status = 'ready', playback_error = NULL WHERE playback_filename IS NOT NULL").run();
-database.prepare("UPDATE gig_media SET playback_status = 'error', playback_error = 'Interrupted by server restart' WHERE playback_status = 'encoding'").run();
-database.exec(`
-  CREATE TABLE IF NOT EXISTS profiles (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    created_at TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS shared_shows (
-    id TEXT PRIMARY KEY,
-    source_gig_id TEXT,
-    artist TEXT NOT NULL,
-    venue TEXT NOT NULL,
-    city TEXT NOT NULL,
-    date TEXT NOT NULL,
-    setlist_fm_id TEXT,
-    setlist_fm_url TEXT,
-    songs TEXT NOT NULL DEFAULT '[]',
-    created_at TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS shared_attendees (
-    show_id TEXT NOT NULL,
-    profile_id TEXT NOT NULL,
-    joined_at TEXT NOT NULL,
-    PRIMARY KEY (show_id, profile_id),
-    FOREIGN KEY (show_id) REFERENCES shared_shows(id) ON DELETE CASCADE,
-    FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
-  );
-  CREATE TABLE IF NOT EXISTS shared_reviews (
-    show_id TEXT NOT NULL,
-    profile_id TEXT NOT NULL,
-    performance_rating REAL,
-    venue_rating REAL,
-    favorite INTEGER NOT NULL DEFAULT 0,
-    notes TEXT NOT NULL DEFAULT '',
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (show_id, profile_id),
-    FOREIGN KEY (show_id) REFERENCES shared_shows(id) ON DELETE CASCADE,
-    FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
-  );
-`);
-database.pragma('foreign_keys = ON');
-addColumnIfMissing('profiles', 'password_hash', 'TEXT');
-addColumnIfMissing('profiles', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
-addColumnIfMissing('gigs', 'attendees', "TEXT NOT NULL DEFAULT '[]'");
-addColumnIfMissing('gigs', 'shared_id', 'TEXT');
-database.prepare('UPDATE gigs SET shared_id = id WHERE shared_id IS NULL OR shared_id = ?').run('');
-database.exec('CREATE UNIQUE INDEX IF NOT EXISTS gigs_shared_id ON gigs (shared_id)');
-database.exec(`
-  CREATE TABLE IF NOT EXISTS sessions (
-    token_hash TEXT PRIMARY KEY,
-    profile_id TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
-  );
-  CREATE TABLE IF NOT EXISTS invites (
-    token_hash TEXT PRIMARY KEY,
-    created_by TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    used_at TEXT,
-    FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE CASCADE
-  );
-`);
-database.exec(`
-  CREATE TABLE IF NOT EXISTS instance_identity (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    instance_id TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL DEFAULT 'The Master List instance',
-    public_key TEXT NOT NULL,
-    private_key TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS peer_instances (
-    id TEXT PRIMARY KEY,
-    peer_id TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    base_url TEXT NOT NULL DEFAULT '',
-    public_key TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'paired',
-    created_at TEXT NOT NULL,
-    last_seen_at TEXT
-  );
-  CREATE TABLE IF NOT EXISTS shared_gig_contributions (
-    shared_gig_id TEXT NOT NULL,
-    instance_id TEXT NOT NULL,
-    local_gig_id TEXT,
-    participant_name TEXT NOT NULL DEFAULT '',
-    performance_rating REAL,
-    venue_rating REAL,
-    favorite INTEGER NOT NULL DEFAULT 0,
-    performance_notes TEXT NOT NULL DEFAULT '',
-    venue_notes TEXT NOT NULL DEFAULT '',
-    media_manifest TEXT NOT NULL DEFAULT '[]',
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (shared_gig_id, instance_id),
-    FOREIGN KEY (shared_gig_id) REFERENCES shared_shows(id) ON DELETE CASCADE
-  );
-  CREATE TABLE IF NOT EXISTS sync_events (
-    event_id TEXT PRIMARY KEY,
-    origin_instance_id TEXT NOT NULL,
-    shared_gig_id TEXT,
-    event_type TEXT NOT NULL,
-    payload TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    applied_at TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS notifications (
-    id TEXT PRIMARY KEY,
-    type TEXT NOT NULL,
-    peer_id TEXT,
-    shared_gig_id TEXT,
-    title TEXT NOT NULL,
-    body TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    read_at TEXT
-  );
-  CREATE TABLE IF NOT EXISTS app_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS peer_sync_baselines (
-    shared_gig_id TEXT NOT NULL,
-    peer_id TEXT NOT NULL,
-    local_hash TEXT NOT NULL,
-    remote_hash TEXT NOT NULL,
-    synced_at TEXT NOT NULL,
-    PRIMARY KEY (shared_gig_id, peer_id)
-  );
-  CREATE TABLE IF NOT EXISTS peer_sync_conflicts (
-    id TEXT PRIMARY KEY,
-    shared_gig_id TEXT NOT NULL,
-    peer_id TEXT NOT NULL,
-    local_gig_id TEXT NOT NULL,
-    local_payload TEXT NOT NULL,
-    remote_payload TEXT NOT NULL,
-    remote_snapshot TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'open',
-    created_at TEXT NOT NULL,
-    resolved_at TEXT,
-    resolution TEXT
-  );
-`);
-database.exec('CREATE INDEX IF NOT EXISTS notifications_unread ON notifications (read_at, created_at)');
-database.exec("CREATE UNIQUE INDEX IF NOT EXISTS peer_sync_conflicts_open ON peer_sync_conflicts (shared_gig_id, peer_id) WHERE status = 'open'");
+migrateSchema(database);
 
 function ensureInstanceIdentity() {
   const existing = database.prepare('SELECT * FROM instance_identity WHERE id = 1').get();
@@ -366,10 +94,15 @@ function ensureBackupSettings() {
 
 ensureBackupSettings();
 
-function addColumnIfMissing(table, column, definition) {
-  const columns = database.prepare(`PRAGMA table_info(${table})`).all();
-  if (!columns.some((entry) => entry.name === column)) database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-}
+const authService = createAuth({ database });
+const { currentAccount, accountsConfigured, requireAccount } = authService;
+const handleAuthApi = createAuthRoutes({ database, auth: authService, appOrigin });
+const backupService = createBackupService({ database, fs, path, backupDir: BACKUP_DIR, getSetting: appSetting, setSetting: setAppSetting });
+const { settings: backupSettings, prune: pruneScheduledBackups, create: createScheduledBackup, runCheck: runScheduledBackupCheck } = backupService;
+const gigRepository = createGigRepository({ database, mediaRows });
+const { readAll: readGigs, writeAll: writeGigs, find: findGigSync } = gigRepository;
+const conflictStore = createConflictStore({ database, payloadFromGig: conflictPayloadFromGig, payloadFromSnapshot: conflictPayloadFromSnapshot, findGig: findGigSync });
+const { detect: detectSyncConflict, list: peerConflictRows } = conflictStore;
 
 function saveBackgroundJob(id, type, name, status, progress = 0, error = null) {
   const now = new Date().toISOString();
@@ -436,61 +169,6 @@ const contentTypes = {
   '.svg': 'image/svg+xml'
 };
 
-async function readGigs() {
-  return database.prepare('SELECT * FROM gigs ORDER BY favorite DESC, date DESC').all().map((row) => ({
-    id: row.id,
-    sharedId: row.shared_id || row.id,
-    artist: row.artist,
-    venue: row.venue,
-    city: row.city,
-    date: row.date,
-    notes: row.notes,
-    performanceNotes: row.performance_notes,
-    venueNotes: row.venue_notes,
-    performanceRating: row.performance_rating,
-    venueRating: row.venue_rating,
-    favorite: Boolean(row.favorite),
-    setlistFmId: row.setlist_fm_id,
-    setlistFmUrl: row.setlist_fm_url,
-    songs: JSON.parse(row.songs || '[]'),
-    attendees: JSON.parse(row.attendees || '[]'),
-    media: mediaRows(row.id),
-    createdAt: row.created_at
-  }));
-}
-
-async function writeGigs(gigs) {
-  const insert = database.prepare(`
-    INSERT INTO gigs (id, shared_id, artist, venue, city, date, notes, performance_notes, venue_notes,
-      performance_rating, venue_rating, favorite, setlist_fm_id, setlist_fm_url, songs, attendees, created_at)
-    VALUES (@id, @sharedId, @artist, @venue, @city, @date, @notes, @performanceNotes, @venueNotes,
-      @performanceRating, @venueRating, @favorite, @setlistFmId, @setlistFmUrl, @songs, @attendees, @createdAt)
-    ON CONFLICT(id) DO UPDATE SET
-      shared_id = excluded.shared_id, artist = excluded.artist, venue = excluded.venue, city = excluded.city, date = excluded.date,
-      notes = excluded.notes, performance_notes = excluded.performance_notes, venue_notes = excluded.venue_notes,
-      performance_rating = excluded.performance_rating, venue_rating = excluded.venue_rating, favorite = excluded.favorite,
-      setlist_fm_id = excluded.setlist_fm_id, setlist_fm_url = excluded.setlist_fm_url, songs = excluded.songs, attendees = excluded.attendees
-  `);
-  const replace = database.transaction((records) => {
-    for (const gig of records) insert.run({
-      ...gig,
-      sharedId: gig.sharedId || gig.id,
-      notes: gig.notes || '',
-      performanceNotes: gig.performanceNotes || gig.notes || '',
-      venueNotes: gig.venueNotes || '',
-      performanceRating: gig.performanceRating ?? null,
-      venueRating: gig.venueRating ?? null,
-      favorite: gig.favorite ? 1 : 0,
-      setlistFmId: gig.setlistFmId || null,
-      setlistFmUrl: gig.setlistFmUrl || null,
-      songs: JSON.stringify(gig.songs || []),
-      attendees: JSON.stringify(gig.attendees || []),
-      createdAt: gig.createdAt || new Date().toISOString()
-    });
-  });
-  replace(gigs);
-}
-
 function migrateLegacyGigs() {
   const count = database.prepare('SELECT COUNT(*) AS count FROM gigs').get().count;
   if (count > 0 || !legacyFs.existsSync(GIGS_FILE)) return;
@@ -528,97 +206,6 @@ async function writeGeocodes(geocodes) {
   await fs.writeFile(GEOCODES_FILE, JSON.stringify(geocodes, null, 2) + '\n');
 }
 
-function sendJson(response, status, payload, headers = {}) {
-  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', ...headers });
-  response.end(JSON.stringify(payload));
-}
-
-function sendError(response, status, message) {
-  sendJson(response, status, { error: message });
-}
-
-function hashPassword(password) {
-  const salt = randomBytes(16).toString('hex');
-  return `scrypt:${salt}:${scryptSync(password, salt, 64).toString('hex')}`;
-}
-
-function passwordMatches(password, stored) {
-  const [, salt, expected] = String(stored || '').split(':');
-  if (!salt || !expected) return false;
-  const actual = scryptSync(password, salt, 64);
-  return timingSafeEqual(actual, Buffer.from(expected, 'hex'));
-}
-
-function cookieValue(request, name) {
-  const value = request.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
-  return value ? decodeURIComponent(value) : null;
-}
-
-function tokenHash(token) { return createHash('sha256').update(token).digest('hex'); }
-
-function sessionCookieName() {
-  const instanceId = database.prepare('SELECT instance_id FROM instance_identity WHERE id = 1').get()?.instance_id || 'local';
-  return `master_list_session_${instanceId.replace(/[^a-z0-9]/gi, '').slice(0, 12)}`;
-}
-
-function sessionCookieSecure() {
-  if (process.env.SESSION_COOKIE_SECURE) return process.env.SESSION_COOKIE_SECURE === 'true';
-  return String(process.env.INSTANCE_URL || process.env.APP_ORIGIN || '').startsWith('https://');
-}
-
-function expiredSessionCookies() {
-  const attributes = `HttpOnly; SameSite=Lax; Path=/; Max-Age=0${sessionCookieSecure() ? '; Secure' : ''}`;
-  return [`${sessionCookieName()}=; ${attributes}`, `master_list_session=; ${attributes}`];
-}
-
-function currentAccount(request) {
-  // The legacy cookie fallback keeps existing users signed in through this
-  // migration. New cookies are instance-specific so two servers on different
-  // ports of the same hostname cannot overwrite one another.
-  const token = cookieValue(request, sessionCookieName()) || cookieValue(request, 'master_list_session');
-  if (!token) return null;
-  const row = database.prepare(`SELECT p.id, p.name, p.is_admin AS isAdmin FROM sessions s JOIN profiles p ON p.id = s.profile_id WHERE s.token_hash = ? AND s.expires_at > ?`).get(tokenHash(token), new Date().toISOString());
-  return row || null;
-}
-
-function accountsConfigured() {
-  return database.prepare('SELECT COUNT(*) AS count FROM profiles WHERE password_hash IS NOT NULL').get().count > 0;
-}
-
-function requireAccount(request) {
-  const account = currentAccount(request);
-  if (!account) {
-    const error = new Error('Sign in to continue.');
-    error.status = 401;
-    throw error;
-  }
-  return account;
-}
-
-function sessionHeaders(profileId) {
-  const token = randomBytes(32).toString('base64url');
-  const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  database.prepare('INSERT INTO sessions (token_hash, profile_id, expires_at) VALUES (?, ?, ?)').run(tokenHash(token), profileId, expires);
-  const secure = sessionCookieSecure() ? '; Secure' : '';
-  return { 'Set-Cookie': [
-    `${sessionCookieName()}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${secure}`,
-    'master_list_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'
-  ] };
-}
-
-function validateAccount(body) {
-  const name = String(body.name || '').trim();
-  const password = String(body.password || '');
-  if (!name || name.length > 80) throw new Error('Enter a name up to 80 characters.');
-  if (password.length < 10) throw new Error('Use a password with at least 10 characters.');
-  return { name, password };
-}
-
-function redirect(response, location) {
-  response.writeHead(302, { Location: location });
-  response.end();
-}
-
 function appOrigin(request) {
   return process.env.APP_ORIGIN || `http://${request.headers.host}`;
 }
@@ -645,11 +232,6 @@ async function providerResponse(url, options, provider) {
   const body = await result.json().catch(() => ({}));
   const detail = body.error?.message || body.error_description || body.message || body.error || `HTTP ${result.status}`;
   throw new Error(`${provider}: ${detail}`);
-}
-
-function normaliseGenres(value) {
-  const values = Array.isArray(value) ? value : String(value || '').split(',');
-  return [...new Set(values.map((genre) => String(genre || '').trim()).filter(Boolean).map((genre) => genre.slice(0, 60)))].slice(0, 8);
 }
 
 function cachedArtistGenres(name) {
@@ -1006,38 +588,6 @@ function conflictPayloadFromSnapshot(snapshot) {
   };
 }
 
-function syncPayloadHash(payload) {
-  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-}
-
-function detectSyncConflict(snapshot, originPeer, localGig) {
-  if (!localGig) return { conflict: false, localPayload: null, remotePayload: conflictPayloadFromSnapshot(snapshot) };
-  const localPayload = conflictPayloadFromGig(localGig);
-  const remotePayload = conflictPayloadFromSnapshot(snapshot);
-  const localHash = syncPayloadHash(localPayload);
-  const remoteHash = syncPayloadHash(remotePayload);
-  const baseline = database.prepare('SELECT * FROM peer_sync_baselines WHERE shared_gig_id = ? AND peer_id = ?').get(snapshot.sharedGigId, originPeer.peer_id);
-  const conflict = Boolean(baseline && baseline.local_hash !== localHash && baseline.remote_hash !== remoteHash && localHash !== remoteHash);
-  if (conflict) {
-    const now = new Date().toISOString();
-    database.prepare(`INSERT INTO peer_sync_conflicts
-      (id, shared_gig_id, peer_id, local_gig_id, local_payload, remote_payload, remote_snapshot, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
-      ON CONFLICT(shared_gig_id, peer_id) WHERE status = 'open' DO UPDATE SET
-        local_payload=excluded.local_payload, remote_payload=excluded.remote_payload,
-        remote_snapshot=excluded.remote_snapshot, created_at=excluded.created_at`).run(
-      randomUUID(), snapshot.sharedGigId, originPeer.peer_id, localGig.id,
-      JSON.stringify(localPayload), JSON.stringify(remotePayload), JSON.stringify(snapshot), now
-    );
-  } else {
-    database.prepare(`INSERT INTO peer_sync_baselines (shared_gig_id, peer_id, local_hash, remote_hash, synced_at)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(shared_gig_id, peer_id) DO UPDATE SET local_hash=excluded.local_hash,
-        remote_hash=excluded.remote_hash, synced_at=excluded.synced_at`).run(snapshot.sharedGigId, originPeer.peer_id, localHash, remoteHash, new Date().toISOString());
-  }
-  return { conflict, localPayload, remotePayload };
-}
-
 function ensureSharedShowForGig(gig) {
   const sharedGigId = gig.sharedId || gig.id;
   database.prepare(`INSERT INTO shared_shows
@@ -1160,44 +710,6 @@ function applySyncSnapshot(snapshot, originPeer) {
   return true;
 }
 
-function peerConflictRows(status = 'open') {
-  return database.prepare(`SELECT c.*, p.name AS peer_name, g.artist, g.venue, g.city, g.date
-    FROM peer_sync_conflicts c
-    JOIN peer_instances p ON p.peer_id = c.peer_id
-    JOIN gigs g ON g.id = c.local_gig_id
-    WHERE c.status = ? ORDER BY c.created_at DESC`).all(status).map((row) => ({
-    id: row.id,
-    sharedGigId: row.shared_gig_id,
-    localGigId: row.local_gig_id,
-    peerId: row.peer_id,
-    peerName: row.peer_name,
-    artist: row.artist,
-    venue: row.venue,
-    city: row.city,
-    date: row.date,
-    local: conflictPayloadFromGig(findGigSync(row.local_gig_id)),
-    remote: JSON.parse(row.remote_payload),
-    createdAt: row.created_at
-  }));
-}
-
-function mergeText(localValue, remoteValue) {
-  const values = [String(localValue || '').trim(), String(remoteValue || '').trim()].filter(Boolean);
-  return [...new Set(values)].join('\n\n');
-}
-
-function mergeSongs(localSongs, remoteSongs) {
-  const result = [];
-  const seen = new Set();
-  for (const song of [...(localSongs || []), ...(remoteSongs || [])]) {
-    const key = `${String(song?.artist || '').trim()}|${String(song?.title || '').trim()}`.toLowerCase();
-    if (!song?.title || seen.has(key)) continue;
-    seen.add(key);
-    result.push(song);
-  }
-  return result;
-}
-
 function applyRemoteMediaAssignments(localGigId, localMedia, remoteMedia, mode) {
   const remoteByKey = new Map();
   for (const item of remoteMedia || []) {
@@ -1240,12 +752,8 @@ function resolvePeerConflict(id, choices) {
   const setlistChoice = valid(choices.setlist, ['local', 'remote', 'merge']);
   const mediaChoice = valid(choices.media, ['local', 'remote', 'merge']);
   const chooseText = (field) => notesChoice === 'remote' ? remote[field] : notesChoice === 'merge' ? mergeText(local[field], remote[field]) : local[field];
-  const average = (a, b) => {
-    const values = [a, b].filter((value) => value !== null && value !== undefined && value !== '').map(Number).filter(Number.isFinite);
-    return values.length ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 2) / 2 : null;
-  };
-  const performanceRating = ratingsChoice === 'remote' ? remote.performanceRating : ratingsChoice === 'merge' ? average(local.performanceRating, remote.performanceRating) : local.performanceRating;
-  const venueRating = ratingsChoice === 'remote' ? remote.venueRating : ratingsChoice === 'merge' ? average(local.venueRating, remote.venueRating) : local.venueRating;
+  const performanceRating = ratingsChoice === 'remote' ? remote.performanceRating : ratingsChoice === 'merge' ? averageRating(local.performanceRating, remote.performanceRating) : local.performanceRating;
+  const venueRating = ratingsChoice === 'remote' ? remote.venueRating : ratingsChoice === 'merge' ? averageRating(local.venueRating, remote.venueRating) : local.venueRating;
   const favorite = ratingsChoice === 'remote' ? remote.favorite : ratingsChoice === 'merge' ? Boolean(local.favorite || remote.favorite) : local.favorite;
   const songs = setlistChoice === 'remote' ? remote.songs : setlistChoice === 'merge' ? mergeSongs(local.songs, remote.songs) : local.songs;
   const resolution = { notes: notesChoice, ratings: ratingsChoice, setlist: setlistChoice, media: mediaChoice };
@@ -1339,30 +847,6 @@ function createSharedShow(sourceGigId, profileId) {
   return id;
 }
 
-function findGigSync(id) {
-  const row = database.prepare('SELECT * FROM gigs WHERE id = ?').get(id);
-  if (!row) throw new Error('Gig not found.');
-  return {
-    id: row.id, sharedId: row.shared_id || row.id, artist: row.artist, venue: row.venue, city: row.city, date: row.date,
-    setlistFmId: row.setlist_fm_id, setlistFmUrl: row.setlist_fm_url, songs: JSON.parse(row.songs || '[]'),
-    attendees: JSON.parse(row.attendees || '[]'),
-    notes: row.notes, performanceNotes: row.performance_notes, venueNotes: row.venue_notes,
-    performanceRating: row.performance_rating, venueRating: row.venue_rating, favorite: Boolean(row.favorite),
-    media: mediaRows(row.id)
-  };
-}
-
-function readGigsSync() {
-  return { find: (id) => findGigSync(id) };
-}
-
-function mediaExtension(mimeType, filename) {
-  const known = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov' };
-  return known[mimeType] || path.extname(filename || '').slice(1).replace(/[^a-z0-9]/gi, '').slice(0, 6) || 'bin';
-}
-function mediaCategory(value) { return String(value || '').toLowerCase() === 'artifact' ? 'artifact' : 'show'; }
-function safeMediaName(value) { return String(value || 'undated').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'unknown'; }
-async function hashFile(filePath) { const hash = createHash('sha256'); for await (const chunk of legacyFs.createReadStream(filePath)) hash.update(chunk); return hash.digest('hex'); }
 function optimizeMp4(filePath) {
   return new Promise((resolve) => {
     const outputPath = `${filePath}.faststart`;
@@ -1458,8 +942,6 @@ function extractRecognitionSample(inputPath, outputPath, startSeconds = 0) {
     process.on('close', (code) => code === 0 ? resolve() : reject(new Error(error.slice(-500) || 'Could not extract an audio sample.')));
   });
 }
-
-function recognitionKey(value) { return String(value || '').toLowerCase().replace(/\([^)]*\)|\[[^\]]*\]/g, '').replace(/[^a-z0-9]+/g, ''); }
 
 async function recognizeVideoTrack(gigId, mediaId, filePath, filename) {
   if (!process.env.AUDD_API_TOKEN) return;
@@ -1634,56 +1116,6 @@ async function mediaManifest() {
   return { format: 'the-master-list-media-manifest-v1', createdAt: new Date().toISOString(), databaseFile: path.basename(DB_FILE), mediaRecords: media.length, files, integrity: { healthy: integrity.healthy, counts: integrity.counts } };
 }
 
-function backupSettings() {
-  return {
-    enabled: appSetting('backup_enabled', 'true') === 'true',
-    intervalHours: Math.max(1, Number(appSetting('backup_interval_hours', '24')) || 24),
-    retentionCount: Math.max(1, Number(appSetting('backup_retention_count', '14')) || 14),
-    lastBackupAt: appSetting('backup_last_at'),
-    lastStatus: appSetting('backup_last_status', 'never'),
-    lastError: appSetting('backup_last_error') || null
-  };
-}
-
-async function pruneScheduledBackups(retentionCount) {
-  await fs.mkdir(BACKUP_DIR, { recursive: true });
-  const files = (await fs.readdir(BACKUP_DIR, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && /^scheduled-.*\.sqlite$/.test(entry.name))
-    .map((entry) => entry.name).sort().reverse();
-  for (const filename of files.slice(retentionCount)) await fs.rm(path.join(BACKUP_DIR, filename), { force: true });
-  return Math.min(files.length, retentionCount);
-}
-
-let scheduledBackupRunning = false;
-async function createScheduledBackup({ force = false } = {}) {
-  const settings = backupSettings();
-  if ((!settings.enabled && !force) || scheduledBackupRunning) return { skipped: true, reason: scheduledBackupRunning ? 'running' : 'disabled' };
-  const lastTime = Date.parse(settings.lastBackupAt || '');
-  if (!force && Number.isFinite(lastTime) && Date.now() - lastTime < settings.intervalHours * 60 * 60 * 1000) return { skipped: true, reason: 'not-due' };
-  scheduledBackupRunning = true;
-  try {
-    await fs.mkdir(BACKUP_DIR, { recursive: true });
-    const timestamp = new Date().toISOString();
-    const filename = `scheduled-${timestamp.replace(/[:.]/g, '-')}.sqlite`;
-    await database.backup(path.join(BACKUP_DIR, filename));
-    await pruneScheduledBackups(settings.retentionCount);
-    setAppSetting('backup_last_at', timestamp);
-    setAppSetting('backup_last_status', 'success');
-    setAppSetting('backup_last_error', '');
-    console.log(`[maintenance] scheduled database backup created: ${filename}`);
-    return { ok: true, filename, createdAt: timestamp };
-  } catch (error) {
-    setAppSetting('backup_last_status', 'error');
-    setAppSetting('backup_last_error', error.message);
-    console.error('[maintenance] scheduled database backup failed:', error.message);
-    throw error;
-  } finally { scheduledBackupRunning = false; }
-}
-
-async function runScheduledBackupCheck() {
-  try { await createScheduledBackup(); } catch { /* status is exposed on Maintenance */ }
-}
-
 async function maintenanceStatus() {
   const databaseSize = await fs.stat(DB_FILE).then((stat) => stat.size).catch(() => 0);
   let backups = [];
@@ -1742,20 +1174,6 @@ async function enrichGigAlbums(gigId, forceMissing = false) {
   return { songs: enriched, albums: counts };
 }
 
-async function readBody(request) {
-  let body = '';
-  for await (const chunk of request) {
-    body += chunk;
-    if (body.length > 30_000_000) throw new Error('Request body is too large.');
-  }
-  return body ? JSON.parse(body) : {};
-}
-
-function normaliseImagePosition(value) {
-  const position = String(value || 'center').toLowerCase();
-  return ['top', 'center', 'bottom'].includes(position) ? position : 'center';
-}
-
 function localProfileImageFilename(value) {
   const match = String(value || '').match(/^\/api\/profile-images\/(profile-[a-f0-9-]+\.(?:jpe?g|png|webp|gif))$/i);
   return match?.[1] || '';
@@ -1784,18 +1202,6 @@ async function saveProfileImageUpload(upload) {
 async function removeReplacedProfileImage(previousImage, nextImage) {
   const previousFilename = localProfileImageFilename(previousImage);
   if (previousFilename && previousImage !== nextImage) await fs.rm(path.join(MEDIA_DIR, previousFilename), { force: true });
-}
-
-function normaliseSongs(setlist) {
-  return (setlist.sets?.set || []).flatMap((set) =>
-    (set.song || []).map((song, index) => ({
-      title: song.name,
-      artist: song.cover?.name || setlist.artist?.name || '',
-      encore: Boolean(set.encore),
-      position: index + 1,
-      info: song.info || ''
-    }))
-  );
 }
 
 async function resolveAlbum(artist, title) {
@@ -1836,19 +1242,6 @@ async function resolveAlbum(artist, title) {
   }
   database.prepare('INSERT OR REPLACE INTO album_lookup_cache (cache_key, album, created_at) VALUES (?, ?, ?)').run(key, album, new Date().toISOString());
   return album;
-}
-
-function validateGig(gig) {
-  const required = ['artist', 'venue', 'city'];
-  const missing = required.filter((field) => !String(gig[field] || '').trim());
-  if (missing.length) throw new Error(`Please provide: ${missing.join(', ')}.`);
-}
-
-function normaliseRating(value) {
-  if (value === undefined || value === null || value === '') return null;
-  const rating = Number(value);
-  if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new Error('Ratings must be whole stars from 1 to 5.');
-  return rating;
 }
 
 async function serveStatic(request, response, pathname) {
@@ -1977,113 +1370,6 @@ async function searchYouTubeForGig(gig) {
   return matches;
 }
 
-function youtubeVideoId(value) {
-  try {
-    const parsed = new URL(String(value || ''));
-    if (parsed.hostname === 'youtu.be') return parsed.pathname.split('/').filter(Boolean)[0] || '';
-    return parsed.searchParams.get('v') || parsed.pathname.split('/').filter(Boolean).pop() || '';
-  } catch { return ''; }
-}
-
-function isoDurationSeconds(value) {
-  const match = String(value || '').match(/^P(?:([\d.]+)D)?T(?:([\d.]+)H)?(?:([\d.]+)M)?(?:([\d.]+)S)?$/i);
-  if (!match) return null;
-  return (Number(match[1]) || 0) * 86400 + (Number(match[2]) || 0) * 3600 + (Number(match[3]) || 0) * 60 + (Number(match[4]) || 0);
-}
-
-function chapterSeconds(value) {
-  const parts = String(value || '').split(':').map(Number);
-  if (parts.some((part) => !Number.isFinite(part)) || parts.length < 2 || parts.length > 3) return null;
-  const seconds = parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 60 + parts[1];
-  return seconds >= 0 ? seconds : null;
-}
-
-function parsePlaybackChapters(description) {
-  const timestamp = '(?:\\d{1,2}:)?\\d{1,2}:\\d{2}';
-  const leading = new RegExp(`^\\s*(?:[-*#]\\s*)?(${timestamp})\\s*(?:[-–—|:]\\s*)?(.+?)\\s*$`);
-  const trailing = new RegExp(`^\\s*(.+?)\\s+(?:[-–—|]\\s*)?(${timestamp})\\s*$`);
-  const chapters = [];
-  String(description || '').split(/\r?\n/).forEach((line) => {
-    const match = line.match(leading);
-    const reverse = match ? null : line.match(trailing);
-    const seconds = chapterSeconds(match?.[1] || reverse?.[2]);
-    const title = String(match?.[2] || reverse?.[1] || '').replace(/^\d+[.)]\s*/, '').trim();
-    if (seconds !== null && title) chapters.push({ seconds, title });
-  });
-  return chapters.filter((chapter, index) => index === 0 || chapter.seconds > chapters[index - 1].seconds).slice(0, 200);
-}
-
-function playbackMatchTokens(value, artist = '') {
-  const artistTokens = new Set(String(artist || '').toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 2));
-  const ignored = new Set(['live', 'official', 'video', 'audio', 'lyrics', 'concert', 'full', 'show', 'set', 'tour', 'feat', 'featuring', ...artistTokens]);
-  return String(value || '').toLowerCase().replace(/&amp;/g, ' and ').split(/[^a-z0-9]+/).filter((token) => token && !ignored.has(token));
-}
-
-function playbackTitleScore(value, song, gig) {
-  const candidateKey = recognitionKey(value);
-  const songKey = recognitionKey(song.title);
-  if (!candidateKey || !songKey) return 0;
-  if (candidateKey === songKey) return 1;
-  if (songKey.length >= 4 && candidateKey.includes(songKey)) return .94;
-  const candidateTokens = new Set(playbackMatchTokens(value, song.artist || gig.artist));
-  const songTokens = new Set(playbackMatchTokens(song.title));
-  if (!candidateTokens.size || !songTokens.size) return 0;
-  const matched = [...songTokens].filter((token) => candidateTokens.has(token)).length;
-  const recall = matched / songTokens.size;
-  const precision = matched / candidateTokens.size;
-  return (recall * .75) + (precision * .25);
-}
-
-function bestPlaybackSong(gig, value, minimum = .55) {
-  let best = null;
-  (gig.songs || []).forEach((song, songIndex) => {
-    const score = playbackTitleScore(value, song, gig);
-    if (score >= minimum && (!best || score > best.score)) best = { songIndex, score };
-  });
-  return best;
-}
-
-function estimateFullShowTimings(songCount, duration, anchors = [], terminalSeconds = null) {
-  const count = Number(songCount);
-  const naturalEnd = Number(duration);
-  if (!Number.isInteger(count) || count < 1 || !Number.isFinite(naturalEnd) || naturalEnd <= 0) return [];
-  const requestedEnd = Number(terminalSeconds);
-  const end = Number.isFinite(requestedEnd) && requestedEnd > 0 && requestedEnd <= naturalEnd ? requestedEnd : naturalEnd;
-  const bySong = new Map();
-  anchors.forEach((anchor) => {
-    const songIndex = Number(anchor.songIndex);
-    const seconds = Number(anchor.seconds);
-    if (!Number.isInteger(songIndex) || songIndex < 0 || songIndex >= count || !Number.isFinite(seconds) || seconds < 0 || seconds >= end) return;
-    const current = bySong.get(songIndex);
-    if (!current || Number(anchor.weight || 0) >= Number(current.weight || 0)) bySong.set(songIndex, { ...anchor, songIndex, seconds });
-  });
-  const detected = [...bySong.values()].sort((a, b) => a.songIndex - b.songIndex);
-  const monotonic = [];
-  detected.forEach((anchor) => { if (!monotonic.length || anchor.seconds > monotonic[monotonic.length - 1].seconds) monotonic.push(anchor); });
-  const realAnchorCount = monotonic.length;
-  if (!monotonic.length || monotonic[0].songIndex > 0) monotonic.unshift({ songIndex: 0, seconds: 0, synthetic: true });
-  monotonic.push({ songIndex: count, seconds: end, synthetic: true });
-  const confidence = realAnchorCount >= 2 ? .68 : realAnchorCount === 1 ? .58 : .48;
-  const reason = realAnchorCount >= 2 ? 'Interpolated between detected full-show timestamps'
-    : realAnchorCount === 1 ? 'Estimated around one detected timestamp — review timing'
-      : 'Estimated evenly across the full-show duration — review timing';
-  const estimates = [];
-  for (let anchorIndex = 0; anchorIndex < monotonic.length - 1; anchorIndex += 1) {
-    const startAnchor = monotonic[anchorIndex];
-    const endAnchor = monotonic[anchorIndex + 1];
-    const trackSpan = endAnchor.songIndex - startAnchor.songIndex;
-    const timeSpan = endAnchor.seconds - startAnchor.seconds;
-    if (trackSpan <= 0 || timeSpan <= 0) continue;
-    for (let songIndex = startAnchor.songIndex; songIndex < endAnchor.songIndex; songIndex += 1) {
-      const offset = songIndex - startAnchor.songIndex;
-      const startSeconds = startAnchor.seconds + ((timeSpan * offset) / trackSpan);
-      const endSeconds = startAnchor.seconds + ((timeSpan * (offset + 1)) / trackSpan);
-      estimates.push({ songIndex, startSeconds: Math.round(startSeconds * 10) / 10, endSeconds: Math.round(endSeconds * 10) / 10, confidence, reason });
-    }
-  }
-  return estimates;
-}
-
 async function refreshYouTubePlaybackMetadata(gigId, media) {
   const staleBefore = Date.now() - (30 * 24 * 60 * 60 * 1000);
   const pending = media.filter((item) => item.mimeType === 'video/youtube' && youtubeVideoId(item.externalUrl || item.url) && (!item.sourceMetadataAt || Date.parse(item.sourceMetadataAt) < staleBefore));
@@ -2109,81 +1395,6 @@ async function refreshYouTubePlaybackMetadata(gigId, media) {
   } catch (error) {
     return `YouTube metadata could not be refreshed: ${error.message}`;
   }
-}
-
-function suggestPlaybackPlan(gig, media) {
-  const existingBySong = new Map();
-  media.forEach((item) => (item.playbackClips || []).forEach((clip) => { if (!existingBySong.has(clip.songIndex)) existingBySong.set(clip.songIndex, new Set()); existingBySong.get(clip.songIndex).add(item.id); }));
-  const suggestionBuckets = new Map();
-  const setlistStarts = (gig.songs || []).map((song) => {
-    if (song.startSeconds === null || song.startSeconds === undefined || song.startSeconds === '') return null;
-    const value = Number(song.startSeconds);
-    return Number.isFinite(value) && value >= 0 ? value : null;
-  });
-  const offer = (songIndex, item, startSeconds, endSeconds, confidence, reason) => {
-    if (!Number.isInteger(songIndex) || existingBySong.get(songIndex)?.has(item.id)) return;
-    if (!suggestionBuckets.has(songIndex)) suggestionBuckets.set(songIndex, new Map());
-    const bucket = suggestionBuckets.get(songIndex);
-    const current = bucket.get(item.id);
-    if (!current || confidence > current.confidence) bucket.set(item.id, { songIndex, mediaId: item.id, startSeconds, endSeconds, confidence: Math.round(confidence * 100) / 100, reason, sourceLabel: item.caption || item.filename || 'Video', localSource: item.mimeType !== 'video/youtube' });
-  };
-  media.filter((item) => item.category !== 'artifact' && String(item.mimeType || '').startsWith('video/')).forEach((item) => {
-    if (Number.isInteger(item.songIndex)) offer(item.songIndex, item, item.playbackStart, item.playbackEnd, .9, 'Existing track assignment');
-    if (item.recognitionTitle) {
-      const match = bestPlaybackSong(gig, item.recognitionTitle, .5);
-      if (match) offer(match.songIndex, item, item.playbackStart, item.playbackEnd, .9 + (.08 * match.score), `AudD matched “${item.recognitionTitle}”`);
-    }
-    const chapters = item.mimeType === 'video/youtube' ? parsePlaybackChapters(item.sourceDescription) : [];
-    const chapterMatches = [];
-    chapters.forEach((chapter, chapterIndex) => {
-      const match = bestPlaybackSong(gig, chapter.title, .5);
-      if (!match || (chapterMatches.length && match.songIndex <= chapterMatches[chapterMatches.length - 1].songIndex)) return;
-      chapterMatches.push({ ...chapter, ...match, chapterIndex });
-    });
-    const sourceText = `${item.caption || ''} ${item.sourceDescription || ''}`.toLowerCase();
-    const artistWords = String(gig.artist || '').toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2);
-    const venueWords = String(gig.venue || '').toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 3);
-    const duration = Number(item.sourceDuration);
-    const explicitFullShow = /(?:full|complete|whole|entire)\s+(?:set|show|concert)|concert\s+(?:film|video)/.test(sourceText);
-    const venueConcert = venueWords.some((word) => sourceText.includes(word)) && /concert|live\s+at|full\s+performance/.test(sourceText);
-    const plausibleDuration = Number.isFinite(duration) && duration >= Math.max(8 * 60, (gig.songs || []).length * 75);
-    const artistMatches = artistWords.some((word) => sourceText.includes(word));
-    const looksLikeFullShow = Number.isFinite(duration) && duration > 0 && (chapterMatches.length >= 2 || (artistMatches && (explicitFullShow || (plausibleDuration && venueConcert))));
-    const lastChapterMatch = chapterMatches[chapterMatches.length - 1];
-    const followingChapter = lastChapterMatch ? chapters[lastChapterMatch.chapterIndex + 1] : null;
-    const terminalSeconds = lastChapterMatch?.songIndex === (gig.songs || []).length - 1 ? followingChapter?.seconds : null;
-    const timingAnchors = [
-      ...setlistStarts.map((seconds, songIndex) => seconds === null ? null : ({ songIndex, seconds, weight: 1 })).filter(Boolean),
-      ...chapterMatches.map((match) => ({ songIndex: match.songIndex, seconds: match.seconds, weight: 2 }))
-    ];
-    const estimates = looksLikeFullShow ? estimateFullShowTimings((gig.songs || []).length, duration, timingAnchors, terminalSeconds) : [];
-    const estimateBySong = new Map(estimates.map((estimate) => [estimate.songIndex, estimate]));
-    estimates.forEach((estimate) => offer(estimate.songIndex, item, estimate.startSeconds, estimate.endSeconds, estimate.confidence, estimate.reason));
-    chapterMatches.forEach((match) => {
-      const estimate = estimateBySong.get(match.songIndex);
-      const nextChapter = chapters[match.chapterIndex + 1];
-      offer(match.songIndex, item, match.seconds, estimate?.endSeconds ?? nextChapter?.seconds ?? item.sourceDuration ?? null, .74 + (.24 * match.score), `YouTube chapter “${match.title}”`);
-    });
-    if (looksLikeFullShow) setlistStarts.forEach((start, songIndex) => {
-      if (start === null) return;
-      const estimate = estimateBySong.get(songIndex);
-      const next = setlistStarts.slice(songIndex + 1).find((value) => value !== null && value > start);
-      offer(songIndex, item, start, estimate?.endSeconds ?? next ?? item.sourceDuration ?? null, .72, 'Setlist timestamp matched to a full-show video');
-    });
-    const titleMatch = bestPlaybackSong(gig, item.caption, .62);
-    if (titleMatch) offer(titleMatch.songIndex, item, item.playbackStart, item.playbackEnd, .58 + (.28 * titleMatch.score), 'Video title matches the setlist');
-    if (!chapters.length && item.sourceDescription) {
-      String(item.sourceDescription).split(/\r?\n/).filter((line) => line.trim().length >= 3 && line.trim().length <= 140).slice(0, 100).forEach((line) => {
-        const match = bestPlaybackSong(gig, line, .82);
-        if (match) offer(match.songIndex, item, item.playbackStart, item.playbackEnd, .55 + (.2 * match.score), `Video description mentions “${line.trim()}”`);
-      });
-    }
-  });
-  return [...suggestionBuckets.entries()].map(([songIndex, bucket]) => {
-    const ranked = [...bucket.values()].sort((a, b) => b.confidence - a.confidence || Number(b.localSource) - Number(a.localSource)).slice(0, 4);
-    const primary = ranked.shift();
-    return { ...primary, fallbackOnly: existingBySong.has(songIndex), alternatives: ranked };
-  }).sort((a, b) => a.songIndex - b.songIndex);
 }
 
 async function exportAppleMusic(gig, musicUserToken) {
@@ -2273,67 +1484,7 @@ async function handleApi(request, response, url) {
     return sendJson(response, quickCheck === 'ok' && mediaWritable ? 200 : 503, { ok: quickCheck === 'ok' && mediaWritable, database: quickCheck, mediaWritable });
   }
 
-  if (request.method === 'GET' && url.pathname === '/api/auth/status') {
-    return sendJson(response, 200, { configured: accountsConfigured(), account: currentAccount(request) });
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/auth/setup') {
-    if (database.prepare('SELECT COUNT(*) AS count FROM profiles').get().count) return sendError(response, 403, 'An account already exists.');
-    try {
-      const { name, password } = validateAccount(await readBody(request));
-      const profile = { id: randomUUID(), name, createdAt: new Date().toISOString() };
-      database.prepare('INSERT INTO profiles (id, name, password_hash, is_admin, created_at) VALUES (?, ?, ?, 1, ?)').run(profile.id, name, hashPassword(password), profile.createdAt);
-      return sendJson(response, 201, { id: profile.id, name: profile.name, isAdmin: 1 }, sessionHeaders(profile.id));
-    } catch (error) { return sendError(response, 400, error.message); }
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/auth/login') {
-    const body = await readBody(request);
-    const profile = database.prepare('SELECT id, name, password_hash, is_admin AS isAdmin FROM profiles WHERE name = ?').get(String(body.name || '').trim());
-    if (!profile || !passwordMatches(String(body.password || ''), profile.password_hash)) return sendError(response, 401, 'Incorrect name or password.');
-    return sendJson(response, 200, { id: profile.id, name: profile.name, isAdmin: profile.isAdmin }, sessionHeaders(profile.id));
-  }
-
-  if (request.method === 'PATCH' && url.pathname === '/api/auth/account') {
-    try {
-      const account = requireAccount(request);
-      const body = await readBody(request);
-      if (!passwordMatches(String(body.currentPassword || ''), database.prepare('SELECT password_hash FROM profiles WHERE id = ?').get(account.id)?.password_hash)) return sendError(response, 401, 'Current password is incorrect.');
-      const { name, password } = validateAccount({ name: body.name, password: body.newPassword });
-      database.prepare('UPDATE profiles SET name = ?, password_hash = ? WHERE id = ?').run(name, hashPassword(password), account.id);
-      return sendJson(response, 200, { id: account.id, name, isAdmin: account.isAdmin });
-    } catch (error) { return sendError(response, error.message === 'Sign in required.' ? 401 : 400, error.message); }
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/auth/register') {
-    try {
-      const body = await readBody(request);
-      const invite = database.prepare('SELECT * FROM invites WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?').get(tokenHash(String(body.inviteToken || '')), new Date().toISOString());
-      if (!invite) return sendError(response, 403, 'This invite is invalid or has expired.');
-      const { name, password } = validateAccount(body);
-      const profile = { id: randomUUID(), name, createdAt: new Date().toISOString() };
-      database.transaction(() => {
-        database.prepare('INSERT INTO profiles (id, name, password_hash, is_admin, created_at) VALUES (?, ?, ?, 0, ?)').run(profile.id, name, hashPassword(password), profile.createdAt);
-        database.prepare('UPDATE invites SET used_at = ? WHERE token_hash = ?').run(profile.createdAt, tokenHash(String(body.inviteToken)));
-      })();
-      return sendJson(response, 201, { id: profile.id, name: profile.name, isAdmin: 0 }, sessionHeaders(profile.id));
-    } catch (error) { return sendError(response, 400, error.message); }
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/auth/logout') {
-    const token = cookieValue(request, sessionCookieName()) || cookieValue(request, 'master_list_session');
-    if (token) database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash(token));
-    return sendJson(response, 200, { ok: true }, { 'Set-Cookie': expiredSessionCookies() });
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/auth/invites') {
-    const account = requireAccount(request);
-    if (!account.isAdmin) return sendError(response, 403, 'Only the owner can create invites.');
-    const token = randomBytes(24).toString('base64url');
-    const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    database.prepare('INSERT INTO invites (token_hash, created_by, expires_at) VALUES (?, ?, ?)').run(tokenHash(token), account.id, expires);
-    return sendJson(response, 201, { inviteUrl: `${appOrigin(request)}/?invite=${encodeURIComponent(token)}`, expiresAt: expires });
-  }
+  if (await handleAuthApi(request, response, url)) return;
 
   if (request.method === 'POST' && url.pathname === '/api/sync/pair') {
     try {
@@ -3392,15 +2543,3 @@ module.exports = {
   paths: { data: DATA_DIR, database: DB_FILE, media: MEDIA_DIR },
   testables: { archiveIntegrity, maintenanceStatus, mediaManifest, backupSettings, createScheduledBackup, peerConflictRows, detectSyncConflict, resolvePeerConflict, estimateFullShowTimings, parsePlaybackChapters, suggestPlaybackPlan, youtubeVideoId }
 };
-
-function loadEnvFile() {
-  try {
-    const contents = require('node:fs').readFileSync(path.join(__dirname, '.env'), 'utf8');
-    for (const line of contents.split(/\r?\n/)) {
-      const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
-      if (match && !process.env[match[1]]) process.env[match[1]] = match[2].replace(/^['"]|['"]$/g, '');
-    }
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
-}

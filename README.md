@@ -14,6 +14,12 @@ npm start
 
 Open [http://localhost:3000](http://localhost:3000).
 
+## Tests and architecture
+
+Run the regression suite with `npm test`, or include Node's built-in line/branch/function report with `npm run test:coverage`. The suite combines HTTP contract tests with port-free unit tests for migrations, authentication, backups, peer conflicts, media utilities, playback analysis and frontend shell contracts.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the current module boundaries and the safe order for further extraction.
+
 Shows are stored locally in `data/master-list.sqlite`. On first startup, the app automatically imports an existing `data/gigs.json` archive into SQLite. The legacy JSON file is left untouched as a backup and both local data files are ignored by Git.
 
 ### Docker deployment

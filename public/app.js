@@ -9,6 +9,7 @@ siteNav?.querySelectorAll('a').forEach((link) => {
 });
 const jobQueue = new Map();
 const jobPanel = document.createElement('aside'); jobPanel.className = 'job-queue'; jobPanel.hidden = true; jobPanel.innerHTML = '<p class="eyebrow">Background jobs</p><div class="job-queue-list"></div>'; document.body.append(jobPanel);
+const { escapeHtml, formatGigDate, formatBytes, providerName } = window.MasterListFormatters;
 const notificationPanel = document.createElement('aside'); notificationPanel.className = 'peer-notifications'; notificationPanel.hidden = true; notificationPanel.innerHTML = '<p class="eyebrow">From your peers</p><div class="peer-notification-list"></div>'; document.body.append(notificationPanel);
 let peerPollRunning = false;
 let peerPollTimer;
@@ -679,9 +680,6 @@ const venueEditForm = document.querySelector('#venue-edit-form');
 const venueEditPreview = document.querySelector('#venue-edit-preview');
 const venueEditMessage = document.querySelector('#venue-edit-message');
 const venueEditStepper = document.querySelector('#venue-edit-stepper');
-
-const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
-const formatGigDate = (date, options = { month: 'short', day: 'numeric', year: 'numeric' }) => date ? new Date(`${date}T12:00:00`).toLocaleDateString(undefined, options) : 'Date unknown';
 
 function populateShowAutofill() {
   const values = {
@@ -2308,15 +2306,6 @@ async function renderApiLimits() {
   }
 }
 
-const formatBytes = (bytes) => {
-  const value = Number(bytes || 0);
-  if (value < 1024) return `${value} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let size = value / 1024; let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit += 1; }
-  return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[unit]}`;
-};
-
 function renderIntegrity(data) {
   if (!integrityList) return;
   const summary = data.summary || {};
@@ -3808,10 +3797,6 @@ function drawMap(locations) {
   if (points.length === 1) venueMap.setView(points[0], 13);
   else venueMap.fitBounds(points, { padding: [48, 48], maxZoom: 13 });
   setTimeout(() => venueMap.invalidateSize(), 0);
-}
-
-function providerName(provider) {
-  return ({ spotify: 'Spotify', youtube: 'YouTube', 'apple-music': 'Apple Music' })[provider];
 }
 
 function integrationFor(provider) {

@@ -1,0 +1,32 @@
+const { describe, test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const root = path.resolve(__dirname, '..');
+const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+const app = fs.readFileSync(path.join(root, 'public/app.js'), 'utf8');
+
+describe('frontend shell contracts', () => {
+  test('declares every navigable page before styles load to prevent a flash of all pages', () => {
+    const routes = ['/overview', '/artists', '/venues', '/timeline', '/search', '/health', '/maintenance', '/activity', '/conflicts', '/api-limits', '/shows', '/artist', '/show', '/playback', '/city', '/edit', '/venue', '/add', '/map', '/account'];
+    routes.forEach((route) => assert.match(html, new RegExp(`['"]${route.replace('/', '\\/')}['"]`), route));
+    assert.ok(html.indexOf('document.body.dataset.page') < html.indexOf('<main>'));
+  });
+
+  test('loads shared frontend modules before the application bundle', () => {
+    assert.ok(html.indexOf('/lib/formatters.js') < html.indexOf('/app.js'));
+    assert.match(app, /window\.MasterListFormatters/);
+  });
+
+  test('keeps critical workflow controls in the server-rendered shell', () => {
+    for (const id of ['setup-form', 'login-form', 'add-page', 'edit-page', 'shows-archive', 'playback-editor-list', 'backup-schedule-form', 'conflict-list']) {
+      assert.match(html, new RegExp(`id="${id}"`), id);
+    }
+  });
+
+  test('cache-busts the application and stylesheet assets', () => {
+    assert.match(html, /styles\.css\?v=[^"']+/);
+    assert.match(html, /app\.js\?v=[^"']+/);
+  });
+});

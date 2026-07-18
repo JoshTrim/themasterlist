@@ -88,6 +88,37 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     assert.match(anonymous.body.error, /sign in/i);
   });
 
+  test('authentication rejects duplicate setup, bad credentials and unsafe account changes', async () => {
+    const duplicate = await jsonApi('/api/auth/setup', 'POST', { name: 'Another Owner', password: 'another-password-123' }, { cookie: '' });
+    assert.equal(duplicate.response.status, 403);
+    const badLogin = await jsonApi('/api/auth/login', 'POST', { name: 'Test Owner', password: 'wrong-password' }, { cookie: '' });
+    assert.equal(badLogin.response.status, 401);
+    const wrongCurrent = await jsonApi('/api/auth/account', 'PATCH', { name: 'Changed', currentPassword: 'wrong-password', newPassword: 'replacement-password-123' });
+    assert.equal(wrongCurrent.response.status, 401);
+    const stillAuthenticated = await api('/api/auth/status');
+    assert.equal(stillAuthenticated.body.account.name, 'Test Owner');
+  });
+
+  test('core pages serve the shared shell with their dedicated sections', async () => {
+    for (const [pathname, sectionId] of [
+      ['/shows', 'shows-archive'], ['/add', 'add-page'], ['/overview', 'overview-page'], ['/artists', 'artists-page'],
+      ['/venues', 'venues-page'], ['/map', 'map-page'], ['/search', 'search-page'], ['/account', 'account-page'],
+      ['/playback?id=missing', 'show-page']
+    ]) {
+      const page = await api(pathname);
+      assert.equal(page.response.status, 200, pathname);
+      assert.match(page.response.headers.get('content-type'), /text\/html/, pathname);
+      assert.match(page.body, new RegExp(`id="${sectionId}"`), pathname);
+    }
+  });
+
+  test('authenticated API collections consistently reject anonymous requests', async () => {
+    for (const pathname of ['/api/gigs', '/api/profiles', '/api/shared/shows', '/api/peers', '/api/jobs', '/api/stats', '/api/health', '/api/limits']) {
+      const result = await api(pathname, { cookie: '' });
+      assert.equal(result.response.status, 401, pathname);
+    }
+  });
+
   test('timeline route serves the archive timeline shell', async () => {
     const timeline = await api('/timeline');
     assert.equal(timeline.response.status, 200);
@@ -128,6 +159,17 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     assert.match(backup.response.headers.get('content-type'), /sqlite/);
     const anonymous = await api('/api/maintenance/status', { cookie: '' });
     assert.equal(anonymous.response.status, 401);
+  });
+
+  test('backup settings clamp unsafe values and retain owner control', async () => {
+    const clamped = await jsonApi('/api/maintenance/backup-settings', 'PATCH', { enabled: false, intervalHours: 0, retentionCount: 9999 });
+    assert.equal(clamped.response.status, 200);
+    assert.equal(clamped.body.enabled, false);
+    assert.equal(clamped.body.intervalHours, 24);
+    assert.equal(clamped.body.retentionCount, 365);
+    const anonymous = await jsonApi('/api/maintenance/backup-settings', 'PATCH', { enabled: true }, { cookie: '' });
+    assert.equal(anonymous.response.status, 401);
+    await jsonApi('/api/maintenance/backup-settings', 'PATCH', { enabled: true, intervalHours: 24, retentionCount: 14 });
   });
 
   test('peer activity page keeps notification history and bulk read controls', async () => {
@@ -237,6 +279,62 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     const media = await api(`/api/gigs/${gig.id}/media`);
     assert.equal(media.response.status, 200);
     assert.deepEqual(new Set(media.body.map((item) => item.id)), new Set([primaryVideo.id, fallbackVideo.id]));
+  });
+
+  test('gig validation rejects incomplete records and invalid ratings without altering the archive', async () => {
+    const before = await api('/api/gigs');
+    const incomplete = await jsonApi('/api/gigs', 'POST', { artist: 'No Venue', city: 'Brisbane', date: '2026-01-01' });
+    assert.equal(incomplete.response.status, 400);
+    assert.match(incomplete.body.error, /venue/i);
+    const invalidRating = await jsonApi(`/api/gigs/${gig.id}`, 'PATCH', { performanceRating: 5.5 });
+    assert.equal(invalidRating.response.status, 400);
+    const after = await api('/api/gigs');
+    assert.equal(after.body.length, before.body.length);
+  });
+
+  test('media assignments can be overridden and removed without deleting the show', async () => {
+    const updated = await jsonApi(`/api/media/${fallbackVideo.id}`, 'PATCH', { caption: 'Edited fallback', songIndex: 1 });
+    assert.equal(updated.response.status, 200);
+    assert.equal(updated.body.caption, 'Edited fallback');
+    assert.equal(updated.body.songIndex, 1);
+    const removable = await jsonApi(`/api/gigs/${gig.id}/media`, 'POST', { externalUrl: 'https://youtu.be/removable999', caption: 'Temporary source' });
+    assert.equal(removable.response.status, 201);
+    const removed = await api(`/api/media/${removable.body.id}`, { method: 'DELETE' });
+    assert.equal(removed.response.status, 200);
+    const showStillExists = await api('/api/gigs');
+    assert.ok(showStillExists.body.some((entry) => entry.id === gig.id));
+  });
+
+  test('archive export returns portable shows without requiring provider integrations', async () => {
+    const exported = await api('/api/archive/export');
+    assert.equal(exported.response.status, 200);
+    assert.equal(exported.body.format, 'the-master-list-export-v1');
+    assert.ok(exported.body.gigs.some((entry) => entry.id === gig.id));
+  });
+
+  test('peer conflicts persist, expose both versions and resolve field-by-field', async () => {
+    const currentGig = (await api('/api/gigs')).body.find((entry) => entry.id === gig.id);
+    const peerId = 'test-peer-instance';
+    database.prepare(`INSERT OR IGNORE INTO peer_instances (id, peer_id, name, base_url, public_key, status, created_at)
+      VALUES (?, ?, ?, '', 'test-key', 'paired', ?)`).run('test-peer-row', peerId, 'Test Peer', new Date().toISOString());
+    database.prepare(`INSERT OR REPLACE INTO peer_sync_baselines (shared_gig_id, peer_id, local_hash, remote_hash, synced_at)
+      VALUES (?, ?, 'previous-local', 'previous-remote', ?)`).run(currentGig.sharedId, peerId, new Date().toISOString());
+    const snapshot = {
+      sharedGigId: currentGig.sharedId,
+      show: { songs: [{ title: 'Peer Track', artist: currentGig.artist }] },
+      contribution: { instanceId: peerId, participantName: 'Test Peer', performanceNotes: 'Peer memory', performanceRating: 4, favorite: true, media: [] }
+    };
+    const detected = testables.detectSyncConflict(snapshot, { peer_id: peerId }, currentGig);
+    assert.equal(detected.conflict, true);
+    const conflicts = await api('/api/sync/conflicts');
+    const conflict = conflicts.body.find((entry) => entry.peerId === peerId);
+    assert.ok(conflict);
+    assert.equal(conflict.remote.notes, 'Peer memory');
+    const resolved = await jsonApi(`/api/sync/conflicts/${conflict.id}/resolve`, 'POST', { notes: 'merge', ratings: 'remote', setlist: 'local', media: 'local' });
+    assert.equal(resolved.response.status, 200);
+    assert.match(resolved.body.gig.performanceNotes, /Peer memory/);
+    assert.equal(resolved.body.gig.performanceRating, 4);
+    assert.equal((await api('/api/sync/conflicts')).body.some((entry) => entry.id === conflict.id), false);
   });
 
   test('playback plans preserve timings and normalize primary/fallback priorities', async () => {
