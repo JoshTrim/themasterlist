@@ -111,7 +111,14 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     const status = await api('/api/maintenance/status');
     assert.equal(status.response.status, 200);
     assert.equal(status.body.integrity.summary.database, true);
+    assert.deepEqual({ enabled: status.body.backupSchedule.enabled, intervalHours: status.body.backupSchedule.intervalHours, retentionCount: status.body.backupSchedule.retentionCount }, { enabled: true, intervalHours: 24, retentionCount: 14 });
     assert.ok(Array.isArray(status.body.integrity.issues));
+    const settings = await jsonApi('/api/maintenance/backup-settings', 'PATCH', { enabled: true, intervalHours: 12, retentionCount: 3 });
+    assert.equal(settings.response.status, 200);
+    assert.equal(settings.body.intervalHours, 12);
+    const scheduled = await api('/api/maintenance/backup-now', { method: 'POST' });
+    assert.equal(scheduled.response.status, 201);
+    assert.match(scheduled.body.filename, /^scheduled-.*\.sqlite$/);
     const manifest = await api('/api/maintenance/manifest');
     assert.equal(manifest.response.status, 200);
     assert.equal(manifest.body.format, 'the-master-list-media-manifest-v1');
@@ -134,6 +141,24 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     const marked = await api('/api/notifications/read-all', { method: 'POST' });
     assert.equal(marked.response.status, 200);
     assert.equal(typeof marked.body.updated, 'number');
+  });
+
+  test('sync conflict screen is owner-only and starts empty', async () => {
+    const page = await api('/conflicts');
+    assert.equal(page.response.status, 200);
+    assert.match(page.body, /id="conflicts-page"/);
+    const conflicts = await api('/api/sync/conflicts');
+    assert.equal(conflicts.response.status, 200);
+    assert.deepEqual(conflicts.body, []);
+    const anonymous = await api('/api/sync/conflicts', { cookie: '' });
+    assert.equal(anonymous.response.status, 401);
+  });
+
+  test('container health endpoint does not require a session', async () => {
+    const health = await api('/api/healthz', { cookie: '' });
+    assert.equal(health.response.status, 200);
+    assert.equal(health.body.ok, true);
+    assert.equal(health.body.database, 'ok');
   });
 
   test('artist and venue directories expose their page shells and cached metadata feed', async () => {

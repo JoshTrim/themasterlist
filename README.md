@@ -4,7 +4,7 @@ A personal archive for the live music shows you have attended. The first release
 
 ## Run it
 
-Requires Node.js 20 or later. No packages need to be installed.
+Requires Node.js 20 or later, FFmpeg for media processing, and the optional Python worker described below for artifact cutouts.
 
 ```sh
 cp .env.example .env
@@ -15,6 +15,28 @@ npm start
 Open [http://localhost:3000](http://localhost:3000).
 
 Shows are stored locally in `data/master-list.sqlite`. On first startup, the app automatically imports an existing `data/gigs.json` archive into SQLite. The legacy JSON file is left untouched as a backup and both local data files are ignored by Git.
+
+### Docker deployment
+
+The included image packages Node.js, FFmpeg, SQLite support and the CPU background-removal worker. Copy the environment file, then build and run:
+
+```sh
+cp .env.example .env
+docker compose up -d --build
+docker compose ps
+```
+
+The app is exposed on port 3000 and all mutable state is mounted at `/data` from the local `./data` directory. The container health check calls `/api/healthz` and verifies both SQLite and media-folder write access. Back up the entire `data` directory if you also want the original media files; scheduled snapshots cover the SQLite database only.
+
+To update the app later:
+
+```sh
+docker compose up -d --build
+```
+
+### Scheduled backups
+
+The Maintenance page can enable or disable database snapshots, choose the interval in hours, set how many scheduled snapshots to retain, run one immediately, and show the most recent result. Snapshots live in `data/backups`. Defaults can be supplied on first launch with `BACKUP_ENABLED`, `BACKUP_INTERVAL_HOURS`, and `BACKUP_RETENTION_COUNT`; settings saved in the app take precedence afterward.
 
 ### Artifact background removal
 
@@ -58,6 +80,8 @@ The OAuth connections are local to this prototype. A future hosted version shoul
 When two people use the same hosted instance, create a profile for each person, choose your profile, then use **Share** on a gig. A shared show keeps its own attendee list and every attendee has an independent performance rating, venue rating, favourite status, and memory.
 
 Accounts are password-protected and sign-in is required to use the API. Create the owner account on first launch; the owner can generate one-week invite links for additional people. Keep the instance behind a private network such as Tailscale until a public HTTPS deployment and per-account ownership controls are added.
+
+If both instances change the same shared show after their last common sync, the owner receives a conflict notification. Open **System → Conflicts** to keep the local or peer version, or merge notes, ratings, setlists and matching media assignments. Media files themselves are not copied by this merge; assignments are applied to matching uploads using their checksum, external URL or shared media ID.
 
 ## Suggested next increments
 

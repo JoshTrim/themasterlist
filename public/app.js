@@ -133,6 +133,12 @@ const activityFilters = document.querySelector('#activity-filters');
 const activityMessage = document.querySelector('#activity-message');
 const markAllActivityRead = document.querySelector('#mark-all-activity-read');
 const navActivityCount = document.querySelector('#nav-activity-count');
+const navConflictCount = document.querySelector('#nav-conflict-count');
+const conflictList = document.querySelector('#conflict-list');
+const conflictsMessage = document.querySelector('#conflicts-message');
+const backupScheduleForm = document.querySelector('#backup-schedule-form');
+const backupScheduleStatus = document.querySelector('#backup-schedule-status');
+const backupNowButton = document.querySelector('#backup-now');
 const logoutButton = document.querySelector('#logout');
 let selectedSetlist = null;
 let gigs = [];
@@ -158,6 +164,7 @@ const routeSections = {
   health: ['health-page'],
   maintenance: ['maintenance-page'],
   activity: ['activity-page'],
+  conflicts: ['conflicts-page'],
   'api-limits': ['api-limits-page'],
   add: ['add-page'],
   shows: ['shows-archive'],
@@ -174,7 +181,7 @@ const routeSections = {
   map: ['map-page'],
   account: ['account-page']
 };
-for (const id of ['home-page', 'overview-page', 'artists-page', 'venues-page', 'timeline-page', 'search-page', 'health-page', 'maintenance-page', 'activity-page', 'api-limits-page', 'add-page', 'shows-archive', 'artist-page', 'artist-edit-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
+for (const id of ['home-page', 'overview-page', 'artists-page', 'venues-page', 'timeline-page', 'search-page', 'health-page', 'maintenance-page', 'activity-page', 'conflicts-page', 'api-limits-page', 'add-page', 'shows-archive', 'artist-page', 'artist-edit-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
   document.querySelector(`#${id}`).hidden = !routeSections[page].includes(id);
 }
 const chestButton = document.querySelector('#open-chest');
@@ -791,7 +798,7 @@ function renderPeerNotifications(notifications) {
   notificationPanel.hidden = !notifications.length;
   navActivityCount.hidden = !notifications.length;
   navActivityCount.textContent = notifications.length > 99 ? '99+' : String(notifications.length);
-  list.innerHTML = notifications.map((notification) => `<article class="peer-notification" data-notification-id="${escapeHtml(notification.id)}"><a href="/shows#shared-${encodeURIComponent(notification.sharedGigId || '')}"><strong>${escapeHtml(notification.title)}</strong><span>${escapeHtml(notification.body || '')}</span></a><button type="button" aria-label="Dismiss notification">×</button></article>`).join('');
+  list.innerHTML = notifications.map((notification) => `<article class="peer-notification" data-notification-id="${escapeHtml(notification.id)}"><a href="${notification.type === 'peer-sync-conflict' ? '/conflicts' : `/shows#shared-${encodeURIComponent(notification.sharedGigId || '')}`}"><strong>${escapeHtml(notification.title)}</strong><span>${escapeHtml(notification.body || '')}</span></a><button type="button" aria-label="Dismiss notification">×</button></article>`).join('');
   list.querySelectorAll('.peer-notification').forEach((item) => {
     const markRead = () => fetchJson(`/api/notifications/${encodeURIComponent(item.dataset.notificationId)}`, { method: 'PATCH' }).catch(() => {});
     item.querySelector('a').addEventListener('click', async (event) => { event.preventDefault(); await markRead(); window.location.assign(event.currentTarget.href); });
@@ -808,12 +815,23 @@ async function loadPeerNotifications() {
   } catch { return []; /* Authentication state is handled by the next page load. */ }
 }
 
+async function loadConflictCount() {
+  if (!account?.isAdmin || !navConflictCount) return 0;
+  try {
+    const conflicts = await fetchJson('/api/sync/conflicts');
+    navConflictCount.hidden = !conflicts.length;
+    navConflictCount.textContent = conflicts.length > 99 ? '99+' : String(conflicts.length);
+    return conflicts.length;
+  } catch { return 0; }
+}
+
 async function pollConnectedPeers() {
   if (!account || peerPollRunning) return;
   peerPollRunning = true;
   try {
     const result = await fetchJson('/api/peers/sync-all', { method: 'POST' });
     const notifications = await loadPeerNotifications();
+    await loadConflictCount();
     if (result.applied > 0 || notifications.length) {
       const [gigData, showData] = await Promise.all([fetchJson('/api/gigs'), fetchJson('/api/shared/shows')]);
       gigs = gigData;
@@ -1946,6 +1964,12 @@ function metadataBadges(entity) {
   return closed + entity.missingMetadata.map((field) => `<span class="metadata-status-missing">Missing ${escapeHtml(field === 'bio' ? 'biography' : field)}</span>`).join('');
 }
 
+function venueMetadataBadges(entity) {
+  const closed = entity.isClosed ? '<span class="venue-status-closed">Permanently closed</span>' : '';
+  const missing = (entity.missingMetadata || []).filter((field) => field !== 'source');
+  return closed + missing.map((field) => `<span class="metadata-status-missing">Missing ${escapeHtml(field === 'bio' ? 'biography' : field)}</span>`).join('');
+}
+
 function bindDirectoryImageFallbacks(grid) {
   grid.querySelectorAll('.entity-card-image img').forEach((image) => image.addEventListener('error', () => {
     image.closest('.entity-card-image')?.classList.add('is-missing');
@@ -1976,7 +2000,10 @@ function runDirectoryHydrationQueue() {
     directoryEntityInfo(task.type, task.name, task.city).then((info) => {
       if (!info || !task.card.isConnected) return;
       const status = task.card.querySelector('.entity-card-metadata');
-      if (status) status.innerHTML = metadataBadges({ isClosed: Boolean(info.isClosed), missingMetadata: metadataMissingFields(task.type, info, task.card.dataset.hasLocation !== 'false') });
+      if (status) {
+        const entity = { isClosed: Boolean(info.isClosed), missingMetadata: metadataMissingFields(task.type, info, task.card.dataset.hasLocation !== 'false') };
+        status.innerHTML = task.type === 'venue' ? venueMetadataBadges(entity) : metadataBadges(entity);
+      }
       if (info.image && !task.card.querySelector('.entity-card-image img')) {
         const image = document.createElement('img');
         image.alt = '';
@@ -2081,7 +2108,7 @@ async function renderEntityDirectories() {
       });
       const incomplete = venues.filter((venue) => venue.missingMetadata.length).length;
       venuesSummary.textContent = `${visible.length} of ${venues.length} venue${venues.length === 1 ? '' : 's'} · ${incomplete} need review`;
-      venuesGrid.innerHTML = visible.map((venue) => `<article class="entity-card entity-card-venue" data-entity-name="${escapeHtml(venue.name)}" data-entity-city="${escapeHtml(venue.city)}" data-has-location="${venue.hasLocation}"><a class="entity-card-profile" href="/venue?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(venue.name))}</span>${venue.image ? `<img src="${escapeHtml(venue.image)}" alt="" loading="lazy" decoding="async" style="object-position:${escapeHtml(venue.imagePosition)}" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${escapeHtml(venue.city || 'Location unknown')}</p><h2>${escapeHtml(venue.name)}</h2><p>${escapeHtml(venue.description || (venue.latestDate ? `Last visited ${formatGigDate(venue.latestDate)}` : 'An undated archive location'))}</p><div class="entity-card-stats"><span><strong>${venue.shows}</strong>Visit${venue.shows === 1 ? '' : 's'}</span><span><strong>${venue.artists.size}</strong>Artist${venue.artists.size === 1 ? '' : 's'}</span><span><strong>${venue.latestDate ? venue.latestDate.slice(0, 4) : '—'}</strong>Last visit</span></div></div></a><div class="entity-card-metadata">${metadataBadges(venue)}</div><a class="entity-card-edit" href="/venue/edit?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}" aria-label="Edit ${escapeHtml(venue.name)} metadata">✎ <span>Edit</span></a></article>`).join('') || '<p class="empty-state entity-directory-empty">No venues match those filters.</p>';
+      venuesGrid.innerHTML = visible.map((venue) => `<article class="entity-card entity-card-venue" data-entity-name="${escapeHtml(venue.name)}" data-entity-city="${escapeHtml(venue.city)}" data-has-location="${venue.hasLocation}"><a class="entity-card-profile" href="/venue?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(venue.name))}</span>${venue.image ? `<img src="${escapeHtml(venue.image)}" alt="" loading="lazy" decoding="async" style="object-position:${escapeHtml(venue.imagePosition)}" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${escapeHtml(venue.city || 'Location unknown')}</p><h2>${escapeHtml(venue.name)}</h2><p>${escapeHtml(venue.description || (venue.latestDate ? `Last visited ${formatGigDate(venue.latestDate)}` : 'An undated archive location'))}</p><div class="entity-card-stats"><span><strong>${venue.shows}</strong>Visit${venue.shows === 1 ? '' : 's'}</span><span><strong>${venue.artists.size}</strong>Artist${venue.artists.size === 1 ? '' : 's'}</span><span><strong>${venue.latestDate ? venue.latestDate.slice(0, 4) : '—'}</strong>Last visit</span></div></div></a><div class="entity-card-metadata">${venueMetadataBadges(venue)}</div><a class="entity-card-edit" href="/venue/edit?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}" aria-label="Edit ${escapeHtml(venue.name)} metadata">✎ <span>Edit</span></a></article>`).join('') || '<p class="empty-state entity-directory-empty">No venues match those filters.</p>';
       bindDirectoryImageFallbacks(venuesGrid);
       hydrateMissingDirectoryCards(venuesGrid, 'venue');
     };
@@ -2302,6 +2329,14 @@ function renderIntegrity(data) {
 function renderMaintenanceStatus(data) {
   if (!maintenanceSummary) return;
   maintenanceSummary.innerHTML = `<article><strong>${formatBytes(data.databaseSize)}</strong><span>Database size</span></article><article><strong>${data.backupCount}</strong><span>Saved database backups</span></article><article><strong>${data.latestBackup ? escapeHtml(data.latestBackup.replace(/^the-master-list-|^pre-restore-/, '').replace(/\.sqlite$/, '')) : '—'}</strong><span>Latest backup</span></article><article class="${data.restorePending ? 'has-warning' : ''}"><strong>${data.restorePending ? '!' : '✓'}</strong><span>${data.restorePending ? 'Restore staged — restart required' : 'No restore pending'}</span></article>`;
+  if (backupScheduleForm && data.backupSchedule) {
+    backupScheduleForm.elements.enabled.checked = Boolean(data.backupSchedule.enabled);
+    backupScheduleForm.elements.intervalHours.value = data.backupSchedule.intervalHours;
+    backupScheduleForm.elements.retentionCount.value = data.backupSchedule.retentionCount;
+    const last = data.backupSchedule.lastBackupAt ? new Date(data.backupSchedule.lastBackupAt).toLocaleString() : 'Never';
+    backupScheduleStatus.textContent = data.backupSchedule.lastStatus === 'error' ? `Last backup failed: ${data.backupSchedule.lastError || 'Unknown error'}` : `Last scheduled backup: ${last}`;
+    backupScheduleStatus.classList.toggle('error', data.backupSchedule.lastStatus === 'error');
+  }
   renderIntegrity(data.integrity);
 }
 
@@ -2310,6 +2345,27 @@ async function renderMaintenance() {
   try { renderMaintenanceStatus(await fetchJson('/api/maintenance/status')); }
   catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); }
 }
+
+backupScheduleForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = backupScheduleForm.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    await fetchJson('/api/maintenance/backup-settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: backupScheduleForm.elements.enabled.checked, intervalHours: backupScheduleForm.elements.intervalHours.value, retentionCount: backupScheduleForm.elements.retentionCount.value }) });
+    maintenanceMessage.textContent = 'Backup schedule saved.';
+    maintenanceMessage.classList.remove('error');
+    await renderMaintenance();
+  } catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); }
+  finally { button.disabled = false; }
+});
+
+backupNowButton?.addEventListener('click', async () => {
+  backupNowButton.disabled = true;
+  backupNowButton.textContent = 'Backing up…';
+  try { await fetchJson('/api/maintenance/backup-now', { method: 'POST' }); maintenanceMessage.textContent = 'Database snapshot created.'; maintenanceMessage.classList.remove('error'); await renderMaintenance(); }
+  catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); }
+  finally { backupNowButton.disabled = false; backupNowButton.textContent = 'Back up now'; }
+});
 
 refreshIntegrityButton?.addEventListener('click', async () => {
   refreshIntegrityButton.disabled = true; refreshIntegrityButton.textContent = 'Checking…'; maintenanceMessage.textContent = 'Scanning database and media files…'; maintenanceMessage.classList.remove('error');
@@ -2339,7 +2395,7 @@ function renderActivityList() {
   if (!activityList) return;
   const visible = activityData.filter((entry) => activityFilter === 'all' || entry.unread);
   activityFilters.querySelectorAll('button').forEach((button) => button.classList.toggle('active', button.dataset.activityFilter === activityFilter));
-  activityList.innerHTML = visible.length ? visible.map((entry) => `<article class="activity-entry ${entry.unread ? 'is-unread' : ''}" data-activity-id="${escapeHtml(entry.id)}"><i aria-hidden="true"></i><div><span>${entry.type === 'peer-show-updated' ? 'Show updated' : 'New shared show'} · ${escapeHtml(new Date(entry.createdAt).toLocaleString())}</span><h2>${escapeHtml(entry.title)}</h2><p>${escapeHtml(entry.body || '')}</p></div><div class="activity-entry-actions"><a class="button button-secondary" href="/shows#shared-${encodeURIComponent(entry.sharedGigId || '')}">Open show</a>${entry.unread ? '<button class="text-button activity-read" type="button">Mark read</button>' : '<small>Read</small>'}</div></article>`).join('') : '<div class="empty-state">No peer activity matches this filter.</div>';
+  activityList.innerHTML = visible.length ? visible.map((entry) => `<article class="activity-entry ${entry.unread ? 'is-unread' : ''}" data-activity-id="${escapeHtml(entry.id)}"><i aria-hidden="true"></i><div><span>${entry.type === 'peer-sync-conflict' ? 'Conflict needs review' : entry.type === 'peer-show-updated' ? 'Show updated' : 'New shared show'} · ${escapeHtml(new Date(entry.createdAt).toLocaleString())}</span><h2>${escapeHtml(entry.title)}</h2><p>${escapeHtml(entry.body || '')}</p></div><div class="activity-entry-actions"><a class="button button-secondary" href="${entry.type === 'peer-sync-conflict' ? '/conflicts' : `/shows#shared-${encodeURIComponent(entry.sharedGigId || '')}`}">${entry.type === 'peer-sync-conflict' ? 'Review conflict' : 'Open show'}</a>${entry.unread ? '<button class="text-button activity-read" type="button">Mark read</button>' : '<small>Read</small>'}</div></article>`).join('') : '<div class="empty-state">No peer activity matches this filter.</div>';
   activityList.querySelectorAll('.activity-entry').forEach((item) => {
     const entry = activityData.find((candidate) => candidate.id === item.dataset.activityId);
     const markRead = async () => { if (!entry?.unread) return; await fetchJson(`/api/notifications/${encodeURIComponent(entry.id)}`, { method: 'PATCH' }); entry.unread = false; entry.readAt = new Date().toISOString(); };
@@ -2361,6 +2417,42 @@ markAllActivityRead?.addEventListener('click', async () => {
   try { await fetchJson('/api/notifications/read-all', { method: 'POST' }); activityData.forEach((entry) => { entry.unread = false; entry.readAt ||= new Date().toISOString(); }); renderActivityList(); await loadPeerNotifications(); activityMessage.textContent = 'All activity marked as read.'; }
   catch (error) { activityMessage.textContent = error.message; activityMessage.classList.add('error'); }
 });
+
+function conflictValueSummary(kind, value) {
+  if (kind === 'notes') return `<p>${escapeHtml(value.notes || 'No performance notes')}</p>${value.venueNotes ? `<p><b>Venue:</b> ${escapeHtml(value.venueNotes)}</p>` : ''}`;
+  if (kind === 'ratings') return `<p>${value.performanceRating ?? '—'} / 5 · ${value.favorite ? '♥ Favourite' : 'Not favourite'}</p>`;
+  if (kind === 'setlist') return value.songs?.length ? `<ol>${value.songs.map((song) => `<li>${escapeHtml(song.title || 'Untitled')}</li>`).join('')}</ol>` : '<p>No setlist</p>';
+  const assigned = (value.media || []).filter((item) => item.songIndex !== null && item.songIndex !== undefined).length;
+  const assignments = (value.media || []).filter((item) => item.songIndex !== null && item.songIndex !== undefined).map((item) => `<li>${escapeHtml(item.caption || item.filename || 'Media')} → ${escapeHtml(value.songs?.[item.songIndex]?.title || `Track ${Number(item.songIndex) + 1}`)}</li>`).join('');
+  return `<p>${value.media?.length || 0} media item${value.media?.length === 1 ? '' : 's'} · ${assigned} assigned to tracks</p>${assignments ? `<ol>${assignments}</ol>` : ''}`;
+}
+
+function conflictChoice(name, mergeLabel) {
+  return `<label class="conflict-choice">Resolution<select name="${name}"><option value="local">Keep local</option><option value="remote">Use peer</option><option value="merge">${escapeHtml(mergeLabel)}</option></select></label>`;
+}
+
+async function renderConflicts() {
+  if (!account?.isAdmin) { if (conflictList) conflictList.innerHTML = '<div class="empty-state">Only the instance owner can review sync conflicts.</div>'; return; }
+  let conflicts;
+  try { conflicts = await fetchJson('/api/sync/conflicts'); }
+  catch (error) { if (conflictsMessage) { conflictsMessage.textContent = error.message; conflictsMessage.classList.add('error'); } return; }
+  if (navConflictCount) { navConflictCount.hidden = !conflicts.length; navConflictCount.textContent = String(conflicts.length); }
+  if (page !== 'conflicts' || !conflictList) return;
+  conflictList.innerHTML = conflicts.length ? conflicts.map((conflict) => `<form class="conflict-card" data-conflict-id="${escapeHtml(conflict.id)}"><header><div><p class="eyebrow">Edited here and by ${escapeHtml(conflict.peerName)}</p><h2>${escapeHtml(conflict.artist)}</h2><p>${escapeHtml(conflict.venue)} · ${escapeHtml(conflict.city)} · ${escapeHtml(formatGigDate(conflict.date))}</p></div><a class="text-button" href="/edit?id=${encodeURIComponent(conflict.localGigId)}">Open show</a></header>${[
+    ['notes', 'Notes', 'Combine notes'], ['ratings', 'Rating & favourite', 'Average / combine'], ['setlist', 'Setlist', 'Combine unique tracks'], ['media', 'Media assignments', 'Fill unassigned media']
+  ].map(([kind, label, mergeLabel]) => `<section class="conflict-field"><div class="conflict-field-heading"><h3>${label}</h3>${conflictChoice(kind, mergeLabel)}</div><div class="conflict-comparison"><article><strong>This instance</strong>${conflictValueSummary(kind, conflict.local)}</article><article><strong>${escapeHtml(conflict.peerName)}</strong>${conflictValueSummary(kind, conflict.remote)}</article></div></section>`).join('')}<footer><button class="button" type="submit">Resolve conflict</button><p class="form-message" role="status"></p></footer></form>`).join('') : '<div class="empty-state">No simultaneous edits need review.</div>';
+  conflictList.querySelectorAll('.conflict-card').forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button[type="submit"]');
+    const status = form.querySelector('.form-message');
+    button.disabled = true; status.textContent = 'Applying resolution…'; status.classList.remove('error');
+    try {
+      await fetchJson(`/api/sync/conflicts/${encodeURIComponent(form.dataset.conflictId)}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form).entries())) });
+      status.textContent = 'Resolved.';
+      await Promise.all([renderConflicts(), loadPeerNotifications()]);
+    } catch (error) { status.textContent = error.message; status.classList.add('error'); button.disabled = false; }
+  }));
+}
 
 let healthData = null;
 let healthFilter = 'all';
@@ -3827,6 +3919,7 @@ async function initializeApp() {
     await renderApiLimits();
     await renderMaintenance();
     await renderActivity();
+    await renderConflicts();
     renderProfiles();
     renderSharedShows();
     await renderInstanceSettings();

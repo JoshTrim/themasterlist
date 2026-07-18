@@ -27,6 +27,8 @@ const uploadSessions = new Map();
 const MAX_MEDIA_SIZE = Number(process.env.MAX_MEDIA_SIZE_GB || 50) * 1024 * 1024 * 1024;
 
 legacyFs.mkdirSync(DATA_DIR, { recursive: true });
+legacyFs.mkdirSync(MEDIA_DIR, { recursive: true });
+legacyFs.mkdirSync(BACKUP_DIR, { recursive: true });
 if (legacyFs.existsSync(PENDING_RESTORE_FILE)) {
   legacyFs.mkdirSync(BACKUP_DIR, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -296,8 +298,35 @@ database.exec(`
     created_at TEXT NOT NULL,
     read_at TEXT
   );
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS peer_sync_baselines (
+    shared_gig_id TEXT NOT NULL,
+    peer_id TEXT NOT NULL,
+    local_hash TEXT NOT NULL,
+    remote_hash TEXT NOT NULL,
+    synced_at TEXT NOT NULL,
+    PRIMARY KEY (shared_gig_id, peer_id)
+  );
+  CREATE TABLE IF NOT EXISTS peer_sync_conflicts (
+    id TEXT PRIMARY KEY,
+    shared_gig_id TEXT NOT NULL,
+    peer_id TEXT NOT NULL,
+    local_gig_id TEXT NOT NULL,
+    local_payload TEXT NOT NULL,
+    remote_payload TEXT NOT NULL,
+    remote_snapshot TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    resolution TEXT
+  );
 `);
 database.exec('CREATE INDEX IF NOT EXISTS notifications_unread ON notifications (read_at, created_at)');
+database.exec("CREATE UNIQUE INDEX IF NOT EXISTS peer_sync_conflicts_open ON peer_sync_conflicts (shared_gig_id, peer_id) WHERE status = 'open'");
 
 function ensureInstanceIdentity() {
   const existing = database.prepare('SELECT * FROM instance_identity WHERE id = 1').get();
@@ -312,6 +341,30 @@ function ensureInstanceIdentity() {
 }
 
 ensureInstanceIdentity();
+
+function appSetting(key, fallback = null) {
+  const row = database.prepare('SELECT value FROM app_settings WHERE key = ?').get(key);
+  return row ? row.value : fallback;
+}
+
+function setAppSetting(key, value) {
+  database.prepare(`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`).run(key, String(value), new Date().toISOString());
+}
+
+function ensureBackupSettings() {
+  const defaults = {
+    backup_enabled: String(process.env.BACKUP_ENABLED || 'true').toLowerCase() === 'false' ? 'false' : 'true',
+    backup_interval_hours: String(Math.max(1, Number(process.env.BACKUP_INTERVAL_HOURS || 24))),
+    backup_retention_count: String(Math.max(1, Number(process.env.BACKUP_RETENTION_COUNT || 14))),
+    backup_last_status: 'never'
+  };
+  const insert = database.prepare('INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)');
+  const now = new Date().toISOString();
+  for (const [key, value] of Object.entries(defaults)) insert.run(key, value, now);
+}
+
+ensureBackupSettings();
 
 function addColumnIfMissing(table, column, definition) {
   const columns = database.prepare(`PRAGMA table_info(${table})`).all();
@@ -928,6 +981,63 @@ function syncMediaManifest(gig) {
   }));
 }
 
+function conflictPayloadFromGig(gig) {
+  return {
+    notes: String(gig.performanceNotes || gig.notes || ''),
+    venueNotes: String(gig.venueNotes || ''),
+    performanceRating: normaliseRating(gig.performanceRating),
+    venueRating: normaliseRating(gig.venueRating),
+    favorite: Boolean(gig.favorite),
+    songs: Array.isArray(gig.songs) ? gig.songs : [],
+    media: syncMediaManifest(gig)
+  };
+}
+
+function conflictPayloadFromSnapshot(snapshot) {
+  const contribution = snapshot.contribution || {};
+  return {
+    notes: String(contribution.performanceNotes || ''),
+    venueNotes: String(contribution.venueNotes || ''),
+    performanceRating: normaliseRating(contribution.performanceRating),
+    venueRating: normaliseRating(contribution.venueRating),
+    favorite: Boolean(contribution.favorite),
+    songs: Array.isArray(snapshot.show?.songs) ? snapshot.show.songs : [],
+    media: Array.isArray(contribution.media) ? contribution.media : []
+  };
+}
+
+function syncPayloadHash(payload) {
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+function detectSyncConflict(snapshot, originPeer, localGig) {
+  if (!localGig) return { conflict: false, localPayload: null, remotePayload: conflictPayloadFromSnapshot(snapshot) };
+  const localPayload = conflictPayloadFromGig(localGig);
+  const remotePayload = conflictPayloadFromSnapshot(snapshot);
+  const localHash = syncPayloadHash(localPayload);
+  const remoteHash = syncPayloadHash(remotePayload);
+  const baseline = database.prepare('SELECT * FROM peer_sync_baselines WHERE shared_gig_id = ? AND peer_id = ?').get(snapshot.sharedGigId, originPeer.peer_id);
+  const conflict = Boolean(baseline && baseline.local_hash !== localHash && baseline.remote_hash !== remoteHash && localHash !== remoteHash);
+  if (conflict) {
+    const now = new Date().toISOString();
+    database.prepare(`INSERT INTO peer_sync_conflicts
+      (id, shared_gig_id, peer_id, local_gig_id, local_payload, remote_payload, remote_snapshot, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
+      ON CONFLICT(shared_gig_id, peer_id) WHERE status = 'open' DO UPDATE SET
+        local_payload=excluded.local_payload, remote_payload=excluded.remote_payload,
+        remote_snapshot=excluded.remote_snapshot, created_at=excluded.created_at`).run(
+      randomUUID(), snapshot.sharedGigId, originPeer.peer_id, localGig.id,
+      JSON.stringify(localPayload), JSON.stringify(remotePayload), JSON.stringify(snapshot), now
+    );
+  } else {
+    database.prepare(`INSERT INTO peer_sync_baselines (shared_gig_id, peer_id, local_hash, remote_hash, synced_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(shared_gig_id, peer_id) DO UPDATE SET local_hash=excluded.local_hash,
+        remote_hash=excluded.remote_hash, synced_at=excluded.synced_at`).run(snapshot.sharedGigId, originPeer.peer_id, localHash, remoteHash, new Date().toISOString());
+  }
+  return { conflict, localPayload, remotePayload };
+}
+
 function ensureSharedShowForGig(gig) {
   const sharedGigId = gig.sharedId || gig.id;
   database.prepare(`INSERT INTO shared_shows
@@ -1000,6 +1110,7 @@ function applySyncSnapshot(snapshot, originPeer) {
   if (local && local.shared_id !== snapshot.sharedGigId && !database.prepare('SELECT 1 FROM gigs WHERE shared_id = ?').get(snapshot.sharedGigId)) {
     database.prepare('UPDATE gigs SET shared_id = ? WHERE id = ?').run(snapshot.sharedGigId, local.id);
   }
+  const conflictState = detectSyncConflict(snapshot, originPeer, local ? findGigSync(local.id) : null);
   const now = new Date().toISOString();
   database.transaction(() => {
     database.prepare(`INSERT INTO shared_shows
@@ -1037,16 +1148,123 @@ function applySyncSnapshot(snapshot, originPeer) {
     );
     {
       const notificationId = createHash('sha256').update(`peer-show:${originPeer.peer_id}:${snapshot.eventId}`).digest('hex');
-      const notificationType = isNewPeerContribution ? 'peer-show-shared' : 'peer-show-updated';
+      const notificationType = conflictState.conflict ? 'peer-sync-conflict' : (isNewPeerContribution ? 'peer-show-shared' : 'peer-show-updated');
       database.prepare(`INSERT OR IGNORE INTO notifications
         (id, type, peer_id, shared_gig_id, title, body, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        notificationId, notificationType, originPeer.peer_id, snapshot.sharedGigId, isNewPeerContribution ? `${originPeer.name} shared a show` : `${originPeer.name} updated a shared show`,
+        notificationId, notificationType, originPeer.peer_id, snapshot.sharedGigId, conflictState.conflict ? `Review edits from ${originPeer.name}` : (isNewPeerContribution ? `${originPeer.name} shared a show` : `${originPeer.name} updated a shared show`),
         `${show.artist} at ${show.venue}${show.city ? `, ${show.city}` : ''}`, now
       );
     }
   })();
   return true;
+}
+
+function peerConflictRows(status = 'open') {
+  return database.prepare(`SELECT c.*, p.name AS peer_name, g.artist, g.venue, g.city, g.date
+    FROM peer_sync_conflicts c
+    JOIN peer_instances p ON p.peer_id = c.peer_id
+    JOIN gigs g ON g.id = c.local_gig_id
+    WHERE c.status = ? ORDER BY c.created_at DESC`).all(status).map((row) => ({
+    id: row.id,
+    sharedGigId: row.shared_gig_id,
+    localGigId: row.local_gig_id,
+    peerId: row.peer_id,
+    peerName: row.peer_name,
+    artist: row.artist,
+    venue: row.venue,
+    city: row.city,
+    date: row.date,
+    local: conflictPayloadFromGig(findGigSync(row.local_gig_id)),
+    remote: JSON.parse(row.remote_payload),
+    createdAt: row.created_at
+  }));
+}
+
+function mergeText(localValue, remoteValue) {
+  const values = [String(localValue || '').trim(), String(remoteValue || '').trim()].filter(Boolean);
+  return [...new Set(values)].join('\n\n');
+}
+
+function mergeSongs(localSongs, remoteSongs) {
+  const result = [];
+  const seen = new Set();
+  for (const song of [...(localSongs || []), ...(remoteSongs || [])]) {
+    const key = `${String(song?.artist || '').trim()}|${String(song?.title || '').trim()}`.toLowerCase();
+    if (!song?.title || seen.has(key)) continue;
+    seen.add(key);
+    result.push(song);
+  }
+  return result;
+}
+
+function applyRemoteMediaAssignments(localGigId, localMedia, remoteMedia, mode) {
+  const remoteByKey = new Map();
+  for (const item of remoteMedia || []) {
+    for (const key of [item.checksum && `hash:${item.checksum}`, item.externalUrl && `url:${item.externalUrl}`, item.id && `id:${item.id}`].filter(Boolean)) remoteByKey.set(key, item);
+  }
+  for (const local of localMedia || []) {
+    const remote = [local.checksum && `hash:${local.checksum}`, local.externalUrl && `url:${local.externalUrl}`, local.id && `id:${local.id}`].filter(Boolean).map((key) => remoteByKey.get(key)).find(Boolean);
+    if (!remote || (mode === 'merge' && local.songIndex !== null && local.songIndex !== undefined)) continue;
+    const remoteSongIndex = remote.songIndex !== null && remote.songIndex !== undefined && Number.isInteger(Number(remote.songIndex)) && Number(remote.songIndex) >= 0 ? Number(remote.songIndex) : null;
+    const remoteStart = remote.playbackStart !== null && remote.playbackStart !== undefined && Number.isFinite(Number(remote.playbackStart)) ? Number(remote.playbackStart) : null;
+    const remoteEnd = remote.playbackEnd !== null && remote.playbackEnd !== undefined && Number.isFinite(Number(remote.playbackEnd)) ? Number(remote.playbackEnd) : null;
+    database.prepare('UPDATE gig_media SET song_index = ?, playback_preferred = ?, playback_start = ?, playback_end = ? WHERE id = ? AND gig_id = ?').run(
+      remoteSongIndex, remote.playbackPreferred ? 1 : 0, remoteStart, remoteEnd, local.id, localGigId
+    );
+    if (Array.isArray(remote.playbackClips) && (mode === 'remote' || !local.playbackClips?.length)) {
+      database.prepare('DELETE FROM media_playback_clips WHERE media_id = ?').run(local.id);
+      const insert = database.prepare(`INSERT INTO media_playback_clips
+        (media_id, song_index, start_seconds, end_seconds, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+      const now = new Date().toISOString();
+      for (const clip of remote.playbackClips) {
+        const songIndex = Number(clip.songIndex);
+        if (!Number.isInteger(songIndex) || songIndex < 0) continue;
+        const start = clip.startSeconds !== null && clip.startSeconds !== undefined && Number.isFinite(Number(clip.startSeconds)) ? Number(clip.startSeconds) : null;
+        const end = clip.endSeconds !== null && clip.endSeconds !== undefined && Number.isFinite(Number(clip.endSeconds)) ? Number(clip.endSeconds) : null;
+        insert.run(local.id, songIndex, start, end, Math.max(0, Number(clip.priority) || 0), now, now);
+      }
+    }
+  }
+}
+
+function resolvePeerConflict(id, choices) {
+  const row = database.prepare("SELECT * FROM peer_sync_conflicts WHERE id = ? AND status = 'open'").get(id);
+  if (!row) throw new Error('Sync conflict not found or already resolved.');
+  const gig = findGigSync(row.local_gig_id);
+  const local = conflictPayloadFromGig(gig);
+  const remote = JSON.parse(row.remote_payload);
+  const valid = (value, allowed, fallback = 'local') => allowed.includes(value) ? value : fallback;
+  const notesChoice = valid(choices.notes, ['local', 'remote', 'merge']);
+  const ratingsChoice = valid(choices.ratings, ['local', 'remote', 'merge']);
+  const setlistChoice = valid(choices.setlist, ['local', 'remote', 'merge']);
+  const mediaChoice = valid(choices.media, ['local', 'remote', 'merge']);
+  const chooseText = (field) => notesChoice === 'remote' ? remote[field] : notesChoice === 'merge' ? mergeText(local[field], remote[field]) : local[field];
+  const average = (a, b) => {
+    const values = [a, b].filter((value) => value !== null && value !== undefined && value !== '').map(Number).filter(Number.isFinite);
+    return values.length ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 2) / 2 : null;
+  };
+  const performanceRating = ratingsChoice === 'remote' ? remote.performanceRating : ratingsChoice === 'merge' ? average(local.performanceRating, remote.performanceRating) : local.performanceRating;
+  const venueRating = ratingsChoice === 'remote' ? remote.venueRating : ratingsChoice === 'merge' ? average(local.venueRating, remote.venueRating) : local.venueRating;
+  const favorite = ratingsChoice === 'remote' ? remote.favorite : ratingsChoice === 'merge' ? Boolean(local.favorite || remote.favorite) : local.favorite;
+  const songs = setlistChoice === 'remote' ? remote.songs : setlistChoice === 'merge' ? mergeSongs(local.songs, remote.songs) : local.songs;
+  const resolution = { notes: notesChoice, ratings: ratingsChoice, setlist: setlistChoice, media: mediaChoice };
+  database.transaction(() => {
+    database.prepare(`UPDATE gigs SET notes = ?, performance_notes = ?, venue_notes = ?, performance_rating = ?, venue_rating = ?, favorite = ?, songs = ? WHERE id = ?`).run(
+      chooseText('notes'), chooseText('notes'), chooseText('venueNotes'), performanceRating, venueRating, favorite ? 1 : 0, JSON.stringify(songs || []), gig.id
+    );
+    if (mediaChoice !== 'local') applyRemoteMediaAssignments(gig.id, local.media, remote.media, mediaChoice);
+    const resolvedGig = findGigSync(gig.id);
+    upsertLocalContribution(resolvedGig);
+    database.prepare(`INSERT INTO peer_sync_baselines (shared_gig_id, peer_id, local_hash, remote_hash, synced_at)
+      VALUES (?, ?, ?, ?, ?) ON CONFLICT(shared_gig_id, peer_id) DO UPDATE SET
+      local_hash=excluded.local_hash, remote_hash=excluded.remote_hash, synced_at=excluded.synced_at`).run(
+      row.shared_gig_id, row.peer_id, syncPayloadHash(conflictPayloadFromGig(resolvedGig)), syncPayloadHash(remote), new Date().toISOString()
+    );
+    database.prepare("UPDATE peer_sync_conflicts SET status = 'resolved', resolved_at = ?, resolution = ? WHERE id = ?").run(new Date().toISOString(), JSON.stringify(resolution), id);
+    database.prepare("UPDATE notifications SET read_at = COALESCE(read_at, ?) WHERE type = 'peer-sync-conflict' AND shared_gig_id = ? AND peer_id = ?").run(new Date().toISOString(), row.shared_gig_id, row.peer_id);
+  })();
+  return { ok: true, resolution, gig: findGigSync(gig.id) };
 }
 
 function sharedContributionRows(sharedGigId) {
@@ -1416,6 +1634,56 @@ async function mediaManifest() {
   return { format: 'the-master-list-media-manifest-v1', createdAt: new Date().toISOString(), databaseFile: path.basename(DB_FILE), mediaRecords: media.length, files, integrity: { healthy: integrity.healthy, counts: integrity.counts } };
 }
 
+function backupSettings() {
+  return {
+    enabled: appSetting('backup_enabled', 'true') === 'true',
+    intervalHours: Math.max(1, Number(appSetting('backup_interval_hours', '24')) || 24),
+    retentionCount: Math.max(1, Number(appSetting('backup_retention_count', '14')) || 14),
+    lastBackupAt: appSetting('backup_last_at'),
+    lastStatus: appSetting('backup_last_status', 'never'),
+    lastError: appSetting('backup_last_error') || null
+  };
+}
+
+async function pruneScheduledBackups(retentionCount) {
+  await fs.mkdir(BACKUP_DIR, { recursive: true });
+  const files = (await fs.readdir(BACKUP_DIR, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && /^scheduled-.*\.sqlite$/.test(entry.name))
+    .map((entry) => entry.name).sort().reverse();
+  for (const filename of files.slice(retentionCount)) await fs.rm(path.join(BACKUP_DIR, filename), { force: true });
+  return Math.min(files.length, retentionCount);
+}
+
+let scheduledBackupRunning = false;
+async function createScheduledBackup({ force = false } = {}) {
+  const settings = backupSettings();
+  if ((!settings.enabled && !force) || scheduledBackupRunning) return { skipped: true, reason: scheduledBackupRunning ? 'running' : 'disabled' };
+  const lastTime = Date.parse(settings.lastBackupAt || '');
+  if (!force && Number.isFinite(lastTime) && Date.now() - lastTime < settings.intervalHours * 60 * 60 * 1000) return { skipped: true, reason: 'not-due' };
+  scheduledBackupRunning = true;
+  try {
+    await fs.mkdir(BACKUP_DIR, { recursive: true });
+    const timestamp = new Date().toISOString();
+    const filename = `scheduled-${timestamp.replace(/[:.]/g, '-')}.sqlite`;
+    await database.backup(path.join(BACKUP_DIR, filename));
+    await pruneScheduledBackups(settings.retentionCount);
+    setAppSetting('backup_last_at', timestamp);
+    setAppSetting('backup_last_status', 'success');
+    setAppSetting('backup_last_error', '');
+    console.log(`[maintenance] scheduled database backup created: ${filename}`);
+    return { ok: true, filename, createdAt: timestamp };
+  } catch (error) {
+    setAppSetting('backup_last_status', 'error');
+    setAppSetting('backup_last_error', error.message);
+    console.error('[maintenance] scheduled database backup failed:', error.message);
+    throw error;
+  } finally { scheduledBackupRunning = false; }
+}
+
+async function runScheduledBackupCheck() {
+  try { await createScheduledBackup(); } catch { /* status is exposed on Maintenance */ }
+}
+
 async function maintenanceStatus() {
   const databaseSize = await fs.stat(DB_FILE).then((stat) => stat.size).catch(() => 0);
   let backups = [];
@@ -1423,7 +1691,7 @@ async function maintenanceStatus() {
     backups = (await fs.readdir(BACKUP_DIR, { withFileTypes: true })).filter((entry) => entry.isFile() && entry.name.endsWith('.sqlite')).map((entry) => entry.name).sort().reverse();
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const integrity = await archiveIntegrity();
-  return { databaseSize, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), integrity };
+  return { databaseSize, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), backupSchedule: backupSettings(), integrity };
 }
 
 async function receiveDatabaseRestore(request) {
@@ -1999,6 +2267,12 @@ async function handleAuth(request, response, url) {
 }
 
 async function handleApi(request, response, url) {
+  if (request.method === 'GET' && url.pathname === '/api/healthz') {
+    const quickCheck = database.prepare('PRAGMA quick_check').pluck().get();
+    const mediaWritable = await fs.access(MEDIA_DIR, legacyFs.constants.W_OK).then(() => true).catch(() => false);
+    return sendJson(response, quickCheck === 'ok' && mediaWritable ? 200 : 503, { ok: quickCheck === 'ok' && mediaWritable, database: quickCheck, mediaWritable });
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/auth/status') {
     return sendJson(response, 200, { configured: accountsConfigured(), account: currentAccount(request) });
   }
@@ -2191,6 +2465,20 @@ async function handleApi(request, response, url) {
     return sendJson(response, 200, { peers: connectedPeers.length, results, applied: results.reduce((sum, result) => sum + Number(result.applied || 0), 0) });
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/sync/conflicts') {
+    const account = requireAccount(request);
+    if (!account.isAdmin) return sendError(response, 403, 'Only the instance owner can resolve sync conflicts.');
+    return sendJson(response, 200, peerConflictRows('open'));
+  }
+
+  const conflictResolveMatch = url.pathname.match(/^\/api\/sync\/conflicts\/([\w-]+)\/resolve$/);
+  if (request.method === 'POST' && conflictResolveMatch) {
+    const account = requireAccount(request);
+    if (!account.isAdmin) return sendError(response, 403, 'Only the instance owner can resolve sync conflicts.');
+    try { return sendJson(response, 200, resolvePeerConflict(conflictResolveMatch[1], await readBody(request))); }
+    catch (error) { return sendError(response, 400, error.message); }
+  }
+
   const peerActionMatch = url.pathname.match(/^\/api\/peers\/([\w-]+)\/(test|sync)$/);
   if (request.method === 'POST' && peerActionMatch) {
     requireAccount(request);
@@ -2313,6 +2601,26 @@ async function handleApi(request, response, url) {
   if (request.method === 'GET' && url.pathname === '/api/maintenance/status') {
     requireAccount(request);
     return sendJson(response, 200, await maintenanceStatus());
+  }
+
+  if (request.method === 'PATCH' && url.pathname === '/api/maintenance/backup-settings') {
+    const account = requireAccount(request);
+    if (!account.isAdmin) return sendError(response, 403, 'Only the instance owner can change backup settings.');
+    const body = await readBody(request);
+    const intervalHours = Math.max(1, Math.min(24 * 30, Math.round(Number(body.intervalHours) || 24)));
+    const retentionCount = Math.max(1, Math.min(365, Math.round(Number(body.retentionCount) || 14)));
+    setAppSetting('backup_enabled', body.enabled === false ? 'false' : 'true');
+    setAppSetting('backup_interval_hours', intervalHours);
+    setAppSetting('backup_retention_count', retentionCount);
+    await pruneScheduledBackups(retentionCount);
+    return sendJson(response, 200, backupSettings());
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/maintenance/backup-now') {
+    const account = requireAccount(request);
+    if (!account.isAdmin) return sendError(response, 403, 'Only the instance owner can run backups.');
+    try { return sendJson(response, 201, await createScheduledBackup({ force: true })); }
+    catch (error) { return sendError(response, 500, error.message); }
   }
 
   if (request.method === 'GET' && url.pathname === '/api/maintenance/database') {
@@ -3070,13 +3378,19 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-if (require.main === module) server.listen(PORT, HOST, () => console.log(`The Master List is running at http://${HOST}:${PORT}`));
+if (require.main === module) server.listen(PORT, HOST, () => {
+  console.log(`The Master List is running at http://${HOST}:${PORT}`);
+  const initialBackupCheck = setTimeout(runScheduledBackupCheck, 10_000);
+  initialBackupCheck.unref?.();
+  const backupTimer = setInterval(runScheduledBackupCheck, 60 * 60 * 1000);
+  backupTimer.unref?.();
+});
 
 module.exports = {
   server,
   database,
   paths: { data: DATA_DIR, database: DB_FILE, media: MEDIA_DIR },
-  testables: { archiveIntegrity, maintenanceStatus, mediaManifest, estimateFullShowTimings, parsePlaybackChapters, suggestPlaybackPlan, youtubeVideoId }
+  testables: { archiveIntegrity, maintenanceStatus, mediaManifest, backupSettings, createScheduledBackup, peerConflictRows, detectSyncConflict, resolvePeerConflict, estimateFullShowTimings, parsePlaybackChapters, suggestPlaybackPlan, youtubeVideoId }
 };
 
 function loadEnvFile() {
