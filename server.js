@@ -33,6 +33,7 @@ const { createPeerSync } = require('./lib/peer-sync');
 const { createPeerRoutes } = require('./lib/routes/peers');
 const { createSetlistFmProvider } = require('./lib/providers/setlist-fm');
 const { createMetadataProvider } = require('./lib/providers/metadata');
+const { createSpotifyProvider } = require('./lib/providers/spotify');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -108,6 +109,7 @@ const gigRepository = createGigRepository({ database, mediaRows });
 const { readAll: readGigs, writeAll: writeGigs, find: findGigSync } = gigRepository;
 const setlistProvider = createSetlistFmProvider({ apiKey: process.env.SETLIST_FM_API_KEY, fetch, recordUsage, normaliseSongs });
 const metadataProvider = createMetadataProvider({ fetch, googleApiKey: process.env.GOOGLE_CUSTOM_SEARCH_API_KEY, googleEngineId: process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID });
+const spotifyProvider = createSpotifyProvider({ requestJson: providerResponse });
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
 const mediaRecognition = createMediaRecognition({
@@ -778,22 +780,7 @@ async function getAccessToken(provider) {
 
 async function exportSpotify(gig) {
   const accessToken = await getAccessToken('spotify');
-  const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
-  const matches = [];
-  const unmatched = [];
-  for (const song of gig.songs) {
-    const query = new URLSearchParams({ q: `track:${song.title} artist:${song.artist || gig.artist}`, type: 'track', limit: '1' });
-    const result = await providerResponse(`https://api.spotify.com/v1/search?${query}`, { headers }, 'Spotify search');
-    const track = result.tracks?.items?.[0];
-    if (track) matches.push(track.uri);
-    else unmatched.push(`${song.artist || gig.artist} — ${song.title}`);
-  }
-  const details = playlistDetails(gig);
-  const playlist = await providerResponse('https://api.spotify.com/v1/me/playlists', { method: 'POST', headers, body: JSON.stringify({ ...details, public: false }) }, 'Spotify playlist');
-  for (let index = 0; index < matches.length; index += 100) {
-    await providerResponse(`https://api.spotify.com/v1/playlists/${playlist.id}/items`, { method: 'POST', headers, body: JSON.stringify({ uris: matches.slice(index, index + 100) }) }, 'Spotify playlist');
-  }
-  return { url: playlist.external_urls?.spotify || `https://open.spotify.com/playlist/${playlist.id}`, matched: matches.length, unmatched };
+  return spotifyProvider.exportPlaylist({ gig, accessToken, details: playlistDetails(gig) });
 }
 
 async function exportYouTube(gig) {

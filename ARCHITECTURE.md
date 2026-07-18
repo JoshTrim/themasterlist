@@ -27,6 +27,7 @@
 - `lib/env.js` — `.env` parsing without overwriting process-level settings.
 - `lib/providers/setlist-fm.js` — setlist.fm request construction, retry behavior, usage accounting and response normalization.
 - `lib/providers/metadata.js` — iTunes, MusicBrainz, Wikipedia and official-site metadata lookups without persistence concerns.
+- `lib/providers/spotify.js` — track matching, private playlist creation and API-sized batching.
 
 The browser application is progressively split from `public/app.js`. Browser-safe CommonJS/UMD modules under `public/lib/` load before the main application bundle:
 
