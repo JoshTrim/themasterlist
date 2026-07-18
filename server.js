@@ -37,6 +37,7 @@ const { createSpotifyProvider } = require('./lib/providers/spotify');
 const { createYouTubeProvider } = require('./lib/providers/youtube');
 const { createAppleMusicProvider } = require('./lib/providers/apple-music');
 const { createOAuthService } = require('./lib/oauth');
+const { createGeocodingService, validCoordinates } = require('./lib/geocoding');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -120,6 +121,7 @@ const oauthService = createOAuthService({
     youtube: { name: 'YouTube', clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET, authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth', tokenUrl: 'https://oauth2.googleapis.com/token', scope: 'https://www.googleapis.com/auth/youtube', authorizationParams: { access_type: 'offline', prompt: 'consent' } }
   }, requestJson: providerResponse, readConnections, writeConnections, randomUUID
 });
+const geocoding = createGeocodingService({ fetch, read: readGeocodes, write: writeGeocodes });
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
 const mediaRecognition = createMediaRecognition({
@@ -514,36 +516,8 @@ function createSharedShow(sourceGigId, profileId) {
   return id;
 }
 
-const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
 async function mapLocations() {
-  const gigs = await readGigs();
-  const geocodes = await readGeocodes();
-  const locations = new Map();
-  let changed = false;
-  let lastLookup = 0;
-  for (const gig of gigs) {
-    const key = `${gig.venue}|${gig.city}`.toLowerCase();
-    if (!(key in geocodes)) {
-      const remaining = 1_000 - (Date.now() - lastLookup);
-      if (remaining > 0) await wait(remaining);
-      const query = new URL('https://nominatim.openstreetmap.org/search');
-      query.searchParams.set('q', `${gig.venue}, ${gig.city}`);
-      query.searchParams.set('format', 'jsonv2');
-      query.searchParams.set('limit', '1');
-      const result = await fetch(query, { headers: { 'User-Agent': 'TheMasterList/0.1 personal-live-music-archive', 'Accept-Language': 'en' } });
-      lastLookup = Date.now();
-      const match = result.ok ? (await result.json())[0] : null;
-      geocodes[key] = match ? { lat: Number(match.lat), lng: Number(match.lon) } : null;
-      changed = true;
-    }
-    const coordinates = geocodes[key];
-    if (!coordinates) continue;
-    if (!locations.has(key)) locations.set(key, { ...coordinates, venue: gig.venue, city: gig.city, gigs: [] });
-    locations.get(key).gigs.push({ id: gig.id, artist: gig.artist, date: gig.date });
-  }
-  if (changed) await writeGeocodes(geocodes);
-  return [...locations.values()];
+  return geocoding.locationsForGigs(await readGigs());
 }
 
 async function archiveHealth() {
@@ -1143,7 +1117,7 @@ async function handleApi(request, response, url) {
     requireAccount(request);
     const artists = database.prepare('SELECT lookup_name AS lookupName, title, description, bio, image, image_position AS imagePosition, source, is_manual AS isManual FROM artist_info').all();
     const venues = database.prepare('SELECT lookup_name AS lookupName, title, description, bio, image, image_position AS imagePosition, source, is_manual AS isManual, is_closed AS isClosed FROM venue_info').all();
-    const geocodes = await readGeocodes();
+    const geocodes = await geocoding.read();
     const locations = Object.entries(geocodes).filter(([, coordinates]) => Number.isFinite(Number(coordinates?.lat)) && Number.isFinite(Number(coordinates?.lng))).map(([key]) => key);
     return sendJson(response, 200, { artists, venues, locations });
   }
@@ -1156,7 +1130,7 @@ async function handleApi(request, response, url) {
   if (request.method === 'GET' && url.pathname === '/api/venues') {
     const info = await fetchVenueInfo(url.searchParams.get('name'), url.searchParams.get('city'));
     const locationKey = `${String(url.searchParams.get('name') || '').trim()}|${String(url.searchParams.get('city') || '').trim()}`.toLowerCase();
-    const coordinates = (await readGeocodes())[locationKey] || null;
+    const coordinates = await geocoding.get(locationKey);
     return sendJson(response, 200, { ...info, imagePosition: normaliseImagePosition(info.imagePosition), isClosed: Boolean(info.isClosed), coordinates });
   }
   if (request.method === 'PATCH' && url.pathname === '/api/artists') {
@@ -1188,21 +1162,16 @@ async function handleApi(request, response, url) {
     const body = await readBody(request);
     const lookupName = `${name}|${city}`.toLowerCase();
     const existing = database.prepare('SELECT title, description, bio, image, image_position AS imagePosition, is_closed AS isClosed, source FROM venue_info WHERE lookup_name = ?').get(lookupName);
-    const geocodes = await readGeocodes();
-    let coordinates = geocodes[lookupName] || null;
+    let coordinates = await geocoding.get(lookupName);
     const address = String(body.locationAddress || '').trim();
     const latitudeValue = String(body.latitude ?? '').trim();
     const longitudeValue = String(body.longitude ?? '').trim();
     if (address) {
-      const query = new URL('https://nominatim.openstreetmap.org/search');
-      query.searchParams.set('q', address); query.searchParams.set('format', 'jsonv2'); query.searchParams.set('limit', '1');
-      const result = await fetch(query, { headers: { 'User-Agent': 'TheMasterList/0.1 personal-live-music-archive', 'Accept-Language': 'en' } });
-      const match = result.ok ? (await result.json())[0] : null;
-      if (!match) return sendError(response, 404, 'That address could not be found. Try including the suburb, city and country.');
-      coordinates = { lat: Number(match.lat), lng: Number(match.lon) };
+      coordinates = await geocoding.search(address);
+      if (!coordinates) return sendError(response, 404, 'That address could not be found. Try including the suburb, city and country.');
     } else if (latitudeValue || longitudeValue) {
       const lat = Number(latitudeValue); const lng = Number(longitudeValue);
-      if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) return sendError(response, 400, 'Enter valid latitude and longitude coordinates.');
+      if (!validCoordinates(lat, lng)) return sendError(response, 400, 'Enter valid latitude and longitude coordinates.');
       coordinates = { lat, lng };
     }
     const uploadedImage = await saveProfileImageUpload(body.imageUpload);
@@ -1216,7 +1185,7 @@ async function handleApi(request, response, url) {
       source: String(body.source ?? existing?.source ?? '').trim() || null
     };
     database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, image_position, is_manual, is_closed, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.imagePosition, info.isClosed ? 1 : 0, info.source, new Date().toISOString());
-    if (coordinates) { geocodes[lookupName] = coordinates; await writeGeocodes(geocodes); }
+    if (coordinates) await geocoding.set(lookupName, coordinates);
     await removeReplacedProfileImage(existing?.image, info.image);
     return sendJson(response, 200, { name, city, ...info, coordinates });
   }
@@ -1244,9 +1213,7 @@ async function handleApi(request, response, url) {
       if (existing?.isClosed) database.prepare('UPDATE venue_info SET is_closed = 1 WHERE lookup_name = ?').run(lookupName);
     } else if (type === 'location') {
       const key = String(body.key || '').toLowerCase();
-      const geocodes = await readGeocodes();
-      delete geocodes[key];
-      await writeGeocodes(geocodes);
+      await geocoding.remove(key);
       await mapLocations();
     } else return sendError(response, 400, 'This metadata issue cannot be repaired automatically.');
     return sendJson(response, 200, await archiveHealth());
@@ -1281,17 +1248,12 @@ async function handleApi(request, response, url) {
       let lat = Number(body.lat); let lng = Number(body.lng);
       if (!key) return sendError(response, 400, 'A venue location is required.');
       if (address) {
-        const query = new URL('https://nominatim.openstreetmap.org/search');
-        query.searchParams.set('q', address); query.searchParams.set('format', 'jsonv2'); query.searchParams.set('limit', '1');
-        const result = await fetch(query, { headers: { 'User-Agent': 'TheMasterList/0.1 personal-live-music-archive', 'Accept-Language': 'en' } });
-        const match = result.ok ? (await result.json())[0] : null;
-        if (!match) return sendError(response, 404, 'That address could not be found. Try including the suburb, city and country.');
-        lat = Number(match.lat); lng = Number(match.lon);
+        const coordinates = await geocoding.search(address);
+        if (!coordinates) return sendError(response, 404, 'That address could not be found. Try including the suburb, city and country.');
+        ({ lat, lng } = coordinates);
       }
-      if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) return sendError(response, 400, 'Enter an address or valid latitude and longitude coordinates.');
-      const geocodes = await readGeocodes();
-      geocodes[key] = { lat, lng };
-      await writeGeocodes(geocodes);
+      if (!validCoordinates(lat, lng)) return sendError(response, 400, 'Enter an address or valid latitude and longitude coordinates.');
+      await geocoding.set(key, { lat, lng });
     } else return sendError(response, 400, 'Manual entry is not available for this issue type.');
     return sendJson(response, 200, await archiveHealth());
   }
