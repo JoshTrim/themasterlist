@@ -43,6 +43,7 @@ const { createArchiveIntegrityService } = require('./lib/archive-integrity');
 const { createMaintenanceRoutes } = require('./lib/routes/maintenance');
 const { createShowRoutes } = require('./lib/routes/shows');
 const { createSetlistRoutes } = require('./lib/routes/setlists');
+const { createStatsRoutes } = require('./lib/routes/stats');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -136,6 +137,7 @@ const archiveIntegrityService = createArchiveIntegrityService({ database, fs, pa
 const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup, manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore });
 const handleShowRoute = createShowRoutes({ database, readGigs, readBody, sendJson, sendError, validateGig, normaliseRating, normaliseAttendees: normaliseGigAttendees, randomUUID });
 const handleSetlistRoute = createSetlistRoutes({ provider: setlistProvider, enrichAlbums: enrichGigAlbums, sendJson, sendError });
+const handleStatsRoute = createStatsRoutes({ database, requireAccount, sendJson, genreStats: archiveGenreStats, usageDay, configured, youtubeQuota: process.env.YOUTUBE_DAILY_QUOTA_UNITS, setlistConfigured: Boolean(process.env.SETLIST_FM_API_KEY && process.env.SETLIST_FM_API_KEY !== 'replace-me') });
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
 const mediaRecognition = createMediaRecognition({
@@ -917,48 +919,7 @@ async function handleApi(request, response, url) {
     importGigs(imported);
     return sendJson(response, 200, { imported: imported.length });
   }
-  if (request.method === 'GET' && url.pathname === '/api/stats') {
-    const gigs = database.prepare('SELECT artist, venue, city, date, favorite, songs FROM gigs').all();
-    const songs = gigs.flatMap((gig) => JSON.parse(gig.songs || '[]'));
-    const countBy = (values) => Object.entries(values.reduce((result, value) => { const key = String(value || 'Unknown'); result[key] = (result[key] || 0) + 1; return result; }, {})).sort((a, b) => b[1] - a[1]);
-    const topVenues = countBy(gigs.map((gig) => `${gig.venue}\u001f${gig.city}`)).slice(0, 5).map(([key, count]) => { const [name, city] = key.split('\u001f'); return [name, city, count]; });
-    return sendJson(response, 200, { shows: gigs.length, artists: new Set(gigs.map((gig) => gig.artist.toLowerCase())).size, venues: new Set(gigs.map((gig) => `${gig.venue}|${gig.city}`.toLowerCase())).size, cities: new Set(gigs.map((gig) => gig.city.toLowerCase())).size, songs: songs.length, favourites: gigs.filter((gig) => gig.favorite).length, topArtists: countBy(gigs.map((gig) => gig.artist)).slice(0, 5), topVenues, years: countBy(gigs.map((gig) => gig.date?.slice(0, 4)).filter(Boolean)) });
-  }
-  if (request.method === 'GET' && url.pathname === '/api/stats/genres') {
-    requireAccount(request);
-    return sendJson(response, 200, { genres: await archiveGenreStats() });
-  }
-  if (request.method === 'GET' && url.pathname === '/api/limits') {
-    requireAccount(request);
-    const day = usageDay();
-    const usage = database.prepare(`SELECT provider, COUNT(*) AS requests, COALESCE(SUM(quota_units), 0) AS units,
-      SUM(CASE WHEN status IS NOT NULL AND status >= 400 THEN 1 ELSE 0 END) AS errors,
-      MAX(requested_at) AS lastRequest
-      FROM api_usage WHERE usage_day = ? GROUP BY provider`).all(day);
-    const operations = database.prepare(`SELECT provider, operation, COUNT(*) AS requests, COALESCE(SUM(quota_units), 0) AS units,
-      MAX(requested_at) AS lastRequest FROM api_usage WHERE usage_day = ? GROUP BY provider, operation ORDER BY units DESC, requests DESC LIMIT 30`).all(day);
-    const recent = database.prepare(`SELECT provider, operation, quota_units AS units, status, requested_at AS requestedAt
-      FROM api_usage WHERE usage_day = ? ORDER BY id DESC LIMIT 20`).all(day);
-    const usageByProvider = new Map(usage.map((entry) => [entry.provider, entry]));
-    const youtubeQuota = Math.max(1, Number(process.env.YOUTUBE_DAILY_QUOTA_UNITS || 10000));
-    const definitions = [
-      { id: 'youtube', name: 'YouTube Data API', configured: configured('youtube'), limit: youtubeQuota, unit: 'quota units', reset: 'Midnight Pacific Time', note: 'Estimated from this app’s requests. Search costs 100 units; playlist writes cost 50.' },
-      { id: 'setlist.fm', name: 'setlist.fm', configured: Boolean(process.env.SETLIST_FM_API_KEY && process.env.SETLIST_FM_API_KEY !== 'replace-me'), limit: null, unit: 'requests', reset: 'Provider-managed', note: 'The API does not return a remaining-quota value, so this page shows tracked requests and errors.' },
-      { id: 'spotify', name: 'Spotify Web API', configured: configured('spotify'), limit: null, unit: 'requests', reset: 'Provider-managed', note: 'Spotify does not publish a simple daily allowance; watch the recent error status for 429 responses.' },
-      { id: 'apple-music', name: 'Apple Music API', configured: configured('apple-music'), limit: null, unit: 'requests', reset: 'Provider-managed', note: 'Apple Music does not expose a remaining request count to this app.' },
-      { id: 'audd', name: 'AudD music recognition', configured: configured('audd'), limit: null, unit: 'requests', reset: 'Provider-managed', note: 'AudD usage is tracked here, but the provider controls the allowance and billing.' }
-    ];
-    return sendJson(response, 200, {
-      day,
-      generatedAt: new Date().toISOString(),
-      providers: definitions.map((definition) => {
-        const entry = usageByProvider.get(definition.id) || { requests: 0, units: 0, errors: 0, lastRequest: null };
-        return { ...definition, requests: Number(entry.requests), units: Number(entry.units), errors: Number(entry.errors), remaining: definition.limit === null ? null : Math.max(0, definition.limit - Number(entry.units)), lastRequest: entry.lastRequest };
-      }),
-      operations,
-      recent
-    });
-  }
+  if (await handleStatsRoute(request, response, url)) return;
   if (request.method === 'GET' && url.pathname === '/api/jobs') {
     return sendJson(response, 200, backgroundJobs.listActive());
   }
