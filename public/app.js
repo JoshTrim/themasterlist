@@ -244,6 +244,13 @@ const showDetailNoMedia = document.querySelector('#show-detail-no-media');
 const showDetailArtifacts = document.querySelector('#show-detail-artifacts');
 const showDetailNoArtifacts = document.querySelector('#show-detail-no-artifacts');
 const showMemoryFacts = document.querySelector('#show-memory-facts');
+const showMemoryHeroImage = document.querySelector('#show-memory-hero-image');
+const showMemoryHeroFallback = document.querySelector('#show-memory-hero-fallback');
+const showMemoryFavourite = document.querySelector('#show-memory-favourite');
+const showMemoryPlay = document.querySelector('#show-memory-play');
+const showMemoryTicket = document.querySelector('#show-memory-ticket');
+const showShareMemory = document.querySelector('#show-share-memory');
+const showDownloadCard = document.querySelector('#show-download-card');
 const showNavTrackCount = document.querySelector('#show-nav-track-count');
 const showNavMediaCount = document.querySelector('#show-nav-media-count');
 const showNavArtifactCount = document.querySelector('#show-nav-artifact-count');
@@ -559,7 +566,7 @@ function renderTrackList(songs, albumFallback = 'Album data unavailable') { retu
 function setupArchiveSetlist(setlist, gig, options = {}) { return setlistPresenter.setupArchive(setlist, gig, options); }
 
 const showDetailPageController = showDetailPageModule.createController({
-  page, window, URLSearchParamsClass: URLSearchParams, setTimeoutFn: setTimeout,
+  page, window, document, navigatorApi: navigator, URLSearchParamsClass: URLSearchParams, setTimeoutFn: setTimeout,
   showId: showDetailId, getGigs: () => gigs, fetchJson, escapeHtml, formatDate: formatGigDate, attendeeNames,
   hasMissingAlbums: setlistPresentationModule.hasMissingAlbums, renderTrackList, renderAlbumStats, renderMediaGallery,
   startPlayback: () => playWholeSet?.click(),
@@ -569,7 +576,9 @@ const showDetailPageController = showDetailPageModule.createController({
     setlist: showDetailSetlist, editLink: showEditLink, noMedia: showDetailNoMedia, noArtifacts: showDetailNoArtifacts,
     navTrackCount: showNavTrackCount, navMediaCount: showNavMediaCount, navArtifactCount: showNavArtifactCount,
     facts: showMemoryFacts, gallery: showDetailGallery, artifactGallery: showDetailArtifacts,
-    findAlbums: findAlbumInfo, albumMessage: albumLookupMessage
+    findAlbums: findAlbumInfo, albumMessage: albumLookupMessage,
+    heroImage: showMemoryHeroImage, heroFallback: showMemoryHeroFallback, favouriteBadge: showMemoryFavourite,
+    heroPlayLink: showMemoryPlay, memoryTicket: showMemoryTicket, shareButton: showShareMemory, downloadButton: showDownloadCard
   }
 });
 showDetailPageController.bind();

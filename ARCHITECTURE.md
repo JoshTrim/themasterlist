@@ -106,7 +106,7 @@
 - `track-list-editor.js` — metadata-safe setlist field editing, add/remove controls and pointer, keyboard or native drag reordering.
 - `edit-show-page.js` — edit form hydration, duplicate checks, attendee/media coordination and metadata-safe show persistence.
 - `setlist-presentation.js` — track tooltips, album breakdowns and lazy album hydration for archive setlists.
-- `show-detail-page.js` — show-memory header, facts, setlist hydration, album repair and media/artifact presentation.
+- `show-detail-page.js` — cover-driven show-memory hero, share/download cards, facts, setlist hydration, album repair and media/artifact presentation.
 - `mobile-upload-controller.js` — sequential per-input upload queues, progress/retry state, wake locks and pending-file clearing.
 - `media-workspace-controller.js` — edit-page media health summaries, filtering, retry actions, recognition and gallery refreshes.
 - `api-client.js` — consistent JSON response parsing and API error objects.
