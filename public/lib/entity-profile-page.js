@@ -56,6 +56,16 @@
     if (href) source.href = href;
   }
 
+  function presentVenueMetadata(elements, info, { fallbackTitle = '', fallbackBio = '' } = {}) {
+    const { heading, description, bio, closedBadge, image, source } = elements;
+    heading.textContent = info.title || fallbackTitle;
+    description.textContent = info.description || '';
+    bio.textContent = info.bio || fallbackBio;
+    closedBadge.hidden = !info.isClosed;
+    presentImage(image, info, fallbackTitle, 'photo');
+    presentSource(source, info.source);
+  }
+
   function createArtistController({ page, name, getGigs, fetchJson, renderShows, elements }) {
     const { heading, description, bio, image, source, editLink, empty, stats } = elements;
     return {
@@ -102,12 +112,7 @@
         if (!name) return;
         try {
           const info = await fetchJson(`/api/venues?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}`);
-          heading.textContent = info.title || name;
-          description.textContent = info.description || '';
-          bio.textContent = info.bio || 'No venue biography was found yet.';
-          closedBadge.hidden = !info.isClosed;
-          presentImage(image, info, name, 'photo');
-          presentSource(source, info.source);
+          presentVenueMetadata(elements, info, { fallbackTitle: name, fallbackBio: 'No venue biography was found yet.' });
           editLink.href = `/venue/edit?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}`;
         } catch {
           bio.textContent = 'Venue information could not be loaded right now.';
@@ -116,5 +121,5 @@
     };
   }
 
-  return { artistShows, venueShows, artistStats, venueStats, createArtistController, createVenueController };
+  return { artistShows, venueShows, artistStats, venueStats, presentVenueMetadata, createArtistController, createVenueController };
 }));

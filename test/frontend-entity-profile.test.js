@@ -14,6 +14,19 @@ function element() {
 }
 
 describe('artist and venue profile pages', () => {
+  test('presents persisted venue metadata consistently after edits', () => {
+    const elements = { heading: element(), description: element(), bio: element(), closedBadge: element(), image: element(), source: element() };
+    profiles.presentVenueMetadata(elements, {
+      title: 'The Tivoli', description: 'Historic venue', bio: 'Venue bio', isClosed: true,
+      image: '/venue.jpg', imagePosition: 'top', source: 'https://example.com'
+    });
+    assert.equal(elements.heading.textContent, 'The Tivoli');
+    assert.equal(elements.closedBadge.hidden, false);
+    assert.equal(elements.image.alt, 'The Tivoli photo');
+    assert.equal(elements.image.style.objectPosition, 'top');
+    assert.equal(elements.source.href, 'https://example.com');
+  });
+
   test('selects profiles case-insensitively and calculates their archive statistics', () => {
     const artistRecords = profiles.artistShows(gigs, 'POPPY');
     const venueRecords = profiles.venueShows(gigs, 'RIVERSTAGE', 'brisbane');

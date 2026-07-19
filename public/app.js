@@ -515,12 +515,10 @@ const venueMetadataEditor = metadataEditorModule.createController({
   stepper: venueEditStepper, heading: document.querySelector('#venue-edit-heading'),
   backLink: document.querySelector('#venue-edit-back'), fetchJson,
   validateImage: directoryUi.validateImage, getEntries: () => metadataEditorEntries('venue'), escapeHtml,
-  afterSave: (info) => {
-    venueHeading.textContent = info.title; venueDescription.textContent = info.description; venueBio.textContent = info.bio;
-    venueClosedBadge.hidden = !info.isClosed;
-    venueImage.hidden = !info.image; if (info.image) { venueImage.src = info.image; venueImage.alt = `${info.title} photo`; venueImage.style.objectPosition = info.imagePosition || 'center'; }
-    venueSource.hidden = !info.source; if (info.source) venueSource.href = info.source;
-  }
+  afterSave: (info) => entityProfilePageModule.presentVenueMetadata({
+    heading: venueHeading, description: venueDescription, bio: venueBio,
+    closedBadge: venueClosedBadge, image: venueImage, source: venueSource
+  }, info)
 });
 venueMetadataEditor.bind();
 function renderVenueEditPage() { return venueMetadataEditor.load(); }
