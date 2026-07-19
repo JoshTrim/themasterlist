@@ -29,6 +29,7 @@ const playlistExportModule = window.MasterListPlaylistExport;
 const authControllerModule = window.MasterListAuthController;
 const peerSettingsModule = window.MasterListPeerSettings;
 const notificationCenterModule = window.MasterListNotificationCenter;
+const sharedShowsPageModule = window.MasterListSharedShowsPage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1262,7 +1263,7 @@ function activeProfile() {
 }
 
 function attendeeNames(gig) {
-  return (Array.isArray(gig?.attendees) ? gig.attendees : []).map((person) => person?.name).filter(Boolean);
+  return sharedShowsPageModule.attendeeNames(gig);
 }
 
 function renderAttendeeSummary(container, gig, prefix = 'With') {
@@ -2001,11 +2002,7 @@ function renderProfiles() {
 
 function renderSharedShows() {
   sharedList.replaceChildren();
-  const localShared = gigs.filter((gig) => attendeeNames(gig).length > 1);
-  const localSharedIds = new Set(localShared.flatMap((gig) => [gig.id, gig.sharedId].filter(Boolean)));
-  const syncedRemoteShows = sharedShows.filter((show) => show.contributions?.length && !localSharedIds.has(show.id) && !localSharedIds.has(show.sourceGigId));
-  const legacyShows = sharedShows.filter((show) => !show.contributions?.length && !localSharedIds.has(show.id) && !localSharedIds.has(show.sourceGigId));
-  const totalShared = localShared.length + syncedRemoteShows.length + legacyShows.length;
+  const { local: localShared, remote: syncedRemoteShows, legacy: legacyShows, total: totalShared } = sharedShowsPageModule.partitionShows(gigs, sharedShows);
   setSharedMessage(totalShared ? `${totalShared} shared show${totalShared === 1 ? '' : 's'} in this instance.` : 'Add attendees to a show to start a collaborative record.');
   if (localShared.length) {
     const heading = document.createElement('p');
@@ -2027,18 +2024,11 @@ function renderSharedShows() {
       card.querySelector('.local-shared-attendees').innerHTML = (gig.attendees || []).map((person) => {
         const isLocal = person.id === account?.id;
         const contribution = contributions.find((entry) => isLocal ? entry.localGigId === gig.id : entry.instanceId === person.id);
-        const detail = contribution
-          ? `${contribution.performanceRating ? `Performance ${contribution.performanceRating}/5` : 'Performance unrated'} · ${contribution.venueRating ? `Venue ${contribution.venueRating}/5` : 'Venue unrated'}${contribution.favorite ? ' · Favourite' : ''} · ${contribution.media?.length || 0} media`
-          : isLocal ? `${gig.performanceRating ? `Performance ${gig.performanceRating}/5` : 'Performance unrated'} · ${gig.venueRating ? `Venue ${gig.venueRating}/5` : 'Venue unrated'}${gig.favorite ? ' · Favourite' : ''}` : 'Peer contribution will appear after sync';
+        const detail = sharedShowsPageModule.contributionDetail({ contribution, gig, isLocal });
         const notes = contribution?.performanceNotes || contribution?.venueNotes;
         return `<div><strong>${escapeHtml(contribution?.participantName || person.name || 'Attendee')}</strong><span>${escapeHtml(detail)}</span>${notes ? `<small>${escapeHtml(notes)}</small>` : ''}</div>`;
       }).join('');
-      const performanceRatings = contributions.map((entry) => Number(entry.performanceRating)).filter(Boolean);
-      const venueRatings = contributions.map((entry) => Number(entry.venueRating)).filter(Boolean);
-      const mediaTotal = contributions.length ? contributions.reduce((sum, entry) => sum + (entry.media?.length || 0), 0) : gig.media?.length || 0;
-      const performanceAverage = performanceRatings.length ? `Performance average ${(performanceRatings.reduce((sum, value) => sum + value, 0) / performanceRatings.length).toFixed(1)} / 5` : 'Performance unrated';
-      const venueAverage = venueRatings.length ? `Venue average ${(venueRatings.reduce((sum, value) => sum + value, 0) / venueRatings.length).toFixed(1)} / 5` : 'Venue unrated';
-      card.querySelector('.local-shared-meta').textContent = `${performanceAverage} · ${venueAverage} · ${mediaTotal} media item${mediaTotal === 1 ? '' : 's'} across attendees`;
+      card.querySelector('.local-shared-meta').textContent = sharedShowsPageModule.localSummary(contributions, gig);
       sharedList.append(card);
     }
   }
@@ -2112,13 +2102,7 @@ function renderSharedShows() {
 }
 
 function renderSharedStars(stars) {
-  const rating = Number(stars.dataset.value) || 0;
-  stars.innerHTML = [1, 2, 3, 4, 5].map((value) => `<button type="button" value="${value}" class="${value <= rating ? 'selected' : ''}" aria-label="${value} stars">★</button>`).join('');
-  stars.closest('.shared-rating-row').querySelector('.shared-rating-number').textContent = rating ? `${rating} / 5` : 'Unrated';
-  stars.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
-    stars.dataset.value = button.value;
-    renderSharedStars(stars);
-  }));
+  return sharedShowsPageModule.renderStars(stars);
 }
 
 async function refreshCollaboration() {
