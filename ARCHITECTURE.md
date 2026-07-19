@@ -53,6 +53,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `playback-core.js` — playback sources, clip bounds, queue construction, gap handling and timeline interpolation.
 - `playback-media.js` — YouTube/upload source presentation and player-stage markup.
 - `playback-editor.js` — playback-plan validation, normalized clip payloads and suggestion presentation state.
+- `playback-editor-controller.js` — playback previews, fallback sources, draft preservation, suggestions, validation and plan persistence.
 - `theatre.js` — fullscreen presentation, keyboard commands and control auto-hide rules.
 - `theatre-controller.js` — fullscreen lifecycle, wake lock, keyboard transport and theatre control visibility wiring.
 - `media-ui.js` — media recognition/workspace presentation, bulk selection and media-safe show patches.
