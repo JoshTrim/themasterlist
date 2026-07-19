@@ -25,6 +25,7 @@ const healthPageModule = window.MasterListHealthPage;
 const maintenancePageModule = window.MasterListMaintenancePage;
 const directoryPageModule = window.MasterListDirectoryPage;
 const locationsPageModule = window.MasterListLocationsPage;
+const playlistExportModule = window.MasterListPlaylistExport;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -150,7 +151,6 @@ let sharedShows = [];
 const archiveArtistImageCache = new Map();
 let activeProfileId = '';
 let account = null;
-let musicKitConfigured = false;
 
 const page = document.body.dataset.page || 'home';
 const routeSections = {
@@ -2487,74 +2487,12 @@ const mapPageController = locationsPageModule.createMapController({
 });
 mapPageController.bind();
 
-function integrationFor(provider) {
-  return provider === 'apple-music' ? integrations.appleMusic : integrations[provider];
-}
-
-function setupExportButtons(exports, gig) {
-  const status = exports.querySelector('.export-result');
-  exports.querySelectorAll('.export-button').forEach((button) => {
-    const provider = button.dataset.provider;
-    const integration = integrationFor(provider);
-    const label = providerName(provider);
-    button.textContent = label;
-    if (!integration?.configured) {
-      button.disabled = true;
-      button.title = `Add ${label} credentials to .env, then restart the server.`;
-      return;
-    }
-    button.addEventListener('click', () => runExport(provider, gig, exports, status));
-  });
-}
-
-async function runExport(provider, gig, exports, status) {
-  const integration = integrationFor(provider);
-  if (provider !== 'apple-music' && !integration.connected) {
-    window.location.assign(`/auth/${provider}`);
-    return;
-  }
-  const buttons = [...exports.querySelectorAll('button')];
-  buttons.forEach((button) => { button.disabled = true; });
-  status.textContent = `Matching ${gig.songs.length} songs and creating your ${providerName(provider)} playlist…`;
-  try {
-    let body = {};
-    if (provider === 'apple-music') body = { musicUserToken: await authorizeAppleMusic(integration.developerToken) };
-    const result = await fetchJson(`/api/gigs/${gig.id}/export/${provider}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-    });
-    status.replaceChildren();
-    const link = document.createElement('a');
-    link.href = result.url;
-    link.target = '_blank';
-    link.rel = 'noreferrer';
-    link.textContent = `Open ${providerName(provider)} playlist ↗`;
-    status.append(`Created with ${result.matched} matched song${result.matched === 1 ? '' : 's'}. `, link);
-    if (result.unmatched?.length) status.append(` ${result.unmatched.length} song${result.unmatched.length === 1 ? '' : 's'} could not be matched.`);
-  } catch (error) {
-    status.textContent = error.message;
-    status.classList.add('error');
-  } finally {
-    buttons.forEach((button) => { button.disabled = false; });
-  }
-}
-
-async function authorizeAppleMusic(developerToken) {
-  if (!developerToken) throw new Error('Apple Music is not configured yet.');
-  if (!window.MusicKit) {
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = 'https://js-cdn.music.apple.com/musickit/v1/musickit.js';
-      script.onload = resolve;
-      script.onerror = () => reject(new Error('Could not load MusicKit.'));
-      document.head.append(script);
-    });
-  }
-  if (!musicKitConfigured) {
-    window.MusicKit.configure({ developerToken, app: { name: 'The Master List', build: '0.1.0' } });
-    musicKitConfigured = true;
-  }
-  return window.MusicKit.getInstance().authorize();
-}
+const authorizeAppleMusic = playlistExportModule.createAppleAuthorizer({ window, document });
+const playlistExporter = playlistExportModule.createExporter({
+  getIntegrations: () => integrations, providerName, fetchJson,
+  navigate: (href) => window.location.assign(href), document, authorizeAppleMusic
+});
+function setupExportButtons(exports, gig) { return playlistExporter.setupButtons(exports, gig); }
 
 async function initializeApp() {
   if (page === 'shared') { window.location.replace('/shows'); return; }

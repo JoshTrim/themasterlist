@@ -75,6 +75,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `maintenance-page.js` — backup scheduling, snapshots, integrity checks, orphan cleanup and staged restores.
 - `directory-page.js` — artist/venue directory rendering, filters, metadata badges and lazy profile hydration.
 - `locations-page.js` — city venue summaries, geocoding refresh and Leaflet map lifecycle/markers.
+- `playlist-export.js` — provider readiness, OAuth redirects, MusicKit authorization and playlist export results.
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 
