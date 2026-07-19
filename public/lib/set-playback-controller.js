@@ -3,6 +3,32 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.MasterListSetPlaybackController = api;
 }(typeof globalThis !== 'undefined' ? globalThis : this, function setPlaybackControllerFactory() {
+  function createTransportControls({ document, player, nextButton, fullscreenButton }) {
+    const previousButton = document.createElement('button');
+    previousButton.type = 'button';
+    previousButton.className = 'button button-secondary';
+    previousButton.textContent = '← Previous';
+    const restartButton = document.createElement('button');
+    restartButton.type = 'button';
+    restartButton.className = 'button button-secondary set-player-restart';
+    restartButton.textContent = '↺ Start over';
+    const controlsToggle = document.createElement('button');
+    controlsToggle.type = 'button';
+    controlsToggle.className = 'set-player-controls-toggle';
+    controlsToggle.textContent = '•••';
+    controlsToggle.setAttribute('aria-label', 'Show or hide playback controls');
+    player.append(controlsToggle);
+    const controls = document.createElement('div');
+    controls.className = 'set-player-controls';
+    if (nextButton?.parentNode) {
+      nextButton.parentNode.insertBefore(controls, nextButton);
+      controls.append(previousButton, restartButton);
+      if (fullscreenButton) controls.append(fullscreenButton);
+      controls.append(nextButton);
+    }
+    return { previousButton, restartButton, controlsToggle, controls };
+  }
+
   function createController({
     document, window, navigatorApi, storage, getGigs, showId, escapeHtml, formatPlaybackTime,
     loadYouTubeApi, youtubeEmbedUrl, playbackCore, playbackMedia, timelineControllerModule,
@@ -401,5 +427,5 @@
     };
   }
 
-  return { createController };
+  return { createTransportControls, createController };
 }));

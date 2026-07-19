@@ -108,6 +108,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 - `profile-show-list.js` — artist/venue show cards and shared-attendee summaries.
 - `directory-page.js` — cached metadata, entity cards, lazy image hydration and filtering.
+- `set-playback-controller.js` — whole-set source transitions, transport construction and playback lifecycle.
 
 Styles retain their original cascade order through `public/styles.css`: `shell-and-forms.css`, `components.css`, `playback.css`, then page-specific `pages.css`.
 

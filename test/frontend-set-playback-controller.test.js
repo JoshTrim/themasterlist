@@ -10,7 +10,7 @@ function button() {
     classList: { contains: (name) => String(this?.className || '').split(' ').includes(name), add() {} },
     addEventListener(type, handler) { this.handlers[type] = handler; },
     click() { return this.handlers.click?.({ target: this }); },
-    setAttribute() {}, setPointerCapture() {}
+    setAttribute(name, value) { this[name] = value; }, setPointerCapture() {}
   };
 }
 
@@ -59,6 +59,23 @@ function fixture(gig) {
 }
 
 describe('whole-set playback controller', () => {
+  test('builds compact transport controls in playback order', () => {
+    const created = [];
+    const document = { createElement: (tag) => { const element = button(); element.tag = tag; element.children = []; element.append = (...children) => element.children.push(...children); created.push(element); return element; } };
+    const playerChildren = [];
+    const player = { append: (element) => playerChildren.push(element) };
+    const parent = { inserted: [], insertBefore(element, before) { this.inserted.push({ element, before }); } };
+    const nextButton = button(); nextButton.parentNode = parent;
+    const fullscreenButton = button();
+    const controls = setPlaybackController.createTransportControls({ document, player, nextButton, fullscreenButton });
+    assert.equal(controls.previousButton.textContent, '← Previous');
+    assert.equal(controls.restartButton.textContent, '↺ Start over');
+    assert.equal(controls.controlsToggle['aria-label'], 'Show or hide playback controls');
+    assert.deepEqual(playerChildren, [controls.controlsToggle]);
+    assert.deepEqual(parent.inserted, [{ element: controls.controls, before: nextButton }]);
+    assert.deepEqual(controls.controls.children, [controls.previousButton, controls.restartButton, fullscreenButton, nextButton]);
+  });
+
   test('builds the set queue and explains when no playable media exists', () => {
     const gig = { id: 'g1', songs: [{ title: 'Opening' }], media: [] };
     const view = fixture(gig);

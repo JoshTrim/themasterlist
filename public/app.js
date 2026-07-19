@@ -259,15 +259,9 @@ const setPlayerTitle = document.querySelector('#set-player-title');
 const setPlayerStage = document.querySelector('#set-player-stage');
 const setPlayerNext = document.querySelector('#set-player-next');
 const setPlayerFullscreen = document.querySelector('#set-player-fullscreen');
-const setPlayerPrev = document.createElement('button');
-setPlayerPrev.type = 'button'; setPlayerPrev.className = 'button button-secondary'; setPlayerPrev.textContent = '← Previous';
-const setPlayerRestart = document.createElement('button');
-setPlayerRestart.type = 'button'; setPlayerRestart.className = 'button button-secondary set-player-restart'; setPlayerRestart.textContent = '↺ Start over';
-const setPlayerControlsToggle = document.createElement('button');
-setPlayerControlsToggle.type = 'button'; setPlayerControlsToggle.className = 'set-player-controls-toggle'; setPlayerControlsToggle.textContent = '•••'; setPlayerControlsToggle.setAttribute('aria-label', 'Show or hide playback controls');
-setPlayer.append(setPlayerControlsToggle);
-const setPlayerControls = document.createElement('div'); setPlayerControls.className = 'set-player-controls';
-if (setPlayerNext?.parentNode) { setPlayerNext.parentNode.insertBefore(setPlayerControls, setPlayerNext); setPlayerControls.append(setPlayerPrev, setPlayerRestart); if (setPlayerFullscreen) setPlayerControls.append(setPlayerFullscreen); setPlayerControls.append(setPlayerNext); }
+const {
+  previousButton: setPlayerPrev, restartButton: setPlayerRestart, controlsToggle: setPlayerControlsToggle
+} = setPlaybackControllerModule.createTransportControls({ document, player: setPlayer, nextButton: setPlayerNext, fullscreenButton: setPlayerFullscreen });
 const setPlayerStatus = document.querySelector('#set-player-status');
 const setPlayerProgress = document.querySelector('#set-player-progress');
 const setPlayerMarkers = document.querySelector('#set-player-markers');
