@@ -28,6 +28,19 @@ class FormDataStub {
 const escapeHtml = (value) => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
 
 describe('peer instance settings', () => {
+  test('refreshes archive and collaboration state after a successful sync', async () => {
+    const calls = [];
+    const refresh = peers.createPostSyncRefresh({
+      fetchJson: async (url) => { calls.push(`fetch:${url}`); return [{ id: 'g1' }]; },
+      onGigs: (gigs) => calls.push(`gigs:${gigs.length}`),
+      populateYears: () => calls.push('years'), renderArchive: () => calls.push('archive'),
+      refreshCollaboration: async () => calls.push('collaboration'),
+      loadNotifications: async () => calls.push('notifications')
+    });
+    assert.deepEqual(await refresh(), [{ id: 'g1' }]);
+    assert.deepEqual(calls, ['fetch:/api/gigs', 'gigs:1', 'years', 'archive', 'collaboration', 'notifications']);
+  });
+
   test('extracts pairing tokens from invite URLs and accepts raw tokens', () => {
     assert.equal(peers.extractInviteToken('https://archive.test/account?peerInvite=secret'), 'secret');
     assert.equal(peers.extractInviteToken(' raw-token '), 'raw-token');

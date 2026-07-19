@@ -617,17 +617,15 @@ const authController = authControllerModule.createController({
 });
 authController.bind();
 function showAuth(status) { return authController.show(status); }
+const refreshAfterPeerSync = peerSettingsModule.createPostSyncRefresh({
+  fetchJson, onGigs: (nextGigs) => { gigs = nextGigs; }, populateYears: populateYearFilter,
+  renderArchive: renderGigs, refreshCollaboration, loadNotifications: loadPeerNotifications
+});
 const peerSettingsController = peerSettingsModule.createController({
   window, navigator, fetchJson, escapeHtml,
   elements: { instanceId, publicKey: instancePublicKey, form: peerForm, message: peerMessage, list: peerList, createInviteButton: createPeerInvite, inviteMessage: peerInviteMessage, inviteToken: peerInviteToken, importInviteButton: importPeerInvite },
   onPeers: (nextPeers) => { peers = nextPeers; },
-  onSynced: async () => {
-    gigs = await fetchJson('/api/gigs');
-    populateYearFilter();
-    renderGigs();
-    await refreshCollaboration();
-    await loadPeerNotifications();
-  }
+  onSynced: refreshAfterPeerSync
 });
 peerSettingsController.bind();
 async function renderInstanceSettings() { if (account) return peerSettingsController.render(); }

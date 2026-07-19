@@ -16,6 +16,18 @@
     return `<article class="peer-card" data-peer-id="${escapeHtml(peer.id)}"><div class="peer-card-copy"><strong>${escapeHtml(peer.name)}</strong><small>${escapeHtml(peer.baseUrl || 'Direct relay/VPN connection not configured')}</small><span class="peer-status peer-status-${escapeHtml(status)}">${escapeHtml(status)}${lastSeen}</span></div><div class="peer-actions"><button type="button" class="peer-test" ${peer.baseUrl ? '' : 'disabled'}>Test</button><button type="button" class="peer-sync" ${peer.baseUrl ? '' : 'disabled'}>Sync now</button><button type="button" class="peer-remove">Remove</button></div></article>`;
   }
 
+  function createPostSyncRefresh({ fetchJson, onGigs, populateYears, renderArchive, refreshCollaboration, loadNotifications }) {
+    return async function refreshAfterSync() {
+      const gigs = await fetchJson('/api/gigs');
+      onGigs(gigs);
+      populateYears();
+      renderArchive();
+      await refreshCollaboration();
+      await loadNotifications();
+      return gigs;
+    };
+  }
+
   function createController({
     window, navigator, fetchJson, escapeHtml, FormDataClass = FormData,
     confirmAction = (message) => window.confirm(message), elements,
@@ -124,5 +136,5 @@
     return { render, addManual, createInvite, importInvite, bind };
   }
 
-  return { extractInviteToken, peerCardMarkup, createController };
+  return { extractInviteToken, peerCardMarkup, createPostSyncRefresh, createController };
 }));
