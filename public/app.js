@@ -16,6 +16,7 @@ const pageControllersModule = window.MasterListPageControllers;
 const editMediaUploadModule = window.MasterListEditMediaUpload;
 const youtubePlayerApiModule = window.MasterListYoutubePlayerApi;
 const addMediaUploadModule = window.MasterListAddMediaUpload;
+const shellRouter = window.MasterListShellRouter;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -173,39 +174,9 @@ let sharedShows = [];
 let activeProfileId = '';
 let account = null;
 
-const page = document.body.dataset.page || 'home';
-const routeSections = {
-  home: ['home-page'],
-  overview: ['overview-page'],
-  artists: ['artists-page'],
-  venues: ['venues-page'],
-  timeline: ['timeline-page'],
-  search: ['search-page'],
-  health: ['health-page'],
-  maintenance: ['maintenance-page'],
-  activity: ['activity-page'],
-  conflicts: ['conflicts-page'],
-  'api-limits': ['api-limits-page'],
-  add: ['add-page'],
-  shows: ['shows-archive'],
-  shared: ['shows-archive'],
-  login: ['shows-shared'],
-  artist: ['artist-page'],
-  'artist-edit': ['artist-edit-page'],
-  show: ['show-page'],
-  playback: ['show-page'],
-  city: ['city-page'],
-  venue: ['venue-page'],
-  'venue-edit': ['venue-edit-page'],
-  edit: ['edit-page'],
-  map: ['map-page'],
-  account: ['account-page']
-};
-for (const id of ['home-page', 'overview-page', 'artists-page', 'venues-page', 'timeline-page', 'search-page', 'health-page', 'maintenance-page', 'activity-page', 'conflicts-page', 'api-limits-page', 'add-page', 'shows-archive', 'artist-page', 'artist-edit-page', 'show-page', 'venue-page', 'venue-edit-page', 'edit-page', 'shows-shared', 'map-page', 'city-page', 'account-page']) {
-  document.querySelector(`#${id}`).hidden = !routeSections[page].includes(id);
-}
+const page = shellRouter.apply(document);
 const chestButton = document.querySelector('#open-chest');
-if (chestButton) chestButton.addEventListener('click', () => window.location.assign('/shows'));
+shellRouter.bindChest(window, chestButton);
 
 const artistNameFromUrl = new URLSearchParams(window.location.search).get('name')?.trim() || '';
 const artistHeading = document.querySelector('#artist-heading');
