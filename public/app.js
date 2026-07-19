@@ -8,6 +8,7 @@ const playbackTimelineControllerModule = window.MasterListPlaybackTimelineContro
 const setPlaybackControllerModule = window.MasterListSetPlaybackController;
 const youtubeShowSearchModule = window.MasterListYoutubeShowSearch;
 const profileShowListModule = window.MasterListProfileShowList;
+const showFormUiModule = window.MasterListShowFormUi;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -332,86 +333,20 @@ const venueEditPreview = document.querySelector('#venue-edit-preview');
 const venueEditMessage = document.querySelector('#venue-edit-message');
 const venueEditStepper = document.querySelector('#venue-edit-stepper');
 
-function populateShowAutofill() {
-  const values = {
-    'artist-options': [...new Set(gigs.map((gig) => gig.artist).filter(Boolean))].sort(),
-    'venue-options': [...new Set(gigs.map((gig) => gig.venue).filter(Boolean))].sort(),
-    'city-options': [...new Set(gigs.map((gig) => gig.city).filter(Boolean))].sort()
-  };
-  Object.entries(values).forEach(([id, options]) => { const list = document.querySelector(`#${id}`); if (list) list.innerHTML = options.map((value) => `<option value="${escapeHtml(value)}"></option>`).join(''); });
-}
-
-function setRatingPicker(picker, value = '') {
-  const rating = Number(value) || 0;
-  const choice = picker.closest('.rating-choice');
-  choice.querySelector('input').value = rating || '';
-  picker.querySelectorAll('button').forEach((button) => {
-    const selected = Number(button.value) <= rating;
-    button.classList.toggle('selected', selected);
-    button.setAttribute('aria-pressed', String(selected));
-  });
-}
-
-function resetReviewForm() {
-  document.querySelectorAll('.star-picker').forEach((picker) => setRatingPicker(picker));
-  setFavoriteChoice(false);
-}
-
-function setFavoriteChoice(favorite) {
-  favoriteChoice.setAttribute('aria-pressed', String(favorite));
-  favoriteChoice.querySelector('span').textContent = favorite ? '♥' : '♡';
-  form.elements.favorite.value = String(favorite);
-}
-
-document.querySelectorAll('.star-picker').forEach((picker) => {
-  picker.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => setRatingPicker(picker, button.value)));
+const showFormUiController = showFormUiModule.createController({
+  document, window, editor: showEditor, escapeHtml, formatGigDate,
+  getGigs: () => gigs, getSharedShows: () => sharedShows, getPeers: () => peers, getAccount: () => account,
+  elements: { addForm: form, favoriteChoice, message, editForm, editAttendeePicker }
 });
-
-favoriteChoice.addEventListener('click', () => setFavoriteChoice(favoriteChoice.getAttribute('aria-pressed') !== 'true'));
-
-function findDuplicateShows(values, excludeId = '') {
-  return showEditor.findDuplicates(values, { gigs, sharedShows, excludeId });
-}
-
-function showDuplicateWarning(container, values, excludeId = '') {
-  if (!container) return [];
-  const matches = findDuplicateShows(values, excludeId);
-  container.hidden = !matches.length;
-  container.innerHTML = matches.length ? `<strong>Possible duplicate show</strong><p>${matches.length} matching ${matches.length === 1 ? 'entry already exists' : 'entries already exist'} for this artist, venue and date.</p>${matches.map((gig) => `<a href="${gig.duplicateSource === 'Your archive' ? `/show?id=${encodeURIComponent(gig.id)}` : '/shows'}"><span>${escapeHtml(gig.artist)}</span><small>${escapeHtml(gig.venue)} · ${escapeHtml(gig.city || '')} · ${escapeHtml(formatGigDate(gig.date))} · ${escapeHtml(gig.duplicateSource)}</small></a>`).join('')}` : '';
-  return matches;
-}
-
-function confirmDuplicateSave(container, values, excludeId = '') {
-  const matches = showDuplicateWarning(container, values, excludeId);
-  return !matches.length || window.confirm(`${matches.length} matching show ${matches.length === 1 ? 'already exists' : 'entries already exist'}. Save another copy anyway?`);
-}
-
-function renderAttendeePicker(container, selected = []) {
-  if (!container) return;
-  container.querySelector('.attendee-options').innerHTML = showEditor.attendeeMarkup(showEditor.attendeeOptions(account, peers, selected), escapeHtml);
-}
-
-function readAttendees(container) {
-  if (!container) return [];
-  return showEditor.selectedAttendees(container.querySelectorAll('input[type="checkbox"]'));
-}
-
-function ensureEditAttendeePicker() {
-  if (editAttendeePicker || !editForm) return editAttendeePicker;
-  const picker = document.createElement('fieldset');
-  picker.className = 'attendee-picker';
-  picker.id = 'edit-attendee-picker';
-  picker.innerHTML = '<legend>Who was there?</legend><div class="attendee-options"></div><small>You are included automatically. Select any paired peers who attended with you.</small>';
-  editForm.querySelector('.edit-setlist')?.before(picker);
-  editAttendeePicker = picker;
-  return picker;
-}
-
-function setMessage(text, isError = false) {
-  message.textContent = text;
-  message.classList.toggle('error', isError);
-}
-
+showFormUiController.bind();
+function populateShowAutofill() { return showFormUiController.populateAutofill(); }
+function resetReviewForm() { return showFormUiController.resetReview(); }
+function showDuplicateWarning(container, values, excludeId = '') { return showFormUiController.showDuplicateWarning(container, values, excludeId); }
+function confirmDuplicateSave(container, values, excludeId = '') { return showFormUiController.confirmDuplicateSave(container, values, excludeId); }
+function renderAttendeePicker(container, selected = []) { return showFormUiController.renderAttendees(container, selected); }
+function readAttendees(container) { return showFormUiController.readAttendees(container); }
+function ensureEditAttendeePicker() { return showFormUiController.ensureEditAttendeePicker(); }
+function setMessage(text, isError = false) { return showFormUiController.setMessage(text, isError); }
 async function fetchJson(url, options) {
   return apiClient.json(url, options);
 }
