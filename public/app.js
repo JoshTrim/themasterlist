@@ -19,6 +19,7 @@ const overviewPageModule = window.MasterListOverviewPage;
 const entityProfilePageModule = window.MasterListEntityProfilePage;
 const metadataEditorModule = window.MasterListMetadataEditor;
 const apiLimitsPageModule = window.MasterListApiLimitsPage;
+const activityPageModule = window.MasterListActivityPage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1633,34 +1634,13 @@ stageRestoreButton?.addEventListener('click', async () => {
   finally { stageRestoreButton.disabled = false; }
 });
 
-let activityData = [];
-let activityFilter = 'all';
-function renderActivityList() {
-  if (!activityList) return;
-  const visible = activityData.filter((entry) => activityFilter === 'all' || entry.unread);
-  activityFilters.querySelectorAll('button').forEach((button) => button.classList.toggle('active', button.dataset.activityFilter === activityFilter));
-  activityList.innerHTML = visible.length ? visible.map((entry) => `<article class="activity-entry ${entry.unread ? 'is-unread' : ''}" data-activity-id="${escapeHtml(entry.id)}"><i aria-hidden="true"></i><div><span>${entry.type === 'peer-sync-conflict' ? 'Conflict needs review' : entry.type === 'peer-show-updated' ? 'Show updated' : 'New shared show'} · ${escapeHtml(new Date(entry.createdAt).toLocaleString())}</span><h2>${escapeHtml(entry.title)}</h2><p>${escapeHtml(entry.body || '')}</p></div><div class="activity-entry-actions"><a class="button button-secondary" href="${entry.type === 'peer-sync-conflict' ? '/conflicts' : `/shows#shared-${encodeURIComponent(entry.sharedGigId || '')}`}">${entry.type === 'peer-sync-conflict' ? 'Review conflict' : 'Open show'}</a>${entry.unread ? '<button class="text-button activity-read" type="button">Mark read</button>' : '<small>Read</small>'}</div></article>`).join('') : '<div class="empty-state">No peer activity matches this filter.</div>';
-  activityList.querySelectorAll('.activity-entry').forEach((item) => {
-    const entry = activityData.find((candidate) => candidate.id === item.dataset.activityId);
-    const markRead = async () => { if (!entry?.unread) return; await fetchJson(`/api/notifications/${encodeURIComponent(entry.id)}`, { method: 'PATCH' }); entry.unread = false; entry.readAt = new Date().toISOString(); };
-    item.querySelector('.activity-read')?.addEventListener('click', async () => { await markRead(); renderActivityList(); await loadPeerNotifications(); });
-    item.querySelector('a')?.addEventListener('click', async (event) => { event.preventDefault(); await markRead(); window.location.assign(event.currentTarget.href); });
-  });
-  markAllActivityRead.disabled = !activityData.some((entry) => entry.unread);
-}
-
-async function renderActivity() {
-  if (page !== 'activity' || !activityList) return;
-  try { activityData = await fetchJson('/api/notifications?scope=all'); renderActivityList(); }
-  catch (error) { activityMessage.textContent = error.message; activityMessage.classList.add('error'); }
-}
-
-activityFilters?.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => { activityFilter = button.dataset.activityFilter; renderActivityList(); }));
-markAllActivityRead?.addEventListener('click', async () => {
-  markAllActivityRead.disabled = true;
-  try { await fetchJson('/api/notifications/read-all', { method: 'POST' }); activityData.forEach((entry) => { entry.unread = false; entry.readAt ||= new Date().toISOString(); }); renderActivityList(); await loadPeerNotifications(); activityMessage.textContent = 'All activity marked as read.'; }
-  catch (error) { activityMessage.textContent = error.message; activityMessage.classList.add('error'); }
+const activityPageController = activityPageModule.createController({
+  page, fetchJson, escapeHtml, refreshNotifications: loadPeerNotifications,
+  navigate: (href) => window.location.assign(href),
+  elements: { list: activityList, filters: activityFilters, message: activityMessage, markAll: markAllActivityRead }
 });
+activityPageController.bind();
+function renderActivity() { return activityPageController.render(); }
 
 function conflictValueSummary(kind, value) {
   if (kind === 'notes') return `<p>${escapeHtml(value.notes || 'No performance notes')}</p>${value.venueNotes ? `<p><b>Venue:</b> ${escapeHtml(value.venueNotes)}</p>` : ''}`;
