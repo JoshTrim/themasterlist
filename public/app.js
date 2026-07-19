@@ -14,6 +14,7 @@ const mediaLightboxModule = window.MasterListMediaLightbox;
 const appBootstrapModule = window.MasterListAppBootstrap;
 const pageControllersModule = window.MasterListPageControllers;
 const editMediaUploadModule = window.MasterListEditMediaUpload;
+const youtubePlayerApiModule = window.MasterListYoutubePlayerApi;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -310,13 +311,9 @@ const setPlayerSourceLabel = document.querySelector('#set-player-source-label');
 const setPlayerContextPrevious = document.querySelector('#set-player-context-previous');
 const setPlayerContextCurrent = document.querySelector('#set-player-context-current');
 const setPlayerContextNext = document.querySelector('#set-player-context-next');
-let youtubeApiPromise;
 const formatPlaybackTime = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
-function loadYouTubeApi() {
-  if (window.YT?.Player) return Promise.resolve(window.YT);
-  if (!youtubeApiPromise) youtubeApiPromise = new Promise((resolve) => { const previous = window.onYouTubeIframeAPIReady; window.onYouTubeIframeAPIReady = () => { previous?.(); resolve(window.YT); }; const script = document.createElement('script'); script.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(script); });
-  return youtubeApiPromise;
-}
+const youtubePlayerApi = youtubePlayerApiModule.createLoader({ window, document });
+function loadYouTubeApi() { return youtubePlayerApi.load(); }
 const showEditLink = document.querySelector('#show-edit-link');
 const venueNameFromUrl = new URLSearchParams(window.location.search).get('name')?.trim() || '';
 const venueCityFromUrl = new URLSearchParams(window.location.search).get('city')?.trim() || '';
