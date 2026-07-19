@@ -26,6 +26,7 @@ const maintenancePageModule = window.MasterListMaintenancePage;
 const directoryPageModule = window.MasterListDirectoryPage;
 const locationsPageModule = window.MasterListLocationsPage;
 const playlistExportModule = window.MasterListPlaylistExport;
+const authControllerModule = window.MasterListAuthController;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -2191,32 +2192,15 @@ async function refreshCollaboration() {
   renderSharedShows();
 }
 
-function showAuth(status) {
-  authPanel.hidden = false;
-  profileBar.hidden = true;
-  setupForm.hidden = Boolean(status.configured);
-  loginForm.hidden = !status.configured;
-  const invite = new URLSearchParams(window.location.search).get('invite');
-  registerForm.hidden = !invite;
-  if (invite) loginForm.hidden = true;
-  authMessage.textContent = invite ? 'Create your account to join this shared instance.' : status.configured ? 'Sign in to your account.' : 'Create the owner account for this shared instance.';
-}
-
-async function submitAuth(form, endpoint, extra = {}) {
-  try {
-    const payload = { ...Object.fromEntries(new FormData(form).entries()), ...extra };
-    const signedIn = await fetchJson(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    account = signedIn;
-    activeProfileId = account.id;
-    window.location.replace('/');
-  } catch (error) { authMessage.textContent = error.message; authMessage.classList.add('error'); }
-}
-
-setupForm.addEventListener('submit', (event) => { event.preventDefault(); submitAuth(setupForm, '/api/auth/setup'); });
-loginForm.addEventListener('submit', (event) => { event.preventDefault(); submitAuth(loginForm, '/api/auth/login'); });
-registerForm.addEventListener('submit', (event) => { event.preventDefault(); submitAuth(registerForm, '/api/auth/register', { inviteToken: new URLSearchParams(window.location.search).get('invite') }); });
-logoutButton.addEventListener('click', async () => { await fetchJson('/api/auth/logout', { method: 'POST' }); account = null; activeProfileId = ''; showAuth({ configured: true }); });
-accountForm?.addEventListener('submit', async (event) => { event.preventDefault(); const body = Object.fromEntries(new FormData(accountForm)); accountMessage.textContent = 'Updating…'; try { account = await fetchJson('/api/auth/account', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); accountMessage.textContent = 'Account updated.'; accountForm.reset(); accountForm.elements.name.value = account.name; } catch (error) { accountMessage.textContent = error.message; accountMessage.classList.add('error'); } });
+const authController = authControllerModule.createController({
+  window, fetchJson,
+  elements: { panel: authPanel, profileBar, setupForm, loginForm, registerForm, message: authMessage, logoutButton, accountForm, accountMessage },
+  onSignedIn: (signedIn) => { account = signedIn; activeProfileId = account.id; },
+  onLoggedOut: () => { account = null; activeProfileId = ''; },
+  onAccountUpdated: (updated) => { account = updated; }
+});
+authController.bind();
+function showAuth(status) { return authController.show(status); }
 peerForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (!peerMessage) return;
