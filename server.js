@@ -47,6 +47,7 @@ const { createStatsRoutes } = require('./lib/routes/stats');
 const { createArchiveTransferRoutes } = require('./lib/routes/archive-transfer');
 const { createDirectoryRoutes } = require('./lib/routes/directory');
 const { createPlaybackPlanRoutes } = require('./lib/routes/playback-plans');
+const { createApiUsage } = require('./lib/api-usage');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -119,7 +120,9 @@ const mediaRepository = createMediaRepository({ database, mediaDir: MEDIA_DIR, p
 const mediaRows = mediaRepository.list;
 const gigRepository = createGigRepository({ database, mediaRows });
 const { readAll: readGigs, writeAll: writeGigs, find: findGigSync } = gigRepository;
-const setlistProvider = createSetlistFmProvider({ apiKey: process.env.SETLIST_FM_API_KEY, fetch, recordUsage: recordApiUsage, normaliseSongs });
+const apiUsage = createApiUsage({ database, request: fetch });
+const providerResponse = apiUsage.requestJson;
+const setlistProvider = createSetlistFmProvider({ apiKey: process.env.SETLIST_FM_API_KEY, fetch, recordUsage: apiUsage.record, normaliseSongs });
 const metadataProvider = createMetadataProvider({ fetch, googleApiKey: process.env.GOOGLE_CUSTOM_SEARCH_API_KEY, googleEngineId: process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID });
 const spotifyProvider = createSpotifyProvider({ requestJson: providerResponse });
 const youtubeProvider = createYouTubeProvider({ requestJson: providerResponse });
@@ -140,7 +143,7 @@ const archiveIntegrityService = createArchiveIntegrityService({ database, fs, pa
 const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup, manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore });
 const handleShowRoute = createShowRoutes({ database, readGigs, readBody, sendJson, sendError, validateGig, normaliseRating, normaliseAttendees: normaliseGigAttendees, randomUUID });
 const handleSetlistRoute = createSetlistRoutes({ provider: setlistProvider, enrichAlbums: enrichGigAlbums, sendJson, sendError });
-const handleStatsRoute = createStatsRoutes({ database, requireAccount, sendJson, genreStats: archiveGenreStats, usageDay, configured, youtubeQuota: process.env.YOUTUBE_DAILY_QUOTA_UNITS, setlistConfigured: Boolean(process.env.SETLIST_FM_API_KEY && process.env.SETLIST_FM_API_KEY !== 'replace-me') });
+const handleStatsRoute = createStatsRoutes({ database, requireAccount, sendJson, genreStats: archiveGenreStats, usageDay: apiUsage.day, configured, youtubeQuota: process.env.YOUTUBE_DAILY_QUOTA_UNITS, setlistConfigured: Boolean(process.env.SETLIST_FM_API_KEY && process.env.SETLIST_FM_API_KEY !== 'replace-me') });
 const handleArchiveTransfer = createArchiveTransferRoutes({ database, requireAccount, readBody, readGigs, sendJson, sendError, validateGig, normaliseAttendees: normaliseGigAttendees, randomUUID });
 const handleDirectoryRoute = createDirectoryRoutes({ database, requireAccount, readBody, sendJson, sendError, fetchArtistInfo, fetchVenueInfo, cachedArtistGenres, saveArtistGenres, normaliseImagePosition, saveProfileImageUpload, removeReplacedProfileImage, geocoding, validCoordinates });
 const handlePlaybackPlanRoute = createPlaybackPlanRoutes({ database, requireAccount, readBody, sendJson, sendError, findGig: findGigSync, mediaRows, refreshMetadata: refreshYouTubePlaybackMetadata, suggestPlaybackPlan });
@@ -185,56 +188,6 @@ const handlePeerRoute = createPeerRoutes({
 const mediaRecoveryPromise = recoverMediaWork({ database, fs, path, mediaDir: MEDIA_DIR }).then((result) => {
   if (Object.values(result).some(Boolean)) console.log('[media] recovered interrupted work:', result);
 }).catch((error) => console.error('[media] recovery failed:', error.message));
-
-function usageDay() {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
-  const values = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
-function usageProvider(provider, url) {
-  const hint = String(provider || '').toLowerCase();
-  let hostname = '';
-  try { hostname = new URL(url).hostname.toLowerCase(); } catch { /* keep the provider hint */ }
-  if (hint.includes('youtube') || (hostname.includes('googleapis.com') && String(url).includes('/youtube/v3/'))) return 'youtube';
-  if (hint.includes('spotify') || hostname.includes('spotify.com')) return 'spotify';
-  if (hint.includes('setlist') || hostname.includes('setlist.fm')) return 'setlist.fm';
-  if (hint.includes('apple') || hostname.includes('apple.com')) return 'apple-music';
-  if (hint.includes('audd') || hostname.includes('audd.io')) return 'audd';
-  if (hint.includes('musicbrainz') || hostname.includes('musicbrainz.org')) return 'musicbrainz';
-  if (hint.includes('wikipedia') || hostname.includes('wikipedia.org')) return 'wikipedia';
-  if (hint.includes('google') || hostname.includes('googleapis.com')) return 'google';
-  return hint || 'other';
-}
-
-function usageMeta(url, options = {}, provider = '') {
-  const service = usageProvider(provider, url);
-  let parsed;
-  try { parsed = new URL(url); } catch { parsed = { pathname: url }; }
-  const method = String(options.method || 'GET').toUpperCase();
-  const segments = String(parsed.pathname || '').split('/').filter(Boolean);
-  const operation = service === 'youtube'
-    ? `youtube.${segments.at(-1) || 'request'}`
-    : segments.slice(-2).join('/') || service;
-  let quotaUnits = 1;
-  // YouTube Data API costs are fixed by operation. OAuth refreshes are not
-  // Data API quota calls, so record them for diagnostics with zero units.
-  if (service === 'youtube') {
-    if (!String(parsed.pathname).startsWith('/youtube/v3/')) quotaUnits = 0;
-    else if (segments.at(-1) === 'search') quotaUnits = 100;
-    else if (segments.at(-1) === 'playlists' && method === 'POST') quotaUnits = 50;
-    else if (segments.at(-1) === 'playlistItems' && method === 'POST') quotaUnits = 50;
-  }
-  return { service, operation, quotaUnits };
-}
-
-function recordApiUsage(provider, operation, quotaUnits = 1, status = null, requestedAt = new Date().toISOString()) {
-  try {
-    database.prepare('INSERT INTO api_usage (provider, operation, quota_units, status, requested_at, usage_day) VALUES (?, ?, ?, ?, ?, ?)').run(provider, operation, Math.max(0, Number(quotaUnits) || 0), status, requestedAt, usageDay());
-  } catch (error) {
-    console.warn('[api-usage] could not record request:', error.message);
-  }
-}
 
 const contentTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -290,22 +243,6 @@ function configured(provider) {
   if (provider === 'apple-music') return Boolean(process.env.APPLE_MUSIC_DEVELOPER_TOKEN);
   if (provider === 'audd') return Boolean(process.env.AUDD_API_TOKEN);
   return false;
-}
-
-async function providerResponse(url, options, provider) {
-  const meta = usageMeta(url, options, provider);
-  let result;
-  try {
-    result = await fetch(url, options);
-  } catch (error) {
-    recordApiUsage(meta.service, meta.operation, meta.quotaUnits, null);
-    throw error;
-  }
-  recordApiUsage(meta.service, meta.operation, meta.quotaUnits, result.status);
-  if (result.ok) return result.json();
-  const body = await result.json().catch(() => ({}));
-  const detail = body.error?.message || body.error_description || body.message || body.error || `HTTP ${result.status}`;
-  throw new Error(`${provider}: ${detail}`);
 }
 
 function cachedArtistGenres(name) {
@@ -1070,6 +1007,7 @@ if (require.main === module) mediaRecoveryPromise.finally(() => {
 module.exports = {
   server,
   database,
+  ready: mediaRecoveryPromise,
   paths: { data: DATA_DIR, database: DB_FILE, media: MEDIA_DIR },
   testables: { archiveIntegrity, maintenanceStatus, mediaManifest, backupSettings, createScheduledBackup, peerConflictRows, detectSyncConflict, resolvePeerConflict, estimateFullShowTimings, parsePlaybackChapters, suggestPlaybackPlan, youtubeVideoId }
 };
