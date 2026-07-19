@@ -22,6 +22,7 @@ const apiLimitsPageModule = window.MasterListApiLimitsPage;
 const activityPageModule = window.MasterListActivityPage;
 const conflictsPageModule = window.MasterListConflictsPage;
 const healthPageModule = window.MasterListHealthPage;
+const maintenancePageModule = window.MasterListMaintenancePage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1564,77 +1565,17 @@ const apiLimitsPageController = apiLimitsPageModule.createController({
 });
 function renderApiLimits() { return apiLimitsPageController.render(); }
 
-function renderIntegrity(data) {
-  if (!integrityList) return;
-  const summary = data.summary || {};
-  const heading = `<div class="integrity-summary"><article class="${data.healthy ? 'is-healthy' : ''}"><strong>${data.healthy ? '✓' : data.issues.length}</strong><span>${data.healthy ? 'Archive healthy' : 'Issues found'}</span></article><article><strong>${summary.records || 0}</strong><span>Media records</span></article><article><strong>${summary.diskFiles || 0}</strong><span>Files on disk</span></article><article><strong>${formatBytes(summary.diskBytes)}</strong><span>Media storage</span></article></div>`;
-  const issues = data.issues?.length ? `<div class="integrity-issues">${data.issues.map((issue) => `<article class="integrity-issue integrity-${escapeHtml(issue.type)}"><span>${escapeHtml(issue.type)}</span><div><strong>${escapeHtml(issue.title)}</strong><p>${escapeHtml(issue.detail)}</p></div>${issue.href ? `<a class="text-button" href="${escapeHtml(issue.href)}">Open</a>` : ''}</article>`).join('')}</div>` : '<div class="empty-state">SQLite and all referenced files passed the integrity check.</div>';
-  integrityList.innerHTML = heading + issues;
-  cleanupMediaButton.disabled = !data.counts?.orphan;
-}
-
-function renderMaintenanceStatus(data) {
-  if (!maintenanceSummary) return;
-  maintenanceSummary.innerHTML = `<article><strong>${formatBytes(data.databaseSize)}</strong><span>Database size</span></article><article><strong>${data.backupCount}</strong><span>Saved database backups</span></article><article><strong>${data.latestBackup ? escapeHtml(data.latestBackup.replace(/^the-master-list-|^pre-restore-/, '').replace(/\.sqlite$/, '')) : '—'}</strong><span>Latest backup</span></article><article class="${data.restorePending ? 'has-warning' : ''}"><strong>${data.restorePending ? '!' : '✓'}</strong><span>${data.restorePending ? 'Restore staged — restart required' : 'No restore pending'}</span></article>`;
-  if (backupScheduleForm && data.backupSchedule) {
-    backupScheduleForm.elements.enabled.checked = Boolean(data.backupSchedule.enabled);
-    backupScheduleForm.elements.intervalHours.value = data.backupSchedule.intervalHours;
-    backupScheduleForm.elements.retentionCount.value = data.backupSchedule.retentionCount;
-    const last = data.backupSchedule.lastBackupAt ? new Date(data.backupSchedule.lastBackupAt).toLocaleString() : 'Never';
-    backupScheduleStatus.textContent = data.backupSchedule.lastStatus === 'error' ? `Last backup failed: ${data.backupSchedule.lastError || 'Unknown error'}` : `Last scheduled backup: ${last}`;
-    backupScheduleStatus.classList.toggle('error', data.backupSchedule.lastStatus === 'error');
+const maintenancePageController = maintenancePageModule.createController({
+  page, fetchJson, escapeHtml, formatBytes, confirmAction: (prompt) => confirm(prompt),
+  elements: {
+    summary: maintenanceSummary, message: maintenanceMessage, integrityList, cleanup: cleanupMediaButton,
+    scheduleForm: backupScheduleForm, scheduleStatus: backupScheduleStatus, backupNow: backupNowButton,
+    refreshIntegrity: refreshIntegrityButton, restoreInput: restoreDatabaseInput,
+    stageRestore: stageRestoreButton, downloadLink: downloadDatabaseLink
   }
-  renderIntegrity(data.integrity);
-}
-
-async function renderMaintenance() {
-  if (page !== 'maintenance' || !maintenanceSummary) return;
-  try { renderMaintenanceStatus(await fetchJson('/api/maintenance/status')); }
-  catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); }
-}
-
-backupScheduleForm?.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const button = backupScheduleForm.querySelector('button[type="submit"]');
-  button.disabled = true;
-  try {
-    await fetchJson('/api/maintenance/backup-settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: backupScheduleForm.elements.enabled.checked, intervalHours: backupScheduleForm.elements.intervalHours.value, retentionCount: backupScheduleForm.elements.retentionCount.value }) });
-    maintenanceMessage.textContent = 'Backup schedule saved.';
-    maintenanceMessage.classList.remove('error');
-    await renderMaintenance();
-  } catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); }
-  finally { button.disabled = false; }
 });
-
-backupNowButton?.addEventListener('click', async () => {
-  backupNowButton.disabled = true;
-  backupNowButton.textContent = 'Backing up…';
-  try { await fetchJson('/api/maintenance/backup-now', { method: 'POST' }); maintenanceMessage.textContent = 'Database snapshot created.'; maintenanceMessage.classList.remove('error'); await renderMaintenance(); }
-  catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); }
-  finally { backupNowButton.disabled = false; backupNowButton.textContent = 'Back up now'; }
-});
-
-refreshIntegrityButton?.addEventListener('click', async () => {
-  refreshIntegrityButton.disabled = true; refreshIntegrityButton.textContent = 'Checking…'; maintenanceMessage.textContent = 'Scanning database and media files…'; maintenanceMessage.classList.remove('error');
-  try { renderIntegrity(await fetchJson('/api/maintenance/integrity')); maintenanceMessage.textContent = 'Integrity check complete.'; }
-  catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); }
-  finally { refreshIntegrityButton.disabled = false; refreshIntegrityButton.textContent = 'Run check'; }
-});
-
-downloadDatabaseLink?.addEventListener('click', () => { maintenanceMessage.textContent = 'Creating a consistent SQLite snapshot…'; setTimeout(renderMaintenance, 1800); });
-
-stageRestoreButton?.addEventListener('click', async () => {
-  const file = restoreDatabaseInput.files?.[0];
-  if (!file) { maintenanceMessage.textContent = 'Choose a SQLite backup first.'; maintenanceMessage.classList.add('error'); return; }
-  if (!confirm('Stage this database for restore? It will replace the live database the next time the server starts.')) return;
-  stageRestoreButton.disabled = true; maintenanceMessage.classList.remove('error'); maintenanceMessage.textContent = `Validating ${file.name}…`;
-  try {
-    const result = await fetchJson('/api/maintenance/restore', { method: 'POST', headers: { 'Content-Type': 'application/vnd.sqlite3' }, body: file });
-    maintenanceMessage.textContent = `Restore staged (${formatBytes(result.size)}). Restart the server to apply it.`;
-    await renderMaintenance();
-  } catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); }
-  finally { stageRestoreButton.disabled = false; }
-});
+maintenancePageController.bind();
+function renderMaintenance() { return maintenancePageController.render(); }
 
 const activityPageController = activityPageModule.createController({
   page, fetchJson, escapeHtml, refreshNotifications: loadPeerNotifications,
@@ -2447,7 +2388,6 @@ inviteButton.addEventListener('click', async () => {
 });
 exportArchiveButton?.addEventListener('click', async () => { try { const data = await fetchJson('/api/archive/export'); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `the-master-list-export-${new Date().toISOString().slice(0, 10)}.json`; link.click(); URL.revokeObjectURL(link.href); maintenanceMessage.textContent = 'Shows JSON exported.'; } catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); } });
 importArchiveInput?.addEventListener('change', async () => { const file = importArchiveInput.files?.[0]; if (!file) return; try { const data = JSON.parse(await file.text()); await fetchJson('/api/archive/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); maintenanceMessage.textContent = `Imported ${data.gigs?.length || 0} shows. Reloading…`; window.location.reload(); } catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); } finally { importArchiveInput.value = ''; } });
-cleanupMediaButton?.addEventListener('click', async () => { if (!confirm('Permanently delete files that are not referenced by any show or profile?')) return; cleanupMediaButton.disabled = true; try { const result = await fetchJson('/api/media/cleanup', { method: 'POST' }); maintenanceMessage.textContent = `Removed ${result.removed} orphan file${result.removed === 1 ? '' : 's'}.`; await renderMaintenance(); } catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); } finally { cleanupMediaButton.disabled = false; } });
 
 document.querySelector('#find-setlist').addEventListener('click', async () => {
   const gig = formValues();
