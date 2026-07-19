@@ -42,6 +42,7 @@
 - `lib/routes/directory.js` — artist and venue profile lookup, editing, genres, images and locations.
 - `lib/routes/playback-plans.js` — playback suggestions plus validated, transactional clip assignment.
 - `lib/api-usage.js` — provider normalization, quota-cost classification, request accounting and JSON response handling.
+- `lib/shared-shows.js` — attendee normalization, shared reviews/contributions, media assignment merges and conflict resolution.
 
 `public/app.js` is the browser composition root: it owns page-level state, looks up server-rendered elements and injects dependencies into browser-safe CommonJS/UMD modules under `public/lib/`. UI behavior, rendering and event binding remain inside those tested modules, which load before the application bundle:
 
