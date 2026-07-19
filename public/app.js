@@ -24,6 +24,7 @@ const conflictsPageModule = window.MasterListConflictsPage;
 const healthPageModule = window.MasterListHealthPage;
 const maintenancePageModule = window.MasterListMaintenancePage;
 const directoryPageModule = window.MasterListDirectoryPage;
+const locationsPageModule = window.MasterListLocationsPage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -150,8 +151,6 @@ const archiveArtistImageCache = new Map();
 let activeProfileId = '';
 let account = null;
 let musicKitConfigured = false;
-let venueMap;
-let venueLayer;
 
 const page = document.body.dataset.page || 'home';
 const routeSections = {
@@ -2465,14 +2464,11 @@ function renderGigs() {
   if (window.location.hash.startsWith('#shared-')) requestAnimationFrame(() => document.querySelector(window.location.hash)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
 }
 
-function renderCityPage() {
-  if (page !== 'city') return;
-  const city = new URLSearchParams(window.location.search).get('name')?.trim() || '';
-  document.querySelector('#city-heading').textContent = city || 'Location';
-  const venues = [...new Map(gigs.filter((gig) => gig.city.toLowerCase() === city.toLowerCase()).map((gig) => [`${gig.venue}|${gig.city}`, gig])).values()];
-  document.querySelector('#city-subtitle').textContent = `${venues.length} venue${venues.length === 1 ? '' : 's'} in this area`;
-  document.querySelector('#city-venues').innerHTML = venues.map((gig) => `<a class="city-venue-card" href="/venue?name=${encodeURIComponent(gig.venue)}&city=${encodeURIComponent(gig.city)}"><strong>${escapeHtml(gig.venue)}</strong><span>${gigs.filter((entry) => entry.venue === gig.venue && entry.city === gig.city).length} show${gigs.filter((entry) => entry.venue === gig.venue && entry.city === gig.city).length === 1 ? '' : 's'}</span></a>`).join('') || '<p class="empty-state">No venues recorded here yet.</p>';
-}
+const cityPageController = locationsPageModule.createCityController({
+  page, window, getGigs: () => gigs, escapeHtml,
+  elements: { heading: document.querySelector('#city-heading'), subtitle: document.querySelector('#city-subtitle'), venues: document.querySelector('#city-venues') }
+});
+function renderCityPage() { return cityPageController.render(); }
 
 function populateYearFilter() {
   if (!yearFilter) return;
@@ -2484,56 +2480,12 @@ function populateYearFilter() {
 
 [showFilter, yearFilter, sortFilter, favouriteFilter].forEach((control) => control?.addEventListener('input', renderGigs));
 
-loadMapButton.addEventListener('click', async () => {
-  if (!gigs.length) {
-    mapMessage.textContent = 'Add a show first, then come back to map the places it happened.';
-    return;
-  }
-  loadMapButton.disabled = true;
-  loadMapButton.textContent = 'Finding venues…';
-  mapMessage.textContent = 'Looking up venues that have not been placed yet…';
-  try {
-    await pageRuntime.loadLeaflet({ document, window });
-    const payload = await fetchJson('/api/map/locations', { method: 'POST' });
-    drawMap(payload.locations);
-  } catch (error) {
-    mapMessage.textContent = error.message;
-    mapMessage.classList.add('error');
-  } finally {
-    loadMapButton.disabled = false;
-    loadMapButton.textContent = 'Refresh map';
-  }
+const mapPageController = locationsPageModule.createMapController({
+  page, getGigs: () => gigs, loadLeaflet: () => pageRuntime.loadLeaflet({ document, window }),
+  getLeaflet: () => window.L, fetchJson, escapeHtml,
+  elements: { button: loadMapButton, message: mapMessage, mapElement }
 });
-
-function drawMap(locations) {
-  if (!locations.length) {
-    mapMessage.textContent = 'No venues could be placed yet. Try adding a clearer venue and city name.';
-    return;
-  }
-  mapMessage.classList.remove('error');
-  mapMessage.textContent = `${locations.length} venue${locations.length === 1 ? '' : 's'} placed. Select a marker to revisit a show.`;
-  mapElement.hidden = false;
-  if (!venueMap) {
-    venueMap = L.map(mapElement, { scrollWheelZoom: true });
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19,
-      subdomains: 'abcd',
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-    }).addTo(venueMap);
-    venueLayer = L.layerGroup().addTo(venueMap);
-  }
-  venueLayer.clearLayers();
-  for (const location of locations) {
-    const popup = `<strong>${escapeHtml(location.venue)}</strong><br><span>${escapeHtml(location.city)}</span><ul>${location.gigs.map((gig) => `<li><a href="/artist?name=${encodeURIComponent(gig.artist)}">${escapeHtml(gig.artist)}</a> · ${escapeHtml(gig.date || 'Date unknown')}</li>`).join('')}</ul>`;
-    L.circleMarker([location.lat, location.lng], {
-      radius: Math.min(7 + location.gigs.length * 2, 16), color: '#274b42', weight: 2, fillColor: '#e85c34', fillOpacity: 0.9
-    }).bindPopup(popup).addTo(venueLayer);
-  }
-  const points = locations.map((location) => [location.lat, location.lng]);
-  if (points.length === 1) venueMap.setView(points[0], 13);
-  else venueMap.fitBounds(points, { padding: [48, 48], maxZoom: 13 });
-  setTimeout(() => venueMap.invalidateSize(), 0);
-}
+mapPageController.bind();
 
 function integrationFor(provider) {
   return provider === 'apple-music' ? integrations.appleMusic : integrations[provider];
@@ -2654,7 +2606,7 @@ async function initializeApp() {
     venue: renderVenuePage,
     'venue-edit': renderVenueEditPage,
     edit: async () => { populateShowAutofill(); renderEditPage(); },
-    map: async () => loadMapButton?.click(),
+    map: () => mapPageController.render(),
     account: async () => { renderProfiles(); renderSharedShows(); await renderInstanceSettings(); }
   };
   await pageRuntime.runController(page, controllers, { account, data });
