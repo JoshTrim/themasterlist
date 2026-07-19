@@ -32,6 +32,7 @@ const notificationCenterModule = window.MasterListNotificationCenter;
 const sharedShowsPageModule = window.MasterListSharedShowsPage;
 const archivePageModule = window.MasterListArchivePage;
 const addShowPageModule = window.MasterListAddShowPage;
+const trackListEditorModule = window.MasterListTrackListEditor;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1442,6 +1443,12 @@ const venueMetadataEditor = metadataEditorModule.createController({
 venueMetadataEditor.bind();
 function renderVenueEditPage() { return venueMetadataEditor.load(); }
 
+const editTrackListController = trackListEditorModule.createController({
+  document, editor: showEditor, escapeHtml, container: editSetlistTracks, addButton: addEditTrack,
+  getDefaultArtist: () => editForm.elements.artist.value
+});
+editTrackListController.bind();
+
 function renderEditPage() {
   if (page !== 'edit') return;
   const gig = gigs.find((entry) => entry.id === editGigId);
@@ -1460,121 +1467,7 @@ function renderEditPage() {
   editForm.elements.venue.value = gig.venue;
   editForm.elements.city.value = gig.city;
   showDuplicateWarning(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), gig.id);
-  let tracks = [...(gig.songs || [])];
-  const syncTracksFromInputs = () => {
-    const rows = [...editSetlistTracks.querySelectorAll('.edit-track')].map((row) => ({
-      title: row.querySelector('.edit-track-title').value,
-      artist: row.querySelector('.edit-track-artist').value,
-      album: row.querySelector('.edit-track-album').value
-    }));
-    tracks = showEditor.syncTracks(tracks, rows);
-  };
-  const clearTrackDropIndicators = () => editSetlistTracks.querySelectorAll('.edit-track').forEach((row) => row.classList.remove('is-dragging', 'drop-before', 'drop-after'));
-  const moveTrack = (sourceIndex, targetIndex, placeAfter = false) => {
-    syncTracksFromInputs();
-    const moved = showEditor.moveTrack(tracks, sourceIndex, targetIndex, placeAfter);
-    tracks = moved.tracks;
-    renderTracks();
-    editSetlistTracks.querySelectorAll('.edit-track-drag')[moved.index]?.focus();
-  };
-  const wireTrackReordering = () => {
-    let draggedIndex = null;
-    let nativeDropTarget = null;
-    let nativeDropCompleted = false;
-    let pointerTarget = null;
-    let pointerMoved = false;
-    const showDropTarget = (row, placeAfter) => {
-      editSetlistTracks.querySelectorAll('.edit-track').forEach((entry) => entry.classList.remove('drop-before', 'drop-after'));
-      row?.classList.add(placeAfter ? 'drop-after' : 'drop-before');
-      return row ? { index: Number(row.dataset.trackIndex), placeAfter } : null;
-    };
-    editSetlistTracks.querySelectorAll('.edit-track').forEach((row) => {
-      const handle = row.querySelector('.edit-track-drag');
-      handle.addEventListener('dragstart', (event) => {
-        draggedIndex = Number(row.dataset.trackIndex);
-        nativeDropTarget = null;
-        nativeDropCompleted = false;
-        row.classList.add('is-dragging');
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('text/plain', String(draggedIndex));
-      });
-      row.addEventListener('dragover', (event) => {
-        if (draggedIndex === null) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'move';
-        const placeAfter = event.clientY > row.getBoundingClientRect().top + row.offsetHeight / 2;
-        nativeDropTarget = showDropTarget(row, placeAfter);
-      });
-      row.addEventListener('drop', (event) => {
-        if (draggedIndex === null) return;
-        event.preventDefault();
-        const sourceIndex = draggedIndex;
-        const placeAfter = event.clientY > row.getBoundingClientRect().top + row.offsetHeight / 2;
-        const targetIndex = Number(row.dataset.trackIndex);
-        nativeDropCompleted = true;
-        clearTrackDropIndicators();
-        draggedIndex = null;
-        moveTrack(sourceIndex, targetIndex, placeAfter);
-      });
-      handle.addEventListener('dragend', () => {
-        const sourceIndex = draggedIndex;
-        const destination = nativeDropTarget;
-        draggedIndex = null;
-        nativeDropTarget = null;
-        clearTrackDropIndicators();
-        if (!nativeDropCompleted && sourceIndex !== null && destination) moveTrack(sourceIndex, destination.index, destination.placeAfter);
-      });
-      handle.addEventListener('pointerdown', (event) => {
-        if (event.pointerType === 'mouse') return;
-        draggedIndex = Number(row.dataset.trackIndex);
-        pointerTarget = null;
-        pointerMoved = false;
-        handle.setPointerCapture(event.pointerId);
-        row.classList.add('is-dragging');
-      });
-      handle.addEventListener('pointermove', (event) => {
-        if (draggedIndex === null || event.pointerType === 'mouse') return;
-        pointerMoved = true;
-        const targetRow = document.elementFromPoint(event.clientX, event.clientY)?.closest('.edit-track');
-        if (!targetRow || !editSetlistTracks.contains(targetRow)) { pointerTarget = null; return; }
-        const placeAfter = event.clientY > targetRow.getBoundingClientRect().top + targetRow.offsetHeight / 2;
-        pointerTarget = showDropTarget(targetRow, placeAfter);
-      });
-      const finishPointerDrag = (event, cancelled = false) => {
-        if (draggedIndex === null || event.pointerType === 'mouse') return;
-        const sourceIndex = draggedIndex;
-        const destination = pointerTarget;
-        draggedIndex = null;
-        pointerTarget = null;
-        clearTrackDropIndicators();
-        if (!cancelled && pointerMoved && destination) moveTrack(sourceIndex, destination.index, destination.placeAfter);
-      };
-      handle.addEventListener('pointerup', (event) => finishPointerDrag(event));
-      handle.addEventListener('pointercancel', (event) => finishPointerDrag(event, true));
-      handle.addEventListener('keydown', (event) => {
-        const sourceIndex = Number(row.dataset.trackIndex);
-        if (event.key === 'ArrowUp' && sourceIndex > 0) { event.preventDefault(); moveTrack(sourceIndex, sourceIndex - 1); }
-        if (event.key === 'ArrowDown' && sourceIndex < tracks.length - 1) { event.preventDefault(); moveTrack(sourceIndex, sourceIndex + 1, true); }
-      });
-    });
-  };
-  const renderTracks = () => {
-    editSetlistTracks.innerHTML = tracks.map((song, index) => `<div class="edit-track" data-track-index="${index}"><button class="edit-track-drag" type="button" draggable="true" aria-label="Reorder track ${index + 1}. Drag or use arrow keys" title="Drag to reorder · arrow keys also work">⠿</button><span class="edit-track-number">${index + 1}</span><input class="edit-track-title" value="${escapeHtml(song.title || '')}" placeholder="Track title" /><input class="edit-track-artist" value="${escapeHtml(song.artist || '')}" placeholder="Artist (optional)" /><input class="edit-track-album" value="${escapeHtml(song.album || '')}" placeholder="Album (optional)" /><button class="icon-button edit-track-remove" type="button" aria-label="Remove track">×</button></div>`).join('');
-    editSetlistTracks.querySelectorAll('.edit-track-remove').forEach((button) => button.addEventListener('click', () => {
-      const trackIndex = Number(button.closest('.edit-track').dataset.trackIndex);
-      syncTracksFromInputs();
-      tracks = showEditor.removeTrack(tracks, trackIndex);
-      renderTracks();
-    }));
-    wireTrackReordering();
-  };
-  renderTracks();
-  addEditTrack.onclick = () => {
-    syncTracksFromInputs();
-    tracks = showEditor.addTrack(tracks, editForm.elements.artist.value || gig.artist);
-    renderTracks();
-    editSetlistTracks.lastElementChild?.querySelector('.edit-track-title')?.focus();
-  };
+  editTrackListController.load(gig.songs || []);
   renderEditMediaWorkspace(gig, gig.media);
   renderAttendeePicker(ensureEditAttendeePicker(), gig.attendees || []);
   editForm.addEventListener('submit', async (event) => {
@@ -1583,7 +1476,7 @@ function renderEditPage() {
     try {
       if (!confirmDuplicateSave(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), gig.id)) return;
       submitButton.disabled = true;
-      syncTracksFromInputs();
+      const tracks = editTrackListController.sync();
       const update = showEditor.createEditPayload(Object.fromEntries(new FormData(editForm).entries()), { attendees: readAttendees(ensureEditAttendeePicker()), songs: tracks });
       const files = pendingMedia.get(editMediaInput) || [...(editMediaInput?.files || [])];
       const { saved, media } = await showFormController.updateShow({
