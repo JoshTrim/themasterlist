@@ -9,6 +9,7 @@ const setPlaybackControllerModule = window.MasterListSetPlaybackController;
 const youtubeShowSearchModule = window.MasterListYoutubeShowSearch;
 const profileShowListModule = window.MasterListProfileShowList;
 const showFormUiModule = window.MasterListShowFormUi;
+const peerSyncPollerModule = window.MasterListPeerSyncPoller;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -54,8 +55,6 @@ const jobQueue = jobUi.queue;
 const updateJob = jobUi.update;
 const loadPersistentJobs = jobUi.loadPersistent;
 const notificationPanel = document.createElement('aside'); notificationPanel.className = 'peer-notifications'; notificationPanel.hidden = true; notificationPanel.innerHTML = '<p class="eyebrow">From your peers</p><div class="peer-notification-list"></div>'; document.body.append(notificationPanel);
-let peerPollRunning = false;
-let peerPollTimer;
 window.addEventListener('beforeunload', (event) => {
   const activeJob = [...jobQueue.values()].some((job) => job.type === 'Uploading' && job.status === 'running');
   const queuedMobileUpload = mobileUploadController.isBusy(editMediaInput);
@@ -359,27 +358,13 @@ const notificationCenter = notificationCenterModule.createController({
 function loadPeerNotifications() { return notificationCenter.load(); }
 function loadConflictCount() { return notificationCenter.loadConflicts(); }
 
-async function pollConnectedPeers() {
-  if (!account || peerPollRunning) return;
-  peerPollRunning = true;
-  try {
-    const result = await fetchJson('/api/peers/sync-all', { method: 'POST' });
-    const notifications = await loadPeerNotifications();
-    await loadConflictCount();
-    if (result.applied > 0 || notifications.length) {
-      const [gigData, showData] = await Promise.all([fetchJson('/api/gigs'), fetchJson('/api/shared/shows')]);
-      gigs = gigData;
-      sharedShows = showData;
-      populateYearFilter();
-      renderGigs();
-    }
-  } catch { /* A disconnected peer should not interrupt normal app use. */ }
-  finally {
-    peerPollRunning = false;
-    clearTimeout(peerPollTimer);
-    peerPollTimer = setTimeout(pollConnectedPeers, 30_000);
-  }
-}
+const peerSyncPoller = peerSyncPollerModule.createPoller({
+  fetchJson, getAccount: () => account, loadNotifications: loadPeerNotifications, loadConflicts: loadConflictCount,
+  onArchive: ({ gigs: nextGigs, sharedShows: nextSharedShows }) => {
+    gigs = nextGigs; sharedShows = nextSharedShows; populateYearFilter(); renderGigs();
+  },
+  setTimeoutFn: setTimeout, clearTimeoutFn: clearTimeout
+});
 
 async function pollMediaRecognition(gigId, onMedia) {
   return mediaJobs.pollRecognition({ fetchMedia: () => fetchJson(`/api/gigs/${gigId}/media`), onUpdate: onMedia });
@@ -840,7 +825,7 @@ async function initializeApp() {
   await pageRuntime.runController(page, controllers, { account, data });
   await loadPeerNotifications();
   await loadConflictCount();
-  peerPollTimer = setTimeout(pollConnectedPeers, 5_000);
+  peerSyncPoller.start(5_000);
 }
 
 initializeApp().catch((error) => setMessage(error.message, true));

@@ -59,6 +59,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `youtube-show-search.js` — event-specific YouTube discovery, result presentation and media attachment.
 - `profile-show-list.js` — shared show-card rendering for artist and venue profile pages.
 - `show-form-ui.js` — ratings, favourites, duplicate warnings, attendee selection and archive-backed form suggestions.
+- `peer-sync-poller.js` — guarded peer synchronization, notification refresh and archive reloading on a recurring timer.
 - `theatre.js` — fullscreen presentation, keyboard commands and control auto-hide rules.
 - `theatre-controller.js` — fullscreen lifecycle, wake lock, keyboard transport and theatre control visibility wiring.
 - `media-ui.js` — media recognition/workspace presentation, bulk selection and media-safe show patches.
