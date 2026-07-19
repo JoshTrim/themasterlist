@@ -7,6 +7,7 @@ const playbackEditorControllerModule = window.MasterListPlaybackEditorController
 const playbackTimelineControllerModule = window.MasterListPlaybackTimelineController;
 const setPlaybackControllerModule = window.MasterListSetPlaybackController;
 const youtubeShowSearchModule = window.MasterListYoutubeShowSearch;
+const profileShowListModule = window.MasterListProfileShowList;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -525,35 +526,10 @@ function renderAttendeeSummary(container, gig, prefix = 'With') {
   container.append(summary);
 }
 
-function renderArtistShows(records) {
-  artistShows.replaceChildren();
-  for (const gig of records) {
-    const card = document.querySelector('#gig-template').content.cloneNode(true);
-    card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
-    card.querySelector('.show-detail-link').href = `/show?id=${encodeURIComponent(gig.id)}`;
-    card.querySelector('.play-gig').href = `/playback?id=${encodeURIComponent(gig.id)}`;
-    card.querySelector('.play-gig').textContent = '▶';
-    card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
-    card.querySelector('.show-detail-link').href = `/show?id=${encodeURIComponent(gig.id)}`;
-    card.querySelector('.play-gig').href = `/playback?id=${encodeURIComponent(gig.id)}`;
-    card.querySelector('.play-gig').textContent = '▶';
-    card.querySelector('.play-gig').setAttribute('aria-label', 'Play set');
-    card.querySelector('.gig-date').textContent = formatGigDate(gig.date, { day: '2-digit', month: 'short', year: 'numeric' });
-    card.querySelector('.gig-summary h3').textContent = gig.artist;
-    card.querySelector('.gig-place').textContent = `${gig.venue} · ${gig.city}`;
-    card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
-    card.querySelector('.venue-notes').textContent = gig.venueNotes || '';
-    renderAttendeeSummary(card.querySelector('.gig-summary'), gig);
-    const ratings = card.querySelector('.gig-ratings');
-    ratings.innerHTML = `${gig.performanceRating ? `<span>Performance ${gig.performanceRating} / 5</span>` : ''}${gig.venueRating ? `<span>Venue ${gig.venueRating} / 5</span>` : ''}`;
-    const setlist = card.querySelector('.setlist');
-    if (gig.songs?.length) setlist.innerHTML = `<ol>${gig.songs.map((song) => `<li>${escapeHtml(song.title)}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>`;
-    setupShowMediaSection(card, (gig.media || []).filter((item) => item.category !== 'artifact'), { songs: gig.songs || [] });
-    card.querySelectorAll('.artifact-section, .add-artifact-gig').forEach((element) => element.remove());
-    artistShows.append(card);
-  }
-}
-
+const profileShowListRenderer = profileShowListModule.createRenderer({
+  template: document.querySelector('#gig-template'), escapeHtml, formatGigDate, renderAttendeeSummary, setupMedia: setupShowMediaSection
+});
+function renderArtistShows(records) { return profileShowListRenderer.renderArtist(artistShows, records); }
 const artistPageController = entityProfilePageModule.createArtistController({
   page, name: artistNameFromUrl, getGigs: () => gigs, fetchJson, renderShows: renderArtistShows,
   elements: {
@@ -661,25 +637,7 @@ const healthPageController = healthPageModule.createController({
 healthPageController.bind();
 function renderArchiveHealth() { return healthPageController.render(); }
 
-function renderVenueShows(records) {
-  venueShows.replaceChildren();
-  records.forEach((gig) => {
-    const card = document.querySelector('#gig-template').content.cloneNode(true);
-    card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
-    card.querySelector('.show-detail-link').href = `/show?id=${encodeURIComponent(gig.id)}`;
-    card.querySelector('.play-gig').href = `/playback?id=${encodeURIComponent(gig.id)}`;
-    card.querySelector('.play-gig').textContent = '▶';
-    card.querySelector('.gig-date').textContent = formatGigDate(gig.date, { day: '2-digit', month: 'short', year: 'numeric' });
-    card.querySelector('.gig-summary h3').innerHTML = `<a class="artist-link" href="/artist?name=${encodeURIComponent(gig.artist)}">${escapeHtml(gig.artist)}</a>`;
-    card.querySelector('.gig-place').textContent = `${gig.venue} · ${gig.city}`;
-    card.querySelector('.gig-notes').textContent = gig.performanceNotes || gig.notes || '';
-    renderAttendeeSummary(card.querySelector('.gig-summary'), gig);
-    setupShowMediaSection(card, (gig.media || []).filter((item) => item.category !== 'artifact'), { songs: gig.songs || [] });
-    card.querySelectorAll('.artifact-section, .add-artifact-gig').forEach((element) => element.remove());
-    venueShows.append(card);
-  });
-}
-
+function renderVenueShows(records) { return profileShowListRenderer.renderVenue(venueShows, records); }
 const venuePageController = entityProfilePageModule.createVenueController({
   page, name: venueNameFromUrl, city: venueCityFromUrl,
   getGigs: () => gigs, fetchJson, renderShows: renderVenueShows,
