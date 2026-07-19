@@ -73,6 +73,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `conflicts-page.js` — owner-only peer conflict comparison, merge choices and resolution persistence.
 - `health-page.js` — archive diagnostics, filtering, automated repair and manual metadata/location entry.
 - `maintenance-page.js` — backup scheduling, snapshots, integrity checks, orphan cleanup and staged restores.
+- `directory-page.js` — artist/venue directory rendering, filters, metadata badges and lazy profile hydration.
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 

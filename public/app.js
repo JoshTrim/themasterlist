@@ -23,6 +23,7 @@ const activityPageModule = window.MasterListActivityPage;
 const conflictsPageModule = window.MasterListConflictsPage;
 const healthPageModule = window.MasterListHealthPage;
 const maintenancePageModule = window.MasterListMaintenancePage;
+const directoryPageModule = window.MasterListDirectoryPage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1395,14 +1396,6 @@ const overviewPageController = overviewPageModule.createController({
   elements: { dashboard: dashboardStats, genres: genreStats, genreNote: genreStatsNote, genreChart: genreStatsChart }
 });
 function renderDashboardStats() { return overviewPageController.render(); }
-function directoryInitials(name) {
-  return directoryUi.initials(name);
-}
-
-function directoryRatingFor(show) {
-  return directoryUi.ratingFor(show);
-}
-
 let directoryMetadataPromise;
 function loadDirectoryMetadata() {
   if (!directoryMetadataPromise) directoryMetadataPromise = fetchJson('/api/directory/metadata').catch(() => ({ artists: [], venues: [], locations: [] }));
@@ -1412,135 +1405,16 @@ function loadDirectoryMetadata() {
 function metadataMissingFields(type, info = {}, hasLocation = true) {
   return directoryUi.missingFields(type, info, hasLocation);
 }
-
-function metadataFilterMatches(entity, filter) {
-  return directoryUi.filterMatches(entity, filter);
-}
-
-function metadataBadges(entity) {
-  const closed = entity.isClosed ? '<span class="venue-status-closed">Permanently closed</span>' : '';
-  if (!entity.missingMetadata.length) return `${closed}<span class="metadata-status-complete">✓ Complete</span>`;
-  return closed + entity.missingMetadata.map((field) => `<span class="metadata-status-missing">Missing ${escapeHtml(field === 'bio' ? 'biography' : field)}</span>`).join('');
-}
-
-function venueMetadataBadges(entity) {
-  const closed = entity.isClosed ? '<span class="venue-status-closed">Permanently closed</span>' : '';
-  const missing = (entity.missingMetadata || []).filter((field) => field !== 'source');
-  return closed + missing.map((field) => `<span class="metadata-status-missing">Missing ${escapeHtml(field === 'bio' ? 'biography' : field)}</span>`).join('');
-}
-
-function bindDirectoryImageFallbacks(grid) {
-  grid.querySelectorAll('.entity-card-image img').forEach((image) => image.addEventListener('error', () => {
-    image.closest('.entity-card-image')?.classList.add('is-missing');
-    image.remove();
-  }, { once: true }));
-}
-
-const directoryCardObservers = new WeakMap();
-const directoryMetadataRequests = new Map();
-const directoryHydrationQueue = [];
-let directoryHydrationActive = 0;
-
-function directoryEntityInfo(type, name, city = '') {
-  const key = `${type}|${name}|${city}`.toLocaleLowerCase();
-  if (!directoryMetadataRequests.has(key)) {
-    const endpoint = type === 'artist'
-      ? `/api/artists?name=${encodeURIComponent(name)}`
-      : `/api/venues?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}`;
-    directoryMetadataRequests.set(key, fetchJson(endpoint).catch(() => null));
+const directoryHydrator = directoryPageModule.createHydrator({ window, document, fetchJson, missingFields: metadataMissingFields, escapeHtml });
+const directoryPageController = directoryPageModule.createController({
+  page, window, getShows: () => gigs, getRemoteShows: remoteSharedArchiveShows,
+  loadMetadata: loadDirectoryMetadata, directoryUi, escapeHtml, formatGigDate, hydrator: directoryHydrator,
+  elements: {
+    artists: { filter: artistsFilter, metadata: artistsMetadataFilter, sort: artistsSort, summary: artistsSummary, grid: artistsGrid },
+    venues: { filter: venuesFilter, metadata: venuesMetadataFilter, sort: venuesSort, summary: venuesSummary, grid: venuesGrid }
   }
-  return directoryMetadataRequests.get(key);
-}
-
-function runDirectoryHydrationQueue() {
-  while (directoryHydrationActive < 2 && directoryHydrationQueue.length) {
-    const task = directoryHydrationQueue.shift();
-    directoryHydrationActive += 1;
-    directoryEntityInfo(task.type, task.name, task.city).then((info) => {
-      if (!info || !task.card.isConnected) return;
-      const status = task.card.querySelector('.entity-card-metadata');
-      if (status) {
-        const entity = { isClosed: Boolean(info.isClosed), missingMetadata: metadataMissingFields(task.type, info, task.card.dataset.hasLocation !== 'false') };
-        status.innerHTML = task.type === 'venue' ? venueMetadataBadges(entity) : metadataBadges(entity);
-      }
-      if (info.image && !task.card.querySelector('.entity-card-image img')) {
-        const image = document.createElement('img');
-        image.alt = '';
-        image.loading = 'lazy';
-        image.decoding = 'async';
-        image.style.objectPosition = info.imagePosition || 'center';
-        image.addEventListener('error', () => { task.card.querySelector('.entity-card-image')?.classList.add('is-missing'); image.remove(); }, { once: true });
-        image.src = info.image;
-        task.card.querySelector('.entity-card-image')?.append(image);
-      }
-    }).finally(() => {
-      directoryHydrationActive -= 1;
-      runDirectoryHydrationQueue();
-    });
-  }
-}
-
-function hydrateMissingDirectoryCards(grid, type) {
-  directoryCardObservers.get(grid)?.disconnect();
-  const cards = [...grid.querySelectorAll('.entity-card')].filter((card) => !card.querySelector('.entity-card-image img'));
-  if (!cards.length) return;
-  const enqueue = (card) => {
-    directoryHydrationQueue.push({ card, type, name: card.dataset.entityName, city: card.dataset.entityCity || '' });
-    runDirectoryHydrationQueue();
-  };
-  if (!('IntersectionObserver' in window)) { cards.forEach(enqueue); return; }
-  const observer = new IntersectionObserver((entries) => entries.forEach((entry) => {
-    if (!entry.isIntersecting) return;
-    observer.unobserve(entry.target);
-    enqueue(entry.target);
-  }), { rootMargin: '240px' });
-  cards.forEach((card) => observer.observe(card));
-  directoryCardObservers.set(grid, observer);
-}
-
-async function renderEntityDirectories() {
-  if (!['artists', 'venues'].includes(page)) return;
-  const metadata = await loadDirectoryMetadata();
-  const artistMetadata = new Map(metadata.artists.map((entry) => [entry.lookupName, entry]));
-  const venueMetadata = new Map(metadata.venues.map((entry) => [entry.lookupName, entry]));
-  const locations = new Set(metadata.locations || []);
-  const archiveShows = [...gigs, ...remoteSharedArchiveShows()];
-  const requestedMetadataFilter = new URLSearchParams(window.location.search).get('metadata');
-
-  if (page === 'artists') {
-    const artists = directoryUi.buildArtists(archiveShows, artistMetadata);
-    if ([...artistsMetadataFilter.options].some((option) => option.value === requestedMetadataFilter)) artistsMetadataFilter.value = requestedMetadataFilter;
-    const drawArtists = () => {
-      const visible = directoryUi.visibleEntities(artists, { type: 'artist', query: artistsFilter.value, metadata: artistsMetadataFilter.value, sort: artistsSort.value });
-      const incomplete = artists.filter((artist) => artist.missingMetadata.length).length;
-      artistsSummary.textContent = `${visible.length} of ${artists.length} artist${artists.length === 1 ? '' : 's'} · ${incomplete} need review`;
-      artistsGrid.innerHTML = visible.map((artist) => `<article class="entity-card entity-card-artist" data-entity-name="${escapeHtml(artist.name)}"><a class="entity-card-profile" href="/artist?name=${encodeURIComponent(artist.name)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(artist.name))}</span>${artist.image ? `<img src="${escapeHtml(artist.image)}" alt="" loading="lazy" decoding="async" style="object-position:${escapeHtml(artist.imagePosition)}" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${artist.shows} show${artist.shows === 1 ? '' : 's'} · ${artist.venues.size} venue${artist.venues.size === 1 ? '' : 's'}</p><h2>${escapeHtml(artist.name)}</h2><p>${escapeHtml(artist.description || (artist.latestDate ? `Last seen ${formatGigDate(artist.latestDate)}` : 'An undated archive memory'))}</p><div class="entity-card-stats"><span><strong>${artist.averageRating ? artist.averageRating.toFixed(1) : '—'}</strong>Avg rating</span><span><strong>${artist.favourites}</strong>Favourite${artist.favourites === 1 ? '' : 's'}</span><span><strong>${artist.latestDate ? artist.latestDate.slice(0, 4) : '—'}</strong>Last seen</span></div></div></a><div class="entity-card-metadata">${metadataBadges(artist)}</div><a class="entity-card-edit" href="/artist/edit?name=${encodeURIComponent(artist.name)}" aria-label="Edit ${escapeHtml(artist.name)} metadata">✎ <span>Edit</span></a></article>`).join('') || '<p class="empty-state entity-directory-empty">No artists match those filters.</p>';
-      bindDirectoryImageFallbacks(artistsGrid);
-      hydrateMissingDirectoryCards(artistsGrid, 'artist');
-    };
-    artistsFilter.addEventListener('input', drawArtists);
-    artistsMetadataFilter.addEventListener('change', drawArtists);
-    artistsSort.addEventListener('change', drawArtists);
-    drawArtists();
-  }
-
-  if (page === 'venues') {
-    const venues = directoryUi.buildVenues(archiveShows, venueMetadata, locations);
-    if ([...venuesMetadataFilter.options].some((option) => option.value === requestedMetadataFilter)) venuesMetadataFilter.value = requestedMetadataFilter;
-    const drawVenues = () => {
-      const visible = directoryUi.visibleEntities(venues, { type: 'venue', query: venuesFilter.value, metadata: venuesMetadataFilter.value, sort: venuesSort.value });
-      const incomplete = venues.filter((venue) => venue.missingMetadata.length).length;
-      venuesSummary.textContent = `${visible.length} of ${venues.length} venue${venues.length === 1 ? '' : 's'} · ${incomplete} need review`;
-      venuesGrid.innerHTML = visible.map((venue) => `<article class="entity-card entity-card-venue" data-entity-name="${escapeHtml(venue.name)}" data-entity-city="${escapeHtml(venue.city)}" data-has-location="${venue.hasLocation}"><a class="entity-card-profile" href="/venue?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}"><div class="entity-card-image"><span aria-hidden="true">${escapeHtml(directoryInitials(venue.name))}</span>${venue.image ? `<img src="${escapeHtml(venue.image)}" alt="" loading="lazy" decoding="async" style="object-position:${escapeHtml(venue.imagePosition)}" />` : ''}</div><div class="entity-card-copy"><p class="eyebrow">${escapeHtml(venue.city || 'Location unknown')}</p><h2>${escapeHtml(venue.name)}</h2><p>${escapeHtml(venue.description || (venue.latestDate ? `Last visited ${formatGigDate(venue.latestDate)}` : 'An undated archive location'))}</p><div class="entity-card-stats"><span><strong>${venue.shows}</strong>Visit${venue.shows === 1 ? '' : 's'}</span><span><strong>${venue.artists.size}</strong>Artist${venue.artists.size === 1 ? '' : 's'}</span><span><strong>${venue.latestDate ? venue.latestDate.slice(0, 4) : '—'}</strong>Last visit</span></div></div></a><div class="entity-card-metadata">${venueMetadataBadges(venue)}</div><a class="entity-card-edit" href="/venue/edit?name=${encodeURIComponent(venue.name)}&city=${encodeURIComponent(venue.city)}" aria-label="Edit ${escapeHtml(venue.name)} metadata">✎ <span>Edit</span></a></article>`).join('') || '<p class="empty-state entity-directory-empty">No venues match those filters.</p>';
-      bindDirectoryImageFallbacks(venuesGrid);
-      hydrateMissingDirectoryCards(venuesGrid, 'venue');
-    };
-    venuesFilter.addEventListener('input', drawVenues);
-    venuesMetadataFilter.addEventListener('change', drawVenues);
-    venuesSort.addEventListener('change', drawVenues);
-    drawVenues();
-  }
-}
+});
+function renderEntityDirectories() { return directoryPageController.render(); }
 
 const timelinePageController = timelinePageModule.createController({
   page, window, document, getGigs: () => gigs, getRemoteShows: remoteSharedArchiveShows,
