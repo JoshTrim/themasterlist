@@ -427,11 +427,8 @@ const overviewPageController = overviewPageModule.createController({
   elements: { dashboard: dashboardStats, genres: genreStats, genreNote: genreStatsNote, genreChart: genreStatsChart }
 });
 function renderDashboardStats() { return overviewPageController.render(); }
-let directoryMetadataPromise;
-function loadDirectoryMetadata() {
-  if (!directoryMetadataPromise) directoryMetadataPromise = fetchJson('/api/directory/metadata').catch(() => ({ artists: [], venues: [], locations: [] }));
-  return directoryMetadataPromise;
-}
+const directoryMetadataLoader = directoryPageModule.createMetadataLoader({ fetchJson });
+function loadDirectoryMetadata() { return directoryMetadataLoader.load(); }
 
 function metadataMissingFields(type, info = {}, hasLocation = true) {
   return directoryUi.missingFields(type, info, hasLocation);

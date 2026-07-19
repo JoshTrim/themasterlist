@@ -27,6 +27,17 @@
     }, { once: true }));
   }
 
+  function createMetadataLoader({ fetchJson, endpoint = '/api/directory/metadata' }) {
+    let metadataPromise;
+    function load() {
+      if (!metadataPromise) {
+        metadataPromise = fetchJson(endpoint).catch(() => ({ artists: [], venues: [], locations: [] }));
+      }
+      return metadataPromise;
+    }
+    return { load };
+  }
+
   function createHydrator({ window, document, fetchJson, missingFields, escapeHtml }) {
     const observers = new WeakMap();
     const requests = new Map();
@@ -90,5 +101,5 @@
     return { render };
   }
 
-  return { metadataBadges, artistCardMarkup, venueCardMarkup, bindImageFallbacks, createHydrator, createController };
+  return { metadataBadges, artistCardMarkup, venueCardMarkup, bindImageFallbacks, createMetadataLoader, createHydrator, createController };
 }));

@@ -107,6 +107,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 - `profile-show-list.js` — artist/venue show cards and shared-attendee summaries.
+- `directory-page.js` — cached metadata, entity cards, lazy image hydration and filtering.
 
 Styles retain their original cascade order through `public/styles.css`: `shell-and-forms.css`, `components.css`, `playback.css`, then page-specific `pages.css`.
 

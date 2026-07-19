@@ -17,6 +17,17 @@ function controlSet() {
 }
 
 describe('artist and venue directory page', () => {
+  test('loads directory metadata once and degrades to empty collections', async () => {
+    let requests = 0;
+    const loader = directoryPage.createMetadataLoader({
+      fetchJson: async (endpoint) => { requests += 1; assert.equal(endpoint, '/api/directory/metadata'); throw new Error('offline'); }
+    });
+    const [first, second] = await Promise.all([loader.load(), loader.load()]);
+    assert.equal(requests, 1);
+    assert.deepEqual(first, { artists: [], venues: [], locations: [] });
+    assert.equal(first, second);
+  });
+
   test('renders completion badges and hides source-only venue gaps', () => {
     assert.match(directoryPage.metadataBadges({ isClosed: false, missingMetadata: [] }, escapeHtml), /Complete/);
     const venue = directoryPage.metadataBadges({ isClosed: true, missingMetadata: ['source', 'bio'] }, escapeHtml, { venue: true });
