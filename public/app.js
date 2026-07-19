@@ -28,6 +28,7 @@ const locationsPageModule = window.MasterListLocationsPage;
 const playlistExportModule = window.MasterListPlaylistExport;
 const authControllerModule = window.MasterListAuthController;
 const peerSettingsModule = window.MasterListPeerSettings;
+const notificationCenterModule = window.MasterListNotificationCenter;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -706,37 +707,13 @@ async function fetchJson(url, options) {
   return apiClient.json(url, options);
 }
 
-function renderPeerNotifications(notifications) {
-  const list = notificationPanel.querySelector('.peer-notification-list');
-  notificationPanel.hidden = !notifications.length;
-  navActivityCount.hidden = !notifications.length;
-  navActivityCount.textContent = notifications.length > 99 ? '99+' : String(notifications.length);
-  list.innerHTML = notifications.map((notification) => `<article class="peer-notification" data-notification-id="${escapeHtml(notification.id)}"><a href="${notification.type === 'peer-sync-conflict' ? '/conflicts' : `/shows#shared-${encodeURIComponent(notification.sharedGigId || '')}`}"><strong>${escapeHtml(notification.title)}</strong><span>${escapeHtml(notification.body || '')}</span></a><button type="button" aria-label="Dismiss notification">×</button></article>`).join('');
-  list.querySelectorAll('.peer-notification').forEach((item) => {
-    const markRead = () => fetchJson(`/api/notifications/${encodeURIComponent(item.dataset.notificationId)}`, { method: 'PATCH' }).catch(() => {});
-    item.querySelector('a').addEventListener('click', async (event) => { event.preventDefault(); await markRead(); window.location.assign(event.currentTarget.href); });
-    item.querySelector('button').addEventListener('click', async () => { await markRead(); item.remove(); notificationPanel.hidden = !list.children.length; navActivityCount.hidden = !list.children.length; navActivityCount.textContent = String(list.children.length); });
-  });
-}
-
-async function loadPeerNotifications() {
-  if (!account) return [];
-  try {
-    const notifications = await fetchJson('/api/notifications');
-    renderPeerNotifications(notifications);
-    return notifications;
-  } catch { return []; /* Authentication state is handled by the next page load. */ }
-}
-
-async function loadConflictCount() {
-  if (!account?.isAdmin || !navConflictCount) return 0;
-  try {
-    const conflicts = await fetchJson('/api/sync/conflicts');
-    navConflictCount.hidden = !conflicts.length;
-    navConflictCount.textContent = conflicts.length > 99 ? '99+' : String(conflicts.length);
-    return conflicts.length;
-  } catch { return 0; }
-}
+const notificationCenter = notificationCenterModule.createController({
+  fetchJson, escapeHtml, getAccount: () => account,
+  navigate: (href) => window.location.assign(href),
+  elements: { panel: notificationPanel, activityCount: navActivityCount, conflictCount: navConflictCount }
+});
+function loadPeerNotifications() { return notificationCenter.load(); }
+function loadConflictCount() { return notificationCenter.loadConflicts(); }
 
 async function pollConnectedPeers() {
   if (!account || peerPollRunning) return;

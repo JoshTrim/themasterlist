@@ -78,6 +78,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `playlist-export.js` — provider readiness, OAuth redirects, MusicKit authorization and playlist export results.
 - `auth-controller.js` — setup, login, invite registration, logout and account credential updates.
 - `peer-settings.js` — paired-instance identity, invite exchange, connection tests, synchronization and removal.
+- `notification-center.js` — peer notification popover, navigation badges, read state and conflict counts.
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 
