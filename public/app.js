@@ -77,6 +77,7 @@ const sortFilter = document.querySelector('#sort-filter');
 const favouriteFilter = document.querySelector('#favourite-filter');
 const archiveStats = document.querySelector('#archive-stats');
 const dashboardStats = document.querySelector('#dashboard-stats');
+const overviewDiscovery = document.querySelector('#overview-discovery');
 const genreStats = document.querySelector('#genre-stats');
 const genreStatsNote = document.querySelector('#genre-stats-note');
 const genreStatsChart = document.querySelector('#genre-stats-chart');
@@ -424,8 +425,8 @@ function renderArtistEditPage() { return artistMetadataEditor.load(); }
 const overviewPageController = overviewPageModule.createController({
   page, getGigs: () => gigs, getRemoteShows: remoteSharedArchiveShows,
   loadMetadata: loadDirectoryMetadata, missingFields: metadataMissingFields,
-  fetchJson, escapeHtml,
-  elements: { dashboard: dashboardStats, genres: genreStats, genreNote: genreStatsNote, genreChart: genreStatsChart }
+  fetchJson, escapeHtml, formatDate: formatGigDate,
+  elements: { dashboard: dashboardStats, discovery: overviewDiscovery, genres: genreStats, genreNote: genreStatsNote, genreChart: genreStatsChart }
 });
 function renderDashboardStats() { return overviewPageController.render(); }
 const directoryMetadataLoader = directoryPageModule.createMetadataLoader({ fetchJson });

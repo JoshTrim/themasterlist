@@ -86,7 +86,7 @@
 - `directory-ui.js` — artist/venue aggregation, metadata completeness, filtering, sorting and editor navigation.
 - `archive-search.js` — search-page filtering, deduplication, category rendering and control binding.
 - `timeline-page.js` — yearly archive aggregation, chart rendering, year navigation and monthly detail.
-- `overview-page.js` — archive totals, rankings, metadata completion, genre charts and API fallback rendering.
+- `overview-page.js` — archive discovery, anniversaries, milestones, track history, recent media, totals, metadata completion and genre charts.
 - `entity-profile-page.js` — artist/venue show selection, profile statistics, metadata loading and persisted presentation states.
 - `metadata-editor.js` — artist/venue metadata forms, image previews/uploads, navigation and persistence workflow.
 - `api-limits-page.js` — provider quota estimates, operation usage, recent calls and authentication-aware errors.
