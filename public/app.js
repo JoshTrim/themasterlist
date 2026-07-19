@@ -6,6 +6,7 @@ const playbackEditor = window.MasterListPlaybackEditor;
 const playbackEditorControllerModule = window.MasterListPlaybackEditorController;
 const playbackTimelineControllerModule = window.MasterListPlaybackTimelineController;
 const setPlaybackControllerModule = window.MasterListSetPlaybackController;
+const youtubeShowSearchModule = window.MasterListYoutubeShowSearch;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -787,24 +788,11 @@ const setPlaybackController = setPlaybackControllerModule.createController({
     contextPrevious: setPlayerContextPrevious, contextCurrent: setPlayerContextCurrent, contextNext: setPlayerContextNext
   }
 });
-findYouTubeSet.addEventListener('click', async () => {
-  const gig = gigs.find((entry) => entry.id === showDetailId);
-  if (!gig?.songs?.length) { youtubeSearchMessage.textContent = 'Add a setlist before searching YouTube.'; return; }
-  findYouTubeSet.disabled = true; findYouTubeSet.textContent = 'Searching YouTube…'; youtubeSearchMessage.textContent = ''; youtubeResults.replaceChildren();
-  try {
-    const payload = await fetchJson(`/api/gigs/${gig.id}/youtube-search`, { method: 'POST' });
-    youtubeResults.innerHTML = payload.matches.map((match) => `<article class="youtube-match" data-song-index="${match.index}"><h3>${escapeHtml(match.title)}</h3><div class="youtube-match-options">${match.results.map((result) => `<div class="youtube-result" data-youtube-description="${escapeHtml(result.description || '')}"><img src="${escapeHtml(result.thumbnail)}" alt="" /><div><p>${escapeHtml(result.title)}</p><small>${escapeHtml(result.channel)}</small><button type="button" data-youtube-url="https://www.youtube.com/watch?v=${encodeURIComponent(result.id)}">Add to other media</button></div></div>`).join('') || '<p>No matching videos found.</p>'}</div></article>`).join('');
-    youtubeResults.querySelectorAll('[data-youtube-url]').forEach((button) => button.addEventListener('click', async () => {
-      button.disabled = true; button.textContent = 'Adding…';
-      const match = button.closest('.youtube-match');
-      const songIndex = Number(match?.dataset.songIndex);
-      const result = button.closest('.youtube-result');
-      const added = await fetchJson(`/api/gigs/${gig.id}/media`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ externalUrl: button.dataset.youtubeUrl, caption: result.querySelector('p').textContent, sourceDescription: result.dataset.youtubeDescription || '', songIndex: Number.isInteger(songIndex) ? songIndex : null }) });
-      gig.media = [...(gig.media || []), added]; button.textContent = 'Added'; renderMediaGallery(document.querySelector('#show-detail-gallery'), gig.media.filter((item) => item.category !== 'artifact'), { editable: true, songs: gig.songs || [] });
-    }));
-  } catch (error) { youtubeSearchMessage.textContent = error.message; youtubeSearchMessage.classList.add('error'); }
-  finally { findYouTubeSet.disabled = false; findYouTubeSet.textContent = 'Find YouTube videos'; }
+const youtubeShowSearch = youtubeShowSearchModule.createController({
+  fetchJson, escapeHtml, getGigs: () => gigs, showId: showDetailId, renderMediaGallery,
+  elements: { searchButton: findYouTubeSet, results: youtubeResults, message: youtubeSearchMessage, gallery: showDetailGallery }
 });
+youtubeShowSearch.bind();
 
 const sharedShowsController = sharedShowsPageModule.createController({
   document, OptionClass: Option, navigator, fetchJson, escapeHtml, formatDate: formatGigDate,
