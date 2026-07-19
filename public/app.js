@@ -36,6 +36,8 @@ const trackListEditorModule = window.MasterListTrackListEditor;
 const editShowPageModule = window.MasterListEditShowPage;
 const setlistPresentationModule = window.MasterListSetlistPresentation;
 const showDetailPageModule = window.MasterListShowDetailPage;
+const mobileUploadControllerModule = window.MasterListMobileUploadController;
+const formatUploadSize = mobileUploadControllerModule.formatSize;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -49,8 +51,7 @@ let peerPollRunning = false;
 let peerPollTimer;
 window.addEventListener('beforeunload', (event) => {
   const activeJob = [...jobQueue.values()].some((job) => job.type === 'Uploading' && job.status === 'running');
-  const mobileState = mobileUploadStates.get(editMediaInput);
-  const queuedMobileUpload = mobileState?.items?.some((item) => ['queued', 'uploading'].includes(item.status));
+  const queuedMobileUpload = mobileUploadController.isBusy(editMediaInput);
   if (activeJob || queuedMobileUpload) { event.preventDefault(); event.returnValue = ''; }
 });
 const message = document.querySelector('#form-message');
@@ -215,118 +216,21 @@ const addAttendeePicker = document.querySelector('#add-attendee-picker');
 let editAttendeePicker = document.querySelector('#edit-attendee-picker');
 const pendingMedia = new WeakMap();
 const mediaSelection = mediaUi.createSelection();
-const mobileUploadStates = new WeakMap();
-const mobileUploadRenderTimers = new WeakMap();
 const isMobileUpload = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 const gigMediaUploader = mediaUploaderModule.createUploader({ fetch: (...args) => window.fetch(...args), XMLHttpRequest: window.XMLHttpRequest, AbortController: window.AbortController, randomUUID: () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`, updateJob, isMobile: () => isMobileUpload });
-let uploadWakeLock = null;
-let activeWakeLockUsers = 0;
-async function retainUploadWakeLock() { if (!isMobileUpload || !navigator.wakeLock) return; activeWakeLockUsers += 1; if (uploadWakeLock) return; try { uploadWakeLock = await navigator.wakeLock.request('screen'); uploadWakeLock.addEventListener?.('release', () => { uploadWakeLock = null; }); } catch { uploadWakeLock = null; } }
-function releaseUploadWakeLock() { if (!isMobileUpload) return; activeWakeLockUsers = Math.max(0, activeWakeLockUsers - 1); if (!activeWakeLockUsers && uploadWakeLock) { uploadWakeLock.release().catch(() => {}); uploadWakeLock = null; } }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && activeWakeLockUsers && !uploadWakeLock) retainUploadWakeLock(); });
-function mobileUploadStateFor(input, gigId = '', category = 'show') {
-  let state = mobileUploadStates.get(input);
-  if (!state) { state = uploadQueue.createState(category); mobileUploadStates.set(input, state); }
-  if (gigId) uploadQueue.bindGig(state, gigId, category);
-  else if (category) state.category = category;
-  return state;
-}
-function uploadStatusContainer(input) { return input?.closest('.media-upload')?.querySelector('.media-upload-status'); }
-function formatUploadSize(bytes) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB']; const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024))); return `${(bytes / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`; }
-function scheduleMobileUploadStateRender(input, state = mobileUploadStates.get(input), immediate = false) {
-  const timer = mobileUploadRenderTimers.get(input);
-  if (immediate && timer) { clearTimeout(timer); mobileUploadRenderTimers.delete(input); }
-  if (immediate) { renderMobileUploadState(input, state); return; }
-  if (timer) return;
-  mobileUploadRenderTimers.set(input, setTimeout(() => {
-    mobileUploadRenderTimers.delete(input);
-    renderMobileUploadState(input, state);
-  }, 180));
-}
-function renderMobileUploadState(input, state = mobileUploadStates.get(input)) {
-  const container = uploadStatusContainer(input);
-  if (!container) return;
-  const items = state?.items?.slice(-6) || [];
-  container.hidden = !items.length;
-  if (!items.length) { container.replaceChildren(); return; }
-  container.innerHTML = uploadQueue.queueMarkup(state, { escapeHtml, formatSize: formatUploadSize });
-  container.querySelectorAll('.mobile-upload-retry').forEach((button) => button.addEventListener('click', () => {
-    const item = uploadQueue.retry(state, button.dataset.uploadItem);
-    if (!item) return;
-    renderMobileUploadState(input, state);
-    processMobileUploadQueue(input, state);
-  }));
-}
-function queueMobileFiles(input, files) {
-  const state = mobileUploadStateFor(input);
-  const selectedFiles = files.filter((file) => file && file.size > 0);
-  if (!selectedFiles.length) return;
-  uploadQueue.enqueueFiles(state, selectedFiles);
-  if (!state.gigId) pendingMedia.set(input, [...(pendingMedia.get(input) || []), ...selectedFiles]);
-  renderMobileUploadState(input, state);
-  if (state.gigId && !state.startTimer) {
-    state.startTimer = setTimeout(() => {
-      state.startTimer = null;
-      processMobileUploadQueue(input, state);
-    }, 200);
-  }
-}
-async function processMobileUploadQueue(input, state = mobileUploadStates.get(input)) {
-  if (!state?.gigId || state.processing) return state?.runningPromise;
-  state.processing = true;
-  await retainUploadWakeLock();
-  state.runningPromise = (async () => {
-    while (true) {
-      const item = uploadQueue.nextQueued(state);
-      if (!item) break;
-      item.status = 'uploading'; item.progress = 0; renderMobileUploadState(input, state);
-      try {
-        await uploadGigMedia(state.gigId, [item.file], (file, fraction) => { item.progress = fraction * 100; scheduleMobileUploadStateRender(input, state); }, state.category);
-        item.status = 'complete'; item.progress = 100; item.file = null; renderMobileUploadState(input, state);
-        state.completedSinceDrain += 1;
-        if (state.onUploaded) { try { await state.onUploaded(item); } catch { /* keep the upload marked successful if a gallery refresh fails */ } }
-      } catch (error) {
-        item.status = 'error'; item.error = error.message; renderMobileUploadState(input, state);
-      }
-    }
-  })().finally(() => {
-    state.processing = false; state.runningPromise = null;
-    const hasQueued = state.items.some((item) => item.status === 'queued' || item.status === 'waiting' || item.status === 'uploading');
-    const needsRetry = state.items.some((item) => item.status === 'queued' || item.status === 'error');
-    if (!hasQueued && state.completedSinceDrain && state.onDrained) {
-      const completedCount = state.completedSinceDrain;
-      state.completedSinceDrain = 0;
-      Promise.resolve(state.onDrained(completedCount)).catch(() => {});
-    }
-    if (state.releaseAfterDrain && !needsRetry) { state.gigId = ''; state.releaseAfterDrain = false; }
-    releaseUploadWakeLock(); renderMobileUploadState(input, state);
-  });
-  return state.runningPromise;
-}
-function startMobileUploadQueue(input, gigId, onUploaded, onDrained, category = 'show') {
-  const state = mobileUploadStateFor(input, gigId, category);
-  state.onUploaded = onUploaded || state.onUploaded;
-  state.onDrained = onDrained || state.onDrained;
-  uploadQueue.bindGig(state, gigId, category);
-  pendingMedia.set(input, []);
-  renderMobileUploadState(input, state);
-  return processMobileUploadQueue(input, state);
-}
-function setupMobileFileQueue(input, category = 'show') {
-  if (!input || !isMobileUpload) return;
-  pendingMedia.set(input, []);
-  mobileUploadStateFor(input, '', category);
-  input.addEventListener('change', () => {
-    const files = [...(input.files || [])];
-    input.value = '';
-    queueMobileFiles(input, files);
-  });
-}
-setupMobileFileQueue(mediaInput);
-setupMobileFileQueue(editMediaInput);
-function addFileClearButton(input) { if (!input) return; const button = document.createElement('button'); button.type = 'button'; button.className = 'button button-secondary file-clear'; button.textContent = 'Clear queued files'; button.addEventListener('click', () => { input.value = ''; if (pendingMedia.has(input)) pendingMedia.set(input, []); const state = mobileUploadStates.get(input); if (state) { if (state.startTimer) { clearTimeout(state.startTimer); state.startTimer = null; } uploadQueue.clearPending(state); if (!state.items.some((item) => item.status === 'uploading')) { state.gigId = ''; state.releaseAfterDrain = false; } renderMobileUploadState(input, state); } }); input.insertAdjacentElement('afterend', button); }
-addFileClearButton(mediaInput);
-addFileClearButton(editMediaInput);
+const mobileUploadController = mobileUploadControllerModule.createController({
+  document, navigator, isMobile: () => isMobileUpload, queue: uploadQueue,
+  uploadFiles: (gigId, files, onProgress, category) => uploadGigMedia(gigId, files, onProgress, category),
+  pendingFiles: pendingMedia, escapeHtml
+});
+mobileUploadController.bind();
+mobileUploadController.setup(mediaInput);
+mobileUploadController.setup(editMediaInput);
+mobileUploadController.addClearButton(mediaInput);
+mobileUploadController.addClearButton(editMediaInput);
+function mobileUploadStateFor(input, gigId = '', category = 'show') { return mobileUploadController.stateFor(input, gigId, category); }
+function startMobileUploadQueue(input, gigId, onUploaded, onDrained, category = 'show') { return mobileUploadController.start(input, gigId, onUploaded, onDrained, category); }
+
 const editGallery = document.querySelector('#edit-gallery');
 const mediaWorkspaceStats = document.querySelector('#media-workspace-stats');
 const mediaWorkspaceFilters = document.querySelector('#media-workspace-filters');
