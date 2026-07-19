@@ -31,6 +31,7 @@ const peerSettingsModule = window.MasterListPeerSettings;
 const notificationCenterModule = window.MasterListNotificationCenter;
 const sharedShowsPageModule = window.MasterListSharedShowsPage;
 const archivePageModule = window.MasterListArchivePage;
+const addShowPageModule = window.MasterListAddShowPage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -147,7 +148,6 @@ const backupScheduleForm = document.querySelector('#backup-schedule-form');
 const backupScheduleStatus = document.querySelector('#backup-schedule-status');
 const backupNowButton = document.querySelector('#backup-now');
 const logoutButton = document.querySelector('#logout');
-let selectedSetlist = null;
 let gigs = [];
 let integrations = {};
 let profiles = [];
@@ -651,11 +651,6 @@ document.querySelectorAll('.star-picker').forEach((picker) => {
 
 favoriteChoice.addEventListener('click', () => setFavoriteChoice(favoriteChoice.getAttribute('aria-pressed') !== 'true'));
 
-function formValues() {
-  const data = new FormData(form);
-  return Object.fromEntries(data.entries());
-}
-
 function findDuplicateShows(values, excludeId = '') {
   return showEditor.findDuplicates(values, { gigs, sharedShows, excludeId });
 }
@@ -674,7 +669,6 @@ function confirmDuplicateSave(container, values, excludeId = '') {
 }
 
 ['artist', 'venue', 'city', 'date'].forEach((name) => {
-  form.elements[name]?.addEventListener('input', () => showDuplicateWarning(addDuplicateWarning, formValues()));
   editForm?.elements[name]?.addEventListener('input', () => showDuplicateWarning(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), editGigId));
 });
 
@@ -2019,87 +2013,28 @@ const peerSettingsController = peerSettingsModule.createController({
 });
 peerSettingsController.bind();
 async function renderInstanceSettings() { if (account) return peerSettingsController.render(); }
-document.querySelector('#find-setlist').addEventListener('click', async () => {
-  const gig = formValues();
-  if (!gig.artist || !gig.city) {
-    setMessage('Add an artist and city before searching.', true);
-    return;
-  }
-  setMessage('Searching setlist.fm…');
-  results.hidden = true;
-  try {
-    const params = new URLSearchParams({ artistName: gig.artist, cityName: gig.city, eventDate: gig.date });
-    const payload = await fetchJson(`/api/setlists/search?${params}`);
-    if (!payload.setlists.length) {
-      setMessage('No matches found. You can still save the show without a setlist.');
-      return;
-    }
-    renderMatches(payload.setlists);
-    setMessage(`Found ${payload.setlists.length} possible match${payload.setlists.length === 1 ? '' : 'es'}. Choose a date to attach it.`);
-  } catch (error) {
-    setMessage(error.message, true);
-  }
-});
-
-function renderMatches(setlists) {
-  results.innerHTML = `<p class="eyebrow">Possible setlists</p>${setlists.map((setlist, index) => `
-    <button class="match" data-match="${index}" type="button">
-      <strong>${escapeHtml(setlist.venue || 'Unknown venue')}</strong>
-      <span>${escapeHtml(setlist.city)} · ${escapeHtml(setlist.date || 'Date unknown')} · ${setlist.songs.length} songs</span>
-    </button>`).join('')}`;
-  results.hidden = false;
-  results.querySelectorAll('[data-match]').forEach((button) => {
-    button.addEventListener('click', () => {
-      selectedSetlist = setlists[Number(button.dataset.match)];
-      form.elements.venue.value = selectedSetlist.venue || form.elements.venue.value;
-      form.elements.city.value = selectedSetlist.city || form.elements.city.value;
-      if (selectedSetlist.date) { const [day, month, year] = selectedSetlist.date.split('-'); form.elements.date.value = `${year}-${month}-${day}`; }
-      showDuplicateWarning(addDuplicateWarning, formValues());
-      results.querySelectorAll('.match').forEach((item) => item.classList.remove('selected'));
-      button.classList.add('selected');
-      setMessage(`Setlist selected: ${selectedSetlist.songs.length} songs will be saved with this show.`);
+const addShowPageController = addShowPageModule.createController({
+  URLSearchParamsClass: URLSearchParams, FormDataClass: FormData, fetchJson, escapeHtml,
+  editor: showEditor, workflow: showFormController,
+  getAttendees: () => readAttendees(addAttendeePicker),
+  getMediaFiles: () => pendingMedia.get(mediaInput) || [...(mediaInput?.files || [])],
+  isMobile: () => isMobileUpload,
+  confirmDuplicateSave, showDuplicateWarning,
+  queueMobileUploads: async (record) => {
+    const uploadState = mobileUploadStateFor(mediaInput, record.id);
+    uploadState.releaseAfterDrain = true;
+    startMobileUploadQueue(mediaInput, record.id, (item) => setMessage(`${item.name} uploaded. Continuing the queue…`), async () => {
+      try { await pollMediaRecognition(record.id, (refreshed) => { gigs = gigs.map((entry) => entry.id === record.id ? { ...entry, media: refreshed } : entry); renderGigs(); }); } catch { /* the upload itself already succeeded */ }
     });
-  });
-}
-
-form.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const gig = formValues();
-  if (!confirmDuplicateSave(addDuplicateWarning, gig)) return;
-  const mediaFiles = pendingMedia.get(mediaInput) || [...(mediaInput?.files || [])];
-  const payload = showEditor.createAddPayload(gig, { attendees: readAttendees(addAttendeePicker), setlist: selectedSetlist });
-  const submitButton = form.querySelector('button[type="submit"]');
-  try {
-    submitButton.disabled = true;
-    const { saved, uploadsQueued } = await showFormController.createShow({
-      payload, mediaFiles, mobile: isMobileUpload,
-      saveShow: (body) => fetchJson('/api/gigs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
-      queueMobileUploads: async (record) => {
-        const uploadState = mobileUploadStateFor(mediaInput, record.id);
-        uploadState.releaseAfterDrain = true;
-        startMobileUploadQueue(mediaInput, record.id, (item) => {
-          setMessage(`${item.name} uploaded. Continuing the queue…`);
-        }, async () => {
-          try { await pollMediaRecognition(record.id, (refreshed) => { gigs = gigs.map((entry) => entry.id === record.id ? { ...entry, media: refreshed } : entry); renderGigs(); }); } catch { /* the upload itself already succeeded */ }
-        });
-      },
-      uploadFiles: (record, uploads) => uploadGigMedia(record.id, uploads, (file, fraction) => setMessage(fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`)),
-      addExternalMedia: (record) => addYouTubeMedia(record.id, youtubeMediaInput)
-    });
-    gigs.unshift(saved);
-    form.reset();
-    resetReviewForm();
-    selectedSetlist = null;
-    results.hidden = true;
-    addDuplicateWarning.hidden = true;
-    setMessage(uploadsQueued ? 'Show saved. Uploads are continuing in the queue.' : 'Show saved to The Master List.');
-    renderGigs();
-    await loadPersistentJobs();
-    await renderDashboardStats();
-  } catch (error) {
-    setMessage(error.message, true);
-  } finally { submitButton.disabled = false; }
+  },
+  uploadFiles: (record, uploads) => uploadGigMedia(record.id, uploads, (file, fraction) => setMessage(fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`)),
+  addExternalMedia: (record) => addYouTubeMedia(record.id, youtubeMediaInput),
+  onSaved: (saved) => { gigs.unshift(saved); },
+  afterSaved: async () => { renderGigs(); await loadPersistentJobs(); await renderDashboardStats(); },
+  resetReviewForm,
+  elements: { form, results, message, duplicateWarning: addDuplicateWarning, findButton: document.querySelector('#find-setlist') }
 });
+addShowPageController.bind();
 
 const archivePageController = archivePageModule.createController({
   window, document, OptionClass: Option, fetchJson, escapeHtml, formatDate: formatGigDate,

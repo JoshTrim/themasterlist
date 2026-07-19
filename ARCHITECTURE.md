@@ -81,6 +81,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `notification-center.js` — peer notification popover, navigation badges, read state and conflict counts.
 - `shared-shows-page.js` — shared-show grouping, attendee contribution summaries and review rating controls.
 - `archive-page.js` — show archive filtering, local/remote card orchestration, artist images and year controls.
+- `add-show-page.js` — setlist search and selection, duplicate checks, show creation, uploads and form reset state.
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 
