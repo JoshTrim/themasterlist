@@ -711,11 +711,11 @@ function playbackSourcesForSong(gig, songIndex) {
 }
 
 function playbackFallbackOptions(gig, selectedId = '') {
-  return `<option value="">Choose backup…</option>${playbackCandidates(gig).map((item) => `<option value="${escapeHtml(item.id)}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(playbackSourceLabel(item))}</option>`).join('')}`;
+  return playbackEditor.fallbackOptions(gig, selectedId, { candidates: playbackCandidates, sourceLabel: playbackSourceLabel, escapeHtml });
 }
 
 function playbackFallbackMarkup(gig, entry = {}) {
-  return `<div class="playback-fallback-row"><span class="playback-fallback-rank"></span><select class="playback-fallback-source">${playbackFallbackOptions(gig, entry.media?.id || '')}</select><input class="playback-fallback-start" type="number" min="0" step="0.1" inputmode="decimal" aria-label="Fallback start" placeholder="Start" value="${entry.clip?.startSeconds ?? ''}" /><input class="playback-fallback-end" type="number" min="0" step="0.1" inputmode="decimal" aria-label="Fallback end" placeholder="End" value="${entry.clip?.endSeconds ?? ''}" /><div class="playback-fallback-actions"><button type="button" data-fallback-action="up" aria-label="Move fallback up">↑</button><button type="button" data-fallback-action="down" aria-label="Move fallback down">↓</button><button type="button" data-fallback-action="remove" aria-label="Remove fallback">×</button></div></div>`;
+  return playbackEditor.fallbackMarkup(gig, entry, { candidates: playbackCandidates, sourceLabel: playbackSourceLabel, escapeHtml });
 }
 
 function refreshPlaybackFallbacks(row) {
@@ -764,34 +764,11 @@ function closePlaybackEditorPreview() {
 }
 
 function playbackEditorRowSources(gig, row) {
-  const sources = [];
-  const primaryId = row.querySelector('.playback-source').value;
-  if (primaryId) sources.push({
-    media: (gig.media || []).find((item) => item.id === primaryId),
-    startValue: row.querySelector('.playback-start').value,
-    endValue: row.querySelector('.playback-end').value,
-    priority: 0,
-    element: row
-  });
-  row.querySelectorAll('.playback-fallback-row').forEach((fallback, index) => {
-    const mediaId = fallback.querySelector('.playback-fallback-source').value;
-    if (mediaId) sources.push({
-      media: (gig.media || []).find((item) => item.id === mediaId),
-      startValue: fallback.querySelector('.playback-fallback-start').value,
-      endValue: fallback.querySelector('.playback-fallback-end').value,
-      priority: index + 1,
-      element: fallback
-    });
-  });
-  return sources;
+  return playbackEditor.rowSources(gig, row);
 }
 
 function playbackEditorRows(gig) {
-  return [...playbackEditorList.querySelectorAll('.playback-editor-row')].map((row) => ({
-    element: row, songIndex: Number(row.dataset.songIndex), primaryId: row.querySelector('.playback-source').value,
-    duration: Number(row.dataset.mediaDuration) || null, previewUnavailable: row.dataset.previewUnavailable === 'true',
-    sources: playbackEditorRowSources(gig, row)
-  }));
+  return playbackEditor.rowsFromList(gig, playbackEditorList);
 }
 
 function playbackEditorHealthCheck(gig) {
@@ -804,7 +781,7 @@ function playbackEditorHealthCheck(gig) {
     if (result.errors.length) { row.classList.add('is-invalid'); rowHealth.textContent = result.errors.join(' '); }
     else if (result.warnings.length) { row.classList.add('has-warning'); rowHealth.textContent = result.warnings.join(' '); }
   });
-  playbackEditorHealth.innerHTML = `<span class="playback-health-ready">${health.assigned}/${editorRows.length} tracks assigned</span><span class="playback-health-gap">${health.gaps} gap${health.gaps === 1 ? '' : 's'}</span><span class="${health.errors.length ? 'playback-health-error' : 'playback-health-ok'}">${health.errors.length ? `${health.errors.length} issue${health.errors.length === 1 ? '' : 's'} to fix` : 'No blocking issues'}</span>${health.warnings.length ? `<span class="playback-health-warning">${health.warnings.length} warning${health.warnings.length === 1 ? '' : 's'}</span>` : ''}`;
+  playbackEditorHealth.innerHTML = playbackEditor.healthMarkup(health, editorRows.length);
   savePlaybackPlan.disabled = Boolean(health.errors.length); savePlaybackPlan.title = health.errors[0] || '';
   return health;
 }
