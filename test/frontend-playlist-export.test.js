@@ -71,4 +71,18 @@ describe('playlist export frontend', () => {
     assert.equal(view.status.classList.contains('error'), true);
     assert.equal(view.buttons[0].disabled, false);
   });
+
+  test('reconnects an OAuth provider when its stored grant has expired', async () => {
+    const view = fixture(['youtube']);
+    let destination = '';
+    const expired = Object.assign(new Error('Reconnect YouTube to continue.'), { status: 401, payload: { code: 'reconnect-required' } });
+    const exporter = playlistExport.createExporter({
+      getIntegrations: () => ({ youtube: { configured: true, connected: true } }), providerName: () => 'YouTube',
+      fetchJson: async () => { throw expired; }, navigate: (href) => { destination = href; }, document: view.document,
+      authorizeAppleMusic: async () => ''
+    });
+    await exporter.run('youtube', { id: 'gig', songs: [{}] }, view.exports, view.status);
+    assert.equal(destination, '/auth/youtube');
+    assert.match(view.status.textContent, /Reconnecting/);
+  });
 });

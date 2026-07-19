@@ -1,6 +1,6 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createOAuthService } = require('../lib/oauth');
+const { createOAuthService, refreshWasRejected } = require('../lib/oauth');
 
 function harness({ clock = 1_000, connected = {} } = {}) {
   let now = clock;
@@ -56,6 +56,25 @@ describe('OAuth service', () => {
     assert.equal(await stale.service.accessToken('youtube'), 'new-token');
     assert.equal(stale.requests[0].options.body.get('client_secret'), 'google-secret');
     assert.equal(stale.requests[0].options.body.get('grant_type'), 'refresh_token');
+  });
+
+  test('clears a connection and requests reconnection when its refresh token is rejected', async () => {
+    let connections = { youtube: { accessToken: 'old', refreshToken: 'revoked', expiresAt: 1 } };
+    const service = createOAuthService({
+      providers: { youtube: { name: 'YouTube', clientId: 'id', clientSecret: 'secret', tokenUrl: 'https://google.test/token' } },
+      requestJson: async () => { throw new Error('youtube: Token has been expired or revoked.'); },
+      readConnections: async () => structuredClone(connections),
+      writeConnections: async (value) => { connections = structuredClone(value); },
+      randomUUID: () => 'state', now: () => 10_000
+    });
+    await assert.rejects(service.accessToken('youtube'), (error) => error.code === 'reconnect-required' && error.status === 401);
+    assert.equal(connections.youtube, undefined);
+  });
+
+  test('recognizes Google refresh-token rejection errors', () => {
+    assert.equal(refreshWasRejected(new Error('youtube: invalid_grant')), true);
+    assert.equal(refreshWasRejected(new Error('youtube: Token has been expired or revoked.')), true);
+    assert.equal(refreshWasRejected(new Error('youtube: temporarily unavailable')), false);
   });
 
   test('reports configuration and connection state', async () => {

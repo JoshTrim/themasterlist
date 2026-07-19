@@ -602,6 +602,7 @@ const setPlaybackController = setPlaybackControllerModule.createController({
 });
 const youtubeShowSearch = youtubeShowSearchModule.createController({
   fetchJson, escapeHtml, getGigs: () => gigs, showId: showDetailId, renderMediaGallery,
+  navigate: (href) => window.location.assign(href),
   elements: { searchButton: findYouTubeSet, results: youtubeResults, message: youtubeSearchMessage, gallery: showDetailGallery }
 });
 youtubeShowSearch.bind();

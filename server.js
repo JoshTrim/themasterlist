@@ -35,7 +35,7 @@ const { createMetadataProvider } = require('./lib/providers/metadata');
 const { createSpotifyProvider } = require('./lib/providers/spotify');
 const { createYouTubeProvider } = require('./lib/providers/youtube');
 const { createAppleMusicProvider } = require('./lib/providers/apple-music');
-const { createOAuthService } = require('./lib/oauth');
+const { OAuthError, createOAuthService } = require('./lib/oauth');
 const { createGeocodingService, validCoordinates } = require('./lib/geocoding');
 const { createArchiveHealthService } = require('./lib/archive-health');
 const { createArchiveIntegrityService } = require('./lib/archive-integrity');
@@ -613,6 +613,7 @@ const server = http.createServer(async (request, response) => {
     else await fileServing.serveStatic(request, response, url.pathname);
   } catch (error) {
     if (!error.status || error.status >= 500) console.error(error);
+    if (error instanceof OAuthError) return sendJson(response, error.status || 400, { error: error.message, code: error.code });
     sendError(response, error.status || 500, error.message || 'Something went wrong.');
   }
 });

@@ -7,7 +7,7 @@
     return matches.map((match) => `<article class="youtube-match" data-song-index="${match.index}"><h3>${escapeHtml(match.title)}</h3><div class="youtube-match-options">${(match.results || []).map((result) => `<div class="youtube-result" data-youtube-description="${escapeHtml(result.description || '')}"><img src="${escapeHtml(result.thumbnail)}" alt="" /><div><p>${escapeHtml(result.title)}</p><small>${escapeHtml(result.channel)}</small><button type="button" data-youtube-url="https://www.youtube.com/watch?v=${encodeURIComponent(result.id)}">Add to other media</button></div></div>`).join('') || '<p>No matching videos found.</p>'}</div></article>`).join('');
   }
 
-  function createController({ fetchJson, escapeHtml, getGigs, showId, renderMediaGallery, elements }) {
+  function createController({ fetchJson, escapeHtml, getGigs, showId, renderMediaGallery, navigate = () => {}, elements }) {
     const { searchButton, results, message, gallery } = elements;
 
     async function addResult(gig, button) {
@@ -62,6 +62,11 @@
         bindResults(gig);
         return matches;
       } catch (error) {
+        if (error.status === 401 && error.payload?.code === 'reconnect-required') {
+          message.textContent = 'Your YouTube connection expired. Reconnecting…';
+          navigate('/auth/youtube');
+          return [];
+        }
         message.textContent = error.message;
         message.classList.add('error');
         return [];

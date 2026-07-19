@@ -7,7 +7,7 @@ function classList() {
   return { add: (name) => values.add(name), remove: (name) => values.delete(name), contains: (name) => values.has(name) };
 }
 
-function fixture(gig, fetchJson) {
+function fixture(gig, fetchJson, navigate = () => {}) {
   const searchButton = { disabled: false, textContent: '', addEventListener(_type, handler) { this.handler = handler; } };
   const results = { innerHTML: '', replaceChildren() { this.innerHTML = ''; }, querySelectorAll: () => [] };
   const message = { textContent: '', classList: classList() };
@@ -16,6 +16,7 @@ function fixture(gig, fetchJson) {
     fetchJson, escapeHtml: (value) => String(value).replaceAll('&', '&amp;'),
     getGigs: () => gig ? [gig] : [], showId: gig?.id || 'missing',
     renderMediaGallery: (...args) => renders.push(args),
+    navigate,
     elements: { searchButton, results, message, gallery: { id: 'gallery' } }
   });
   controller.bind();
@@ -75,5 +76,14 @@ describe('show YouTube search controller', () => {
     assert.deepEqual(gig.media, [{ id: 'artifact', category: 'artifact' }, added]);
     assert.deepEqual(view.renders[0][1], [added]);
     assert.equal(button.textContent, 'Added');
+  });
+
+  test('reconnects YouTube when search discovers an expired grant', async () => {
+    let destination = '';
+    const expired = Object.assign(new Error('Reconnect YouTube to continue.'), { status: 401, payload: { code: 'reconnect-required' } });
+    const view = fixture({ id: 'g1', songs: [{ title: 'Opening' }] }, async () => { throw expired; }, (href) => { destination = href; });
+    assert.deepEqual(await view.controller.search(), []);
+    assert.equal(destination, '/auth/youtube');
+    assert.match(view.message.textContent, /Reconnecting/);
   });
 });

@@ -67,6 +67,11 @@
         status.append(`Created with ${result.matched} matched song${result.matched === 1 ? '' : 's'}. `, link);
         if (result.unmatched?.length) status.append(` ${result.unmatched.length} song${result.unmatched.length === 1 ? '' : 's'} could not be matched.`);
       } catch (error) {
+        if (provider !== 'apple-music' && error.status === 401 && error.payload?.code === 'reconnect-required') {
+          status.textContent = `Your ${providerName(provider)} connection expired. Reconnecting…`;
+          navigate(`/auth/${provider}`);
+          return;
+        }
         status.textContent = error.message;
         status.classList.add('error');
       } finally {
