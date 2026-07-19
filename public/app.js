@@ -35,6 +35,7 @@ const addShowPageModule = window.MasterListAddShowPage;
 const trackListEditorModule = window.MasterListTrackListEditor;
 const editShowPageModule = window.MasterListEditShowPage;
 const setlistPresentationModule = window.MasterListSetlistPresentation;
+const showDetailPageModule = window.MasterListShowDetailPage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1483,68 +1484,28 @@ const editShowPageController = editShowPageModule.createController({
 editShowPageController.bind();
 function renderEditPage() { return editShowPageController.render(); }
 
-function renderShowPage() {
-  if (!['show', 'playback'].includes(page)) return;
-  const gig = gigs.find((entry) => entry.id === showDetailId);
-  if (!gig) { showDetailHeading.textContent = 'Show not found'; return; }
-  showDetailHeading.textContent = gig.artist;
-  showDetailPlace.innerHTML = `<a class="venue-link" href="/venue?name=${encodeURIComponent(gig.venue)}&city=${encodeURIComponent(gig.city)}">${escapeHtml(gig.venue)}</a> · <a class="venue-link" href="/city?name=${encodeURIComponent(gig.city)}">${escapeHtml(gig.city)}</a>`;
-  showDetailDate.textContent = formatGigDate(gig.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-  showDetailNotes.textContent = gig.performanceNotes || gig.notes || 'No performance notes yet.';
-  showDetailVenueNotes.textContent = gig.venueNotes ? `Venue: ${gig.venueNotes}` : 'No venue notes yet.';
-  const attendeesLine = document.querySelector('#show-detail-attendees');
-  const names = attendeeNames(gig);
-  attendeesLine.textContent = names.length > 1 ? `Attended with ${names.slice(1).join(', ')}` : 'Solo show';
-  showDetailRatings.innerHTML = gig.performanceRating ? `<span><b>${gig.performanceRating}</b> / 5 stars</span>` : '<span>Not rated yet</span>';
-  showDetailSetlist.innerHTML = gig.songs?.length ? `<ol>${renderTrackList(gig.songs)}</ol>${renderAlbumStats(gig.songs)}` : '<p>No setlist attached.</p>';
-  const hasMissingAlbums = () => gig.songs?.some((song) => !String(song.album || '').trim() || /^unknown album$/i.test(String(song.album).trim()));
-  findAlbumInfo.hidden = !hasMissingAlbums();
-  albumLookupMessage.textContent = '';
-  if (gig.songs?.length) fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats`).then((data) => { gig.songs = data.songs; showDetailSetlist.innerHTML = `<ol>${renderTrackList(gig.songs)}</ol>${renderAlbumStats(gig.songs)}`; findAlbumInfo.hidden = !hasMissingAlbums(); }).catch(() => {});
-  showEditLink.href = `/edit?id=${encodeURIComponent(gig.id)}`;
-  const generalMedia = (gig.media || []).filter((item) => item.category !== 'artifact');
-  const artifacts = (gig.media || []).filter((item) => item.category === 'artifact');
-  showDetailNoMedia.hidden = Boolean(generalMedia.length);
-  showDetailNoArtifacts.hidden = Boolean(artifacts.length);
-  showNavTrackCount.textContent = gig.songs?.length ? String(gig.songs.length) : '';
-  showNavMediaCount.textContent = generalMedia.length ? String(generalMedia.length) : '';
-  showNavArtifactCount.textContent = artifacts.length ? String(artifacts.length) : '';
-  showMemoryFacts.innerHTML = `<span><b>${gig.performanceRating || '—'}</b> rating</span><span><b>${gig.songs?.length || 0}</b> tracks</span><span><b>${generalMedia.length}</b> media</span><span><b>${artifacts.length}</b> artifacts</span><span><b>${Math.max(names.length, 1)}</b> attendee${Math.max(names.length, 1) === 1 ? '' : 's'}</span>`;
-  // Keep the gallery manageable from the show page too, including YouTube videos
-  // attached by the setlist search.
-  renderMediaGallery(showDetailGallery, generalMedia, { editable: true, songs: gig.songs || [] });
-  renderMediaGallery(showDetailArtifacts, artifacts, { editable: true, allowCover: false, songs: gig.songs || [] });
-  if (page === 'playback' || new URLSearchParams(window.location.search).get('play') === '1') setTimeout(() => playWholeSet?.click(), 0);
-}
-
-findAlbumInfo?.addEventListener('click', async () => {
-  const gig = gigs.find((entry) => entry.id === showDetailId);
-  if (!gig?.songs?.length) return;
-  findAlbumInfo.disabled = true;
-  findAlbumInfo.textContent = 'Searching albums…';
-  albumLookupMessage.classList.remove('error');
-  albumLookupMessage.textContent = 'Searching by track title and artist…';
-  try {
-    const data = await fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats?refresh=1`);
-    gig.songs = data.songs;
-    showDetailSetlist.innerHTML = `<ol>${renderTrackList(gig.songs)}</ol>${renderAlbumStats(gig.songs)}`;
-    const remaining = gig.songs.filter((song) => !String(song.album || '').trim() || /^unknown album$/i.test(String(song.album).trim())).length;
-    findAlbumInfo.hidden = remaining === 0;
-    albumLookupMessage.textContent = remaining ? `${remaining} track${remaining === 1 ? '' : 's'} could not be matched. You can enter those manually on the edit page.` : 'Album information updated.';
-  } catch (error) {
-    albumLookupMessage.textContent = error.message;
-    albumLookupMessage.classList.add('error');
-  } finally {
-    findAlbumInfo.disabled = false;
-    findAlbumInfo.textContent = 'Find album info';
-  }
-});
-
+function renderShowPage() { return showDetailPageController.render(); }
 const setlistPresenter = setlistPresentationModule.createController({ document, fetchJson, escapeHtml });
 setlistPresenter.bindTooltips();
 function renderAlbumStats(songs) { return setlistPresenter.albumStats(songs); }
 function renderTrackList(songs, albumFallback = 'Album data unavailable') { return setlistPresenter.trackList(songs, albumFallback); }
 function setupArchiveSetlist(setlist, gig, options = {}) { return setlistPresenter.setupArchive(setlist, gig, options); }
+
+const showDetailPageController = showDetailPageModule.createController({
+  page, window, URLSearchParamsClass: URLSearchParams, setTimeoutFn: setTimeout,
+  showId: showDetailId, getGigs: () => gigs, fetchJson, escapeHtml, formatDate: formatGigDate, attendeeNames,
+  hasMissingAlbums: setlistPresentationModule.hasMissingAlbums, renderTrackList, renderAlbumStats, renderMediaGallery,
+  startPlayback: () => playWholeSet?.click(),
+  elements: {
+    heading: showDetailHeading, place: showDetailPlace, date: showDetailDate, notes: showDetailNotes,
+    venueNotes: showDetailVenueNotes, attendees: document.querySelector('#show-detail-attendees'), ratings: showDetailRatings,
+    setlist: showDetailSetlist, editLink: showEditLink, noMedia: showDetailNoMedia, noArtifacts: showDetailNoArtifacts,
+    navTrackCount: showNavTrackCount, navMediaCount: showNavMediaCount, navArtifactCount: showNavArtifactCount,
+    facts: showMemoryFacts, gallery: showDetailGallery, artifactGallery: showDetailArtifacts,
+    findAlbums: findAlbumInfo, albumMessage: albumLookupMessage
+  }
+});
+showDetailPageController.bind();
 
 function stopYoutubeTimelinePolling() { if (youtubeTimelineTimer) { clearInterval(youtubeTimelineTimer); youtubeTimelineTimer = null; } }
 function clearSetSourceLoadTimer() { if (setSourceLoadTimer) { clearTimeout(setSourceLoadTimer); setSourceLoadTimer = null; } }

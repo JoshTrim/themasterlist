@@ -85,6 +85,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `track-list-editor.js` — metadata-safe setlist field editing, add/remove controls and pointer, keyboard or native drag reordering.
 - `edit-show-page.js` — edit form hydration, duplicate checks, attendee/media coordination and metadata-safe show persistence.
 - `setlist-presentation.js` — track tooltips, album breakdowns and lazy album hydration for archive setlists.
+- `show-detail-page.js` — show-memory header, facts, setlist hydration, album repair and media/artifact presentation.
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 

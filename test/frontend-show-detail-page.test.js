@@ -1,0 +1,96 @@
+const { describe, test } = require('node:test');
+const assert = require('node:assert/strict');
+const showDetail = require('../public/lib/show-detail-page');
+
+function classList() {
+  const values = new Set();
+  return { add: (name) => values.add(name), remove: (name) => values.delete(name), contains: (name) => values.has(name) };
+}
+
+function fixture() {
+  const text = () => ({ textContent: '' });
+  return {
+    heading: text(), place: { innerHTML: '' }, date: text(), notes: text(), venueNotes: text(), attendees: text(),
+    ratings: { innerHTML: '' }, setlist: { innerHTML: '' }, editLink: { href: '' }, noMedia: { hidden: false }, noArtifacts: { hidden: false },
+    navTrackCount: text(), navMediaCount: text(), navArtifactCount: text(), facts: { innerHTML: '' }, gallery: {}, artifactGallery: {},
+    findAlbums: { hidden: false, disabled: false, textContent: '', addEventListener() {} }, albumMessage: { textContent: '', classList: classList() }
+  };
+}
+
+function gigFixture() {
+  return {
+    id: 'g1', artist: 'Poppy', venue: 'The Tivoli', city: 'Brisbane', date: '2026-01-20', performanceRating: 5,
+    performanceNotes: 'Excellent', songs: [{ title: 'Song', album: '' }], attendees: [{ name: 'Archive Owner' }, { name: 'Sam' }],
+    media: [{ id: 'video' }, { id: 'shirt', category: 'artifact' }]
+  };
+}
+
+function controllerFor(elements, gig, overrides = {}) {
+  const galleries = [];
+  let playbackStarted = false;
+  const controller = showDetail.createController({
+    page: 'show', window: { location: { search: '' } }, URLSearchParamsClass: URLSearchParams, setTimeoutFn: (fn) => fn(),
+    showId: 'g1', getGigs: () => [gig], fetchJson: async () => ({ songs: gig.songs }),
+    escapeHtml: String, formatDate: (value) => `date:${value}`, attendeeNames: (record) => record.attendees.map((person) => person.name),
+    hasMissingAlbums: (songs) => songs.some((song) => !song.album),
+    renderTrackList: (songs) => songs.map((song) => `<li>${song.title}</li>`).join(''), renderAlbumStats: () => '<div>albums</div>',
+    renderMediaGallery: (target, media, options) => galleries.push([target, media, options]), startPlayback: () => { playbackStarted = true; }, elements,
+    ...overrides
+  });
+  return { controller, galleries, playbackStarted: () => playbackStarted };
+}
+
+describe('show detail page controller', () => {
+  test('partitions artifacts from ordinary show media', () => {
+    const result = showDetail.partitionMedia([{ id: 'video' }, { id: 'shirt', category: 'artifact' }]);
+    assert.deepEqual(result.general.map((item) => item.id), ['video']);
+    assert.deepEqual(result.artifacts.map((item) => item.id), ['shirt']);
+  });
+
+  test('renders show identity, facts, setlist and separate media galleries', () => {
+    const elements = fixture();
+    const gig = gigFixture();
+    const { controller, galleries } = controllerFor(elements, gig);
+    assert.equal(controller.render(), gig);
+    assert.equal(elements.heading.textContent, 'Poppy');
+    assert.match(elements.place.innerHTML, /The Tivoli/);
+    assert.equal(elements.attendees.textContent, 'Attended with Sam');
+    assert.match(elements.ratings.innerHTML, /<b>5<\/b> \/ 5 stars/);
+    assert.match(elements.setlist.innerHTML, /Song/);
+    assert.equal(elements.navTrackCount.textContent, '1');
+    assert.equal(elements.navMediaCount.textContent, '1');
+    assert.equal(elements.navArtifactCount.textContent, '1');
+    assert.equal(galleries.length, 2);
+    assert.equal(galleries[0][1][0].id, 'video');
+    assert.equal(galleries[1][1][0].id, 'shirt');
+  });
+
+  test('renders a stable not-found state', () => {
+    const elements = fixture();
+    const { controller } = controllerFor(elements, gigFixture(), { getGigs: () => [] });
+    assert.equal(controller.render(), null);
+    assert.equal(elements.heading.textContent, 'Show not found');
+  });
+
+  test('starts whole-set playback automatically on the playback route', () => {
+    const elements = fixture();
+    const setup = controllerFor(elements, gigFixture(), { page: 'playback' });
+    setup.controller.render();
+    assert.equal(setup.playbackStarted(), true);
+  });
+
+  test('refreshes album metadata and reports remaining unmatched tracks', async () => {
+    const elements = fixture();
+    const gig = gigFixture();
+    const { controller } = controllerFor(elements, gig, {
+      fetchJson: async (url) => url.includes('refresh=1') ? { songs: [{ title: 'Song', album: 'Album' }] } : { songs: gig.songs }
+    });
+    controller.render();
+    const result = await controller.refreshAlbums();
+    assert.equal(result.songs[0].album, 'Album');
+    assert.equal(elements.findAlbums.hidden, true);
+    assert.equal(elements.findAlbums.disabled, false);
+    assert.equal(elements.findAlbums.textContent, 'Find album info');
+    assert.equal(elements.albumMessage.textContent, 'Album information updated.');
+  });
+});
