@@ -15,7 +15,8 @@ function elementsFixture() {
   return {
     summary: { innerHTML: '' }, message: { textContent: '', classList: classList() }, integrityList: { innerHTML: '' }, cleanup: button(),
     scheduleForm, scheduleStatus: { textContent: '', classList: classList() }, backupNow: button(), refreshIntegrity: button(),
-    restoreInput: { files: [] }, stageRestore: button(), downloadLink: { addEventListener() {} }
+    restoreInput: { files: [] }, stageRestore: button(), downloadLink: { addEventListener() {} },
+    exportArchive: button(), importArchive: { files: [], value: '', addEventListener() {} }
   };
 }
 
@@ -83,5 +84,41 @@ describe('maintenance page', () => {
     const controller = maintenance.createController({ page: 'maintenance', escapeHtml, formatBytes, confirmAction: () => false, elements, fetchJson: async () => { requested = true; return {}; } });
     await controller.cleanupOrphans();
     assert.equal(requested, false);
+  });
+
+  test('exports a dated JSON archive through a temporary download', async () => {
+    const elements = elementsFixture();
+    const link = { href: '', download: '', clicked: false, click() { this.clicked = true; } };
+    let revoked = '';
+    class BlobStub { constructor(parts, options) { this.parts = parts; this.options = options; } }
+    const controller = maintenance.createController({
+      page: 'maintenance', escapeHtml, formatBytes, confirmAction: () => true, elements,
+      fetchJson: async () => ({ gigs: [{ id: 'g1' }] }), document: { createElement: () => link }, BlobClass: BlobStub,
+      URLApi: { createObjectURL: () => 'blob:archive', revokeObjectURL: (value) => { revoked = value; } },
+      now: () => new Date('2026-07-19T00:00:00Z')
+    });
+    await controller.exportShowsArchive();
+    assert.equal(link.download, 'the-master-list-export-2026-07-19.json');
+    assert.equal(link.clicked, true);
+    assert.equal(revoked, 'blob:archive');
+    assert.equal(elements.message.textContent, 'Shows JSON exported.');
+  });
+
+  test('imports a selected JSON archive and reloads after persistence', async () => {
+    const elements = elementsFixture();
+    elements.importArchive.files = [{ text: async () => JSON.stringify({ gigs: [{ id: 'g1' }, { id: 'g2' }] }) }];
+    elements.importArchive.value = 'archive.json';
+    let request;
+    let reloaded = false;
+    const controller = maintenance.createController({
+      page: 'maintenance', escapeHtml, formatBytes, confirmAction: () => true, elements,
+      fetchJson: async (url, options) => { request = [url, options]; return {}; }, reload: () => { reloaded = true; }
+    });
+    await controller.importShowsArchive();
+    assert.equal(request[0], '/api/archive/import');
+    assert.equal(JSON.parse(request[1].body).gigs.length, 2);
+    assert.equal(elements.message.textContent, 'Imported 2 shows. Reloading…');
+    assert.equal(elements.importArchive.value, '');
+    assert.equal(reloaded, true);
   });
 });

@@ -19,8 +19,8 @@
     return { enabled: form.elements.enabled.checked, intervalHours: form.elements.intervalHours.value, retentionCount: form.elements.retentionCount.value };
   }
 
-  function createController({ page, fetchJson, escapeHtml, formatBytes, confirmAction, setTimeoutFn = globalThis.setTimeout, elements }) {
-    const { summary, message, integrityList, cleanup, scheduleForm, scheduleStatus, backupNow, refreshIntegrity, restoreInput, stageRestore, downloadLink } = elements;
+  function createController({ page, fetchJson, escapeHtml, formatBytes, confirmAction, setTimeoutFn = globalThis.setTimeout, document, BlobClass = globalThis.Blob, URLApi = globalThis.URL, now = () => new Date(), reload = () => globalThis.location.reload(), elements }) {
+    const { summary, message, integrityList, cleanup, scheduleForm, scheduleStatus, backupNow, refreshIntegrity, restoreInput, stageRestore, downloadLink, exportArchive, importArchive } = elements;
 
     function renderIntegrity(data) {
       if (!integrityList) return;
@@ -108,6 +108,33 @@
       finally { cleanup.disabled = false; }
     }
 
+    async function exportShowsArchive() {
+      try {
+        const data = await fetchJson('/api/archive/export');
+        const blob = new BlobClass([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.href = URLApi.createObjectURL(blob);
+        link.download = `the-master-list-export-${now().toISOString().slice(0, 10)}.json`;
+        link.click();
+        URLApi.revokeObjectURL(link.href);
+        message.textContent = 'Shows JSON exported.';
+        message.classList.remove('error');
+      } catch (error) { message.textContent = error.message; message.classList.add('error'); }
+    }
+
+    async function importShowsArchive() {
+      const file = importArchive.files?.[0];
+      if (!file) return;
+      try {
+        const data = JSON.parse(await file.text());
+        await fetchJson('/api/archive/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+        message.textContent = `Imported ${data.gigs?.length || 0} shows. Reloading…`;
+        message.classList.remove('error');
+        reload();
+      } catch (error) { message.textContent = error.message; message.classList.add('error'); }
+      finally { importArchive.value = ''; }
+    }
+
     function bind() {
       scheduleForm?.addEventListener('submit', (event) => { event.preventDefault(); saveSchedule(); });
       backupNow?.addEventListener('click', createBackup);
@@ -115,9 +142,11 @@
       downloadLink?.addEventListener('click', () => { message.textContent = 'Creating a consistent SQLite snapshot…'; setTimeoutFn(render, 1800); });
       stageRestore?.addEventListener('click', stageDatabaseRestore);
       cleanup?.addEventListener('click', cleanupOrphans);
+      exportArchive?.addEventListener('click', exportShowsArchive);
+      importArchive?.addEventListener('change', importShowsArchive);
     }
 
-    return { render, renderStatus, renderIntegrity, saveSchedule, createBackup, checkIntegrity, stageDatabaseRestore, cleanupOrphans, bind };
+    return { render, renderStatus, renderIntegrity, saveSchedule, createBackup, checkIntegrity, stageDatabaseRestore, cleanupOrphans, exportShowsArchive, importShowsArchive, bind };
   }
 
   return { integrityMarkup, statusMarkup, backupSchedulePayload, createController };

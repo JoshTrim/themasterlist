@@ -1375,12 +1375,14 @@ const apiLimitsPageController = apiLimitsPageModule.createController({
 function renderApiLimits() { return apiLimitsPageController.render(); }
 
 const maintenancePageController = maintenancePageModule.createController({
-  page, fetchJson, escapeHtml, formatBytes, confirmAction: (prompt) => confirm(prompt),
+  page, fetchJson, escapeHtml, formatBytes, confirmAction: (prompt) => confirm(prompt), document,
+  BlobClass: Blob, URLApi: URL, reload: () => window.location.reload(),
   elements: {
     summary: maintenanceSummary, message: maintenanceMessage, integrityList, cleanup: cleanupMediaButton,
     scheduleForm: backupScheduleForm, scheduleStatus: backupScheduleStatus, backupNow: backupNowButton,
     refreshIntegrity: refreshIntegrityButton, restoreInput: restoreDatabaseInput,
-    stageRestore: stageRestoreButton, downloadLink: downloadDatabaseLink
+    stageRestore: stageRestoreButton, downloadLink: downloadDatabaseLink,
+    exportArchive: exportArchiveButton, importArchive: importArchiveInput
   }
 });
 maintenancePageController.bind();
@@ -2157,9 +2159,6 @@ inviteButton.addEventListener('click', async () => {
     setSharedMessage('Invite link copied. It expires in seven days.');
   } catch (error) { setSharedMessage(error.message, true); }
 });
-exportArchiveButton?.addEventListener('click', async () => { try { const data = await fetchJson('/api/archive/export'); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `the-master-list-export-${new Date().toISOString().slice(0, 10)}.json`; link.click(); URL.revokeObjectURL(link.href); maintenanceMessage.textContent = 'Shows JSON exported.'; } catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); } });
-importArchiveInput?.addEventListener('change', async () => { const file = importArchiveInput.files?.[0]; if (!file) return; try { const data = JSON.parse(await file.text()); await fetchJson('/api/archive/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); maintenanceMessage.textContent = `Imported ${data.gigs?.length || 0} shows. Reloading…`; window.location.reload(); } catch (error) { maintenanceMessage.textContent = error.message; maintenanceMessage.classList.add('error'); } finally { importArchiveInput.value = ''; } });
-
 document.querySelector('#find-setlist').addEventListener('click', async () => {
   const gig = formValues();
   if (!gig.artist || !gig.city) {
