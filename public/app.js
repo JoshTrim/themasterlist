@@ -18,6 +18,7 @@ const youtubePlayerApiModule = window.MasterListYoutubePlayerApi;
 const addMediaUploadModule = window.MasterListAddMediaUpload;
 const shellRouter = window.MasterListShellRouter;
 const uploadLeaveGuardModule = window.MasterListUploadLeaveGuard;
+const externalMediaInputModule = window.MasterListExternalMediaInput;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -345,12 +346,8 @@ function uploadGigMedia(gigId, files, onProgress = () => {}, category = 'show') 
   return gigMediaUploader.upload(gigId, files, onProgress, category);
 }
 
-async function addYouTubeMedia(gigId, input) {
-  const externalUrl = input?.value.trim();
-  if (!externalUrl) return;
-  await fetchJson(`/api/gigs/${gigId}/media`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ externalUrl, caption: 'YouTube video' }) });
-  input.value = '';
-}
+const externalMediaInput = externalMediaInputModule.createController({ fetchJson });
+function addYouTubeMedia(gigId, input) { return externalMediaInput.add(gigId, input); }
 
 function youtubeEmbedUrl(url, options = {}) { return playbackMedia.youtubeEmbedUrl(url, { ...options, origin: window.location.origin }); }
 const mediaLightboxController = mediaLightboxModule.createController({

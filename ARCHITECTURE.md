@@ -60,6 +60,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `add-media-upload.js` — add-page queued mobile uploads, save-time progress and post-upload recognition refreshes.
 - `shell-router.js` — route-to-section visibility, unknown-route fallback and home chest navigation.
 - `upload-leave-guard.js` — active desktop/mobile upload detection and before-unload navigation protection.
+- `external-media-input.js` — validated external-video input submission and success-only field clearing.
 - `playback-editor.js` — playback-plan validation, normalized clip payloads and suggestion presentation state.
 - `playback-editor-controller.js` — playback previews, fallback sources, draft preservation, suggestions, validation and plan persistence.
 - `playback-timeline-controller.js` — focused/full-set timeline rendering, pointer scrubbing and media-time seeking.
