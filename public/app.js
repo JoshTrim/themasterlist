@@ -20,6 +20,7 @@ const entityProfilePageModule = window.MasterListEntityProfilePage;
 const metadataEditorModule = window.MasterListMetadataEditor;
 const apiLimitsPageModule = window.MasterListApiLimitsPage;
 const activityPageModule = window.MasterListActivityPage;
+const conflictsPageModule = window.MasterListConflictsPage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1642,41 +1643,12 @@ const activityPageController = activityPageModule.createController({
 activityPageController.bind();
 function renderActivity() { return activityPageController.render(); }
 
-function conflictValueSummary(kind, value) {
-  if (kind === 'notes') return `<p>${escapeHtml(value.notes || 'No performance notes')}</p>${value.venueNotes ? `<p><b>Venue:</b> ${escapeHtml(value.venueNotes)}</p>` : ''}`;
-  if (kind === 'ratings') return `<p>${value.performanceRating ?? '—'} / 5 · ${value.favorite ? '♥ Favourite' : 'Not favourite'}</p>`;
-  if (kind === 'setlist') return value.songs?.length ? `<ol>${value.songs.map((song) => `<li>${escapeHtml(song.title || 'Untitled')}</li>`).join('')}</ol>` : '<p>No setlist</p>';
-  const assigned = (value.media || []).filter((item) => item.songIndex !== null && item.songIndex !== undefined).length;
-  const assignments = (value.media || []).filter((item) => item.songIndex !== null && item.songIndex !== undefined).map((item) => `<li>${escapeHtml(item.caption || item.filename || 'Media')} → ${escapeHtml(value.songs?.[item.songIndex]?.title || `Track ${Number(item.songIndex) + 1}`)}</li>`).join('');
-  return `<p>${value.media?.length || 0} media item${value.media?.length === 1 ? '' : 's'} · ${assigned} assigned to tracks</p>${assignments ? `<ol>${assignments}</ol>` : ''}`;
-}
-
-function conflictChoice(name, mergeLabel) {
-  return `<label class="conflict-choice">Resolution<select name="${name}"><option value="local">Keep local</option><option value="remote">Use peer</option><option value="merge">${escapeHtml(mergeLabel)}</option></select></label>`;
-}
-
-async function renderConflicts() {
-  if (!account?.isAdmin) { if (conflictList) conflictList.innerHTML = '<div class="empty-state">Only the instance owner can review sync conflicts.</div>'; return; }
-  let conflicts;
-  try { conflicts = await fetchJson('/api/sync/conflicts'); }
-  catch (error) { if (conflictsMessage) { conflictsMessage.textContent = error.message; conflictsMessage.classList.add('error'); } return; }
-  if (navConflictCount) { navConflictCount.hidden = !conflicts.length; navConflictCount.textContent = String(conflicts.length); }
-  if (page !== 'conflicts' || !conflictList) return;
-  conflictList.innerHTML = conflicts.length ? conflicts.map((conflict) => `<form class="conflict-card" data-conflict-id="${escapeHtml(conflict.id)}"><header><div><p class="eyebrow">Edited here and by ${escapeHtml(conflict.peerName)}</p><h2>${escapeHtml(conflict.artist)}</h2><p>${escapeHtml(conflict.venue)} · ${escapeHtml(conflict.city)} · ${escapeHtml(formatGigDate(conflict.date))}</p></div><a class="text-button" href="/edit?id=${encodeURIComponent(conflict.localGigId)}">Open show</a></header>${[
-    ['notes', 'Notes', 'Combine notes'], ['ratings', 'Rating & favourite', 'Average / combine'], ['setlist', 'Setlist', 'Combine unique tracks'], ['media', 'Media assignments', 'Fill unassigned media']
-  ].map(([kind, label, mergeLabel]) => `<section class="conflict-field"><div class="conflict-field-heading"><h3>${label}</h3>${conflictChoice(kind, mergeLabel)}</div><div class="conflict-comparison"><article><strong>This instance</strong>${conflictValueSummary(kind, conflict.local)}</article><article><strong>${escapeHtml(conflict.peerName)}</strong>${conflictValueSummary(kind, conflict.remote)}</article></div></section>`).join('')}<footer><button class="button" type="submit">Resolve conflict</button><p class="form-message" role="status"></p></footer></form>`).join('') : '<div class="empty-state">No simultaneous edits need review.</div>';
-  conflictList.querySelectorAll('.conflict-card').forEach((form) => form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const button = form.querySelector('button[type="submit"]');
-    const status = form.querySelector('.form-message');
-    button.disabled = true; status.textContent = 'Applying resolution…'; status.classList.remove('error');
-    try {
-      await fetchJson(`/api/sync/conflicts/${encodeURIComponent(form.dataset.conflictId)}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form).entries())) });
-      status.textContent = 'Resolved.';
-      await Promise.all([renderConflicts(), loadPeerNotifications()]);
-    } catch (error) { status.textContent = error.message; status.classList.add('error'); button.disabled = false; }
-  }));
-}
+const conflictsPageController = conflictsPageModule.createController({
+  page, getAccount: () => account, fetchJson, escapeHtml, formatGigDate,
+  refreshNotifications: loadPeerNotifications,
+  elements: { list: conflictList, message: conflictsMessage, navCount: navConflictCount }
+});
+function renderConflicts() { return conflictsPageController.render(); }
 
 let healthData = null;
 let healthFilter = 'all';

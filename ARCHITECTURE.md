@@ -70,6 +70,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `metadata-editor.js` — artist/venue metadata forms, image previews/uploads, navigation and persistence workflow.
 - `api-limits-page.js` — provider quota estimates, operation usage, recent calls and authentication-aware errors.
 - `activity-page.js` — peer notification filtering, unread transitions, navigation and bulk read workflow.
+- `conflicts-page.js` — owner-only peer conflict comparison, merge choices and resolution persistence.
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 
