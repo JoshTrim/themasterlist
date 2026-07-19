@@ -42,7 +42,7 @@
 - `lib/routes/directory.js` — artist and venue profile lookup, editing, genres, images and locations.
 - `lib/routes/playback-plans.js` — playback suggestions plus validated, transactional clip assignment.
 
-The browser application is progressively split from `public/app.js`. Browser-safe CommonJS/UMD modules under `public/lib/` load before the main application bundle:
+`public/app.js` is the browser composition root: it owns page-level state, looks up server-rendered elements and injects dependencies into browser-safe CommonJS/UMD modules under `public/lib/`. UI behavior, rendering and event binding remain inside those tested modules, which load before the application bundle:
 
 - `formatters.js` — display-safe escaping, dates, byte sizes and provider labels.
 - `navigation.js` — active-link and mobile-menu behavior.
@@ -64,9 +64,9 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `playback-editor.js` — playback-plan validation, normalized clip payloads and suggestion presentation state.
 - `playback-editor-controller.js` — playback previews, fallback sources, draft preservation, suggestions, validation and plan persistence.
 - `playback-timeline-controller.js` — focused/full-set timeline rendering, pointer scrubbing and media-time seeking.
-- `set-playback-controller.js` — whole-set queue state, resume data, source fallback, crossfades, YouTube playback and theatre controls.
+- `set-playback-controller.js` — whole-set queue state, transport construction, resume data, source fallback, crossfades, YouTube playback and theatre controls.
 - `youtube-show-search.js` — event-specific YouTube discovery, result presentation and media attachment.
-- `profile-show-list.js` — shared show-card rendering for artist and venue profile pages.
+- `profile-show-list.js` — artist/venue show cards and shared-attendee summaries.
 - `show-form-ui.js` — ratings, favourites, duplicate warnings, attendee selection and archive-backed form suggestions.
 - `peer-sync-poller.js` — guarded peer synchronization, notification refresh and archive reloading on a recurring timer.
 - `theatre.js` — fullscreen presentation, keyboard commands and control auto-hide rules.
@@ -89,7 +89,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `conflicts-page.js` — owner-only peer conflict comparison, merge choices and resolution persistence.
 - `health-page.js` — archive diagnostics, filtering, automated repair and manual metadata/location entry.
 - `maintenance-page.js` — backup scheduling, snapshots, integrity checks, orphan cleanup and staged restores.
-- `directory-page.js` — artist/venue directory rendering, filters, metadata badges and lazy profile hydration.
+- `directory-page.js` — cached metadata, artist/venue directory rendering, filters, metadata badges and lazy profile hydration.
 - `locations-page.js` — city venue summaries, geocoding refresh and Leaflet map lifecycle/markers.
 - `playlist-export.js` — provider readiness, OAuth redirects, MusicKit authorization and playlist export results.
 - `auth-controller.js` — setup, login, invite registration, logout and account credential updates.
@@ -106,9 +106,6 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `media-workspace-controller.js` — edit-page media health summaries, filtering, retry actions, recognition and gallery refreshes.
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
-- `profile-show-list.js` — artist/venue show cards and shared-attendee summaries.
-- `directory-page.js` — cached metadata, entity cards, lazy image hydration and filtering.
-- `set-playback-controller.js` — whole-set source transitions, transport construction and playback lifecycle.
 
 Styles retain their original cascade order through `public/styles.css`: `shell-and-forms.css`, `components.css`, `playback.css`, then page-specific `pages.css`.
 
@@ -122,4 +119,4 @@ Styles retain their original cascade order through `public/styles.css`: `shell-a
 
 ## Next extraction boundaries
 
-The remaining backend code should move in behavior-preserving slices: external integrations, metadata providers, then the HTTP composition root. Remaining frontend rendering can now move page-by-page behind the tested browser module boundaries.
+New frontend behavior should be added to the relevant `public/lib/` controller with a focused regression test; `public/app.js` should remain wiring-only. The next refactoring area is `server.js`: extract its remaining API-usage accounting, shared-show/conflict orchestration and profile-image workflow in behavior-preserving, independently tested slices while keeping the executable file as the HTTP composition root.

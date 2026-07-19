@@ -44,4 +44,10 @@ describe('frontend shell contracts', () => {
   test('keeps the archive count populated on shell-only authenticated pages', () => {
     assert.match(bootstrap, /fetchJson\('\/api\/stats'\)/);
   });
+
+  test('keeps application behavior behind modules instead of rebuilding it in the composition root', () => {
+    assert.doesNotMatch(app, /\.addEventListener\s*\(/);
+    assert.doesNotMatch(app, /document\.createElement\s*\(/);
+    assert.doesNotMatch(app, /\.innerHTML\s*=/);
+  });
 });
