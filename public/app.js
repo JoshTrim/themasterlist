@@ -1253,15 +1253,6 @@ mediaWorkspaceRefresh?.addEventListener('click', async () => {
   try { await refreshEditMediaWorkspace(); } finally { mediaWorkspaceRefresh.disabled = false; mediaWorkspaceRefresh.textContent = 'Refresh status'; }
 });
 
-function setSharedMessage(text, isError = false) {
-  sharedMessage.textContent = text;
-  sharedMessage.classList.toggle('error', isError);
-}
-
-function activeProfile() {
-  return profiles.find((profile) => profile.id === activeProfileId);
-}
-
 function attendeeNames(gig) {
   return sharedShowsPageModule.attendeeNames(gig);
 }
@@ -1993,125 +1984,17 @@ findYouTubeSet.addEventListener('click', async () => {
   finally { findYouTubeSet.disabled = false; findYouTubeSet.textContent = 'Find YouTube videos'; }
 });
 
-function renderProfiles() {
-  if (!profiles.some((profile) => profile.id === activeProfileId)) activeProfileId = account?.id || '';
-  profileSelect.replaceChildren(new Option('Choose a profile…', ''));
-  for (const profile of profiles) profileSelect.add(new Option(profile.name, profile.id));
-  profileSelect.value = activeProfileId;
-}
-
-function renderSharedShows() {
-  sharedList.replaceChildren();
-  const { local: localShared, remote: syncedRemoteShows, legacy: legacyShows, total: totalShared } = sharedShowsPageModule.partitionShows(gigs, sharedShows);
-  setSharedMessage(totalShared ? `${totalShared} shared show${totalShared === 1 ? '' : 's'} in this instance.` : 'Add attendees to a show to start a collaborative record.');
-  if (localShared.length) {
-    const heading = document.createElement('p');
-    heading.className = 'eyebrow shared-list-heading';
-    heading.textContent = 'Shared from this archive';
-    sharedList.append(heading);
-    for (const gig of localShared) {
-      const card = document.createElement('article');
-      card.className = 'shared-card local-shared-card';
-      const names = attendeeNames(gig);
-      const syncedShow = sharedShows.find((show) => show.id === gig.sharedId || show.sourceGigId === gig.id);
-      const contributions = syncedShow?.contributions || [];
-      card.innerHTML = `<div class="shared-card-header"><div><p class="shared-date"></p><h3></h3><p class="shared-place"></p></div><span class="shared-song-count"></span></div><div class="shared-people"></div><div class="local-shared-attendees"></div><div class="local-shared-meta"></div><div class="local-shared-actions"><a class="button button-secondary" href="/show?id=${encodeURIComponent(gig.id)}">Open show</a><a class="button button-secondary" href="/edit?id=${encodeURIComponent(gig.id)}">Edit attendees</a></div>`;
-      card.querySelector('.shared-date').textContent = formatGigDate(gig.date);
-      card.querySelector('h3').textContent = gig.artist;
-      card.querySelector('.shared-place').textContent = `${gig.venue} · ${gig.city}`;
-      card.querySelector('.shared-song-count').textContent = gig.songs?.length ? `${gig.songs.length} songs` : 'No setlist yet';
-      card.querySelector('.shared-people').innerHTML = `<span>Attendees</span>${names.map((name) => `<b>${escapeHtml(name)}</b>`).join('')}`;
-      card.querySelector('.local-shared-attendees').innerHTML = (gig.attendees || []).map((person) => {
-        const isLocal = person.id === account?.id;
-        const contribution = contributions.find((entry) => isLocal ? entry.localGigId === gig.id : entry.instanceId === person.id);
-        const detail = sharedShowsPageModule.contributionDetail({ contribution, gig, isLocal });
-        const notes = contribution?.performanceNotes || contribution?.venueNotes;
-        return `<div><strong>${escapeHtml(contribution?.participantName || person.name || 'Attendee')}</strong><span>${escapeHtml(detail)}</span>${notes ? `<small>${escapeHtml(notes)}</small>` : ''}</div>`;
-      }).join('');
-      card.querySelector('.local-shared-meta').textContent = sharedShowsPageModule.localSummary(contributions, gig);
-      sharedList.append(card);
-    }
-  }
-  if (syncedRemoteShows.length) {
-    const heading = document.createElement('p');
-    heading.className = 'eyebrow shared-list-heading';
-    heading.textContent = 'Received from peers';
-    sharedList.append(heading);
-    for (const show of syncedRemoteShows) {
-      const card = document.createElement('article');
-      card.className = 'shared-card local-shared-card';
-      const mediaTotal = show.contributions.reduce((sum, entry) => sum + (entry.media?.length || 0), 0);
-      card.innerHTML = `<div class="shared-card-header"><div><p class="shared-date"></p><h3></h3><p class="shared-place"></p></div><span class="shared-song-count"></span></div><div class="local-shared-attendees"></div><div class="local-shared-meta"></div>`;
-      card.querySelector('.shared-date').textContent = formatGigDate(show.date);
-      card.querySelector('h3').textContent = show.artist;
-      card.querySelector('.shared-place').textContent = `${show.venue} · ${show.city}`;
-      card.querySelector('.shared-song-count').textContent = show.songs?.length ? `${show.songs.length} songs` : 'No setlist yet';
-      card.querySelector('.local-shared-attendees').innerHTML = show.contributions.map((entry) => `<div><strong>${escapeHtml(entry.participantName || 'Peer')}</strong><span>${entry.performanceRating ? `Performance ${entry.performanceRating}/5` : 'Performance unrated'} · ${entry.venueRating ? `Venue ${entry.venueRating}/5` : 'Venue unrated'}${entry.favorite ? ' · Favourite' : ''} · ${entry.media?.length || 0} media</span>${entry.performanceNotes || entry.venueNotes ? `<small>${escapeHtml(entry.performanceNotes || entry.venueNotes)}</small>` : ''}</div>`).join('');
-      card.querySelector('.local-shared-meta').textContent = `${mediaTotal} media item${mediaTotal === 1 ? '' : 's'} listed across synced instances`;
-      sharedList.append(card);
-    }
-  }
-  const profile = activeProfile();
-  if (!profiles.length || !profile) {
-    if (legacyShows.length) setSharedMessage('Choose your profile to create or review shared shows.', true);
-    return;
-  }
-  if (!legacyShows.length) return;
-  for (const show of legacyShows) {
-    const card = document.querySelector('#shared-template').content.cloneNode(true);
-    const date = formatGigDate(show.date);
-    card.querySelector('.shared-date').textContent = date;
-    card.querySelector('h3').textContent = show.artist;
-    card.querySelector('.shared-place').textContent = `${show.venue} · ${show.city}`;
-    card.querySelector('.shared-song-count').textContent = show.songs?.length ? `${show.songs.length} songs` : 'No setlist yet';
-    card.querySelector('.shared-people').innerHTML = `<span>Went with</span>${show.attendees.map((person) => `<b>${escapeHtml(person.name)}</b>`).join('')}`;
-    const attendeeSelect = card.querySelector('.attendee-select');
-    const attendeeIds = new Set(show.attendees.map((person) => person.id));
-    for (const person of profiles.filter((candidate) => !attendeeIds.has(candidate.id))) attendeeSelect.add(new Option(person.name, person.id));
-    const addAttendee = card.querySelector('.add-attendee');
-    if (!attendeeSelect.options.length) addAttendee.hidden = true;
-    else card.querySelector('.add-attendee').addEventListener('click', async () => {
-      try {
-        await fetchJson(`/api/shared/shows/${show.id}/attendees`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profileId: attendeeSelect.value }) });
-        await refreshCollaboration();
-      } catch (error) { setSharedMessage(error.message, true); }
-    });
-
-    const review = show.reviews.find((entry) => entry.profileId === profile.id) || {};
-    const reviewSection = card.querySelector('.shared-review');
-    if (!attendeeIds.has(profile.id)) {
-      reviewSection.hidden = true;
-    } else {
-      reviewSection.querySelector('.shared-notes').value = review.notes || '';
-      reviewSection.querySelectorAll('.shared-stars').forEach((stars) => {
-        const field = stars.dataset.field;
-        stars.dataset.value = review[field] || '';
-        renderSharedStars(stars);
-      });
-      card.querySelector('.save-shared-review').addEventListener('click', async () => {
-        try {
-          const data = { profileId: profile.id, notes: reviewSection.querySelector('.shared-notes').value };
-          reviewSection.querySelectorAll('.shared-stars').forEach((stars) => { data[stars.dataset.field] = stars.dataset.value || null; });
-          await fetchJson(`/api/shared/shows/${show.id}/reviews`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-          await refreshCollaboration();
-        } catch (error) { setSharedMessage(error.message, true); }
-      });
-    }
-    sharedList.append(card);
-  }
-}
-
-function renderSharedStars(stars) {
-  return sharedShowsPageModule.renderStars(stars);
-}
-
-async function refreshCollaboration() {
-  const [profileData, showData] = await Promise.all([fetchJson('/api/profiles'), fetchJson('/api/shared/shows')]);
-  profiles = profileData;
-  sharedShows = showData;
-  renderProfiles();
-  renderSharedShows();
-}
+const sharedShowsController = sharedShowsPageModule.createController({
+  document, OptionClass: Option, navigator, fetchJson, escapeHtml, formatDate: formatGigDate,
+  getState: () => ({ gigs, sharedShows, profiles, activeProfileId, account }),
+  onActiveProfile: (id) => { activeProfileId = id; },
+  onData: (data) => { profiles = data.profiles; sharedShows = data.sharedShows; },
+  elements: { profileSelect, message: sharedMessage, list: sharedList, template: document.querySelector('#shared-template'), inviteButton }
+});
+sharedShowsController.bind();
+function renderProfiles() { return sharedShowsController.renderProfiles(); }
+function renderSharedShows() { return sharedShowsController.render(); }
+function refreshCollaboration() { return sharedShowsController.refresh(); }
 
 const authController = authControllerModule.createController({
   window, fetchJson,
@@ -2136,13 +2019,6 @@ const peerSettingsController = peerSettingsModule.createController({
 });
 peerSettingsController.bind();
 async function renderInstanceSettings() { if (account) return peerSettingsController.render(); }
-inviteButton.addEventListener('click', async () => {
-  try {
-    const invite = await fetchJson('/api/auth/invites', { method: 'POST' });
-    await navigator.clipboard.writeText(invite.inviteUrl);
-    setSharedMessage('Invite link copied. It expires in seven days.');
-  } catch (error) { setSharedMessage(error.message, true); }
-});
 document.querySelector('#find-setlist').addEventListener('click', async () => {
   const gig = formValues();
   if (!gig.artist || !gig.city) {

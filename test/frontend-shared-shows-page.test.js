@@ -56,4 +56,52 @@ describe('shared shows page model', () => {
     assert.equal(label.textContent, '3 / 5');
     assert.equal(handlers.length, 5);
   });
+
+  test('renders profile state and an empty collaboration archive', () => {
+    let activeProfileId = 'missing';
+    const state = { gigs: [], sharedShows: [], profiles: [{ id: 'owner', name: 'Archive Owner' }], activeProfileId, account: { id: 'owner' } };
+    const options = [];
+    class OptionStub { constructor(label, value) { this.label = label; this.value = value; } }
+    const profileSelect = { value: '', replaceChildren(option) { options.splice(0, options.length, option); }, add(option) { options.push(option); } };
+    const message = { textContent: '', classList: { toggle() {} } };
+    const list = { children: [], replaceChildren() { this.children = []; }, append(value) { this.children.push(value); } };
+    const controller = shared.createController({
+      document: {}, OptionClass: OptionStub, navigator: {}, fetchJson: async () => [], escapeHtml: String, formatDate: String,
+      getState: () => ({ ...state, activeProfileId }), onActiveProfile: (value) => { activeProfileId = value; },
+      elements: { profileSelect, message, list, template: {}, inviteButton: null }
+    });
+    assert.equal(controller.renderProfiles(), 'owner');
+    assert.equal(profileSelect.value, 'owner');
+    assert.equal(options[1].label, 'Archive Owner');
+    assert.equal(controller.render().total, 0);
+    assert.match(message.textContent, /Add attendees/);
+  });
+
+  test('refreshes collaboration data before rendering and copies account invites', async () => {
+    let state = { gigs: [], sharedShows: [], profiles: [], activeProfileId: 'owner', account: { id: 'owner' } };
+    const requests = [];
+    let copied = '';
+    class OptionStub { constructor(label, value) { this.label = label; this.value = value; } }
+    const profileSelect = { value: '', replaceChildren() {}, add() {} };
+    const message = { textContent: '', classList: { toggle() {} } };
+    const list = { replaceChildren() {}, append() {} };
+    const controller = shared.createController({
+      document: {}, OptionClass: OptionStub, navigator: { clipboard: { writeText: async (value) => { copied = value; } } },
+      escapeHtml: String, formatDate: String, getState: () => state,
+      onData: (data) => { state = { ...state, ...data }; }, onActiveProfile: (value) => { state.activeProfileId = value; },
+      elements: { profileSelect, message, list, template: {}, inviteButton: null },
+      fetchJson: async (url) => {
+        requests.push(url);
+        if (url === '/api/profiles') return [{ id: 'owner', name: 'Archive Owner' }];
+        if (url === '/api/shared/shows') return [];
+        return { inviteUrl: 'https://archive.test/login?invite=secret' };
+      }
+    });
+    await controller.refresh();
+    assert.deepEqual(requests.slice(0, 2).sort(), ['/api/profiles', '/api/shared/shows']);
+    assert.equal(state.profiles[0].name, 'Archive Owner');
+    await controller.createAccountInvite();
+    assert.equal(copied, 'https://archive.test/login?invite=secret');
+    assert.match(message.textContent, /copied/);
+  });
 });
