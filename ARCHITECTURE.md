@@ -77,6 +77,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `locations-page.js` — city venue summaries, geocoding refresh and Leaflet map lifecycle/markers.
 - `playlist-export.js` — provider readiness, OAuth redirects, MusicKit authorization and playlist export results.
 - `auth-controller.js` — setup, login, invite registration, logout and account credential updates.
+- `peer-settings.js` — paired-instance identity, invite exchange, connection tests, synchronization and removal.
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 

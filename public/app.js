@@ -27,6 +27,7 @@ const directoryPageModule = window.MasterListDirectoryPage;
 const locationsPageModule = window.MasterListLocationsPage;
 const playlistExportModule = window.MasterListPlaylistExport;
 const authControllerModule = window.MasterListAuthController;
+const peerSettingsModule = window.MasterListPeerSettings;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -757,49 +758,6 @@ async function pollConnectedPeers() {
     clearTimeout(peerPollTimer);
     peerPollTimer = setTimeout(pollConnectedPeers, 30_000);
   }
-}
-
-async function renderInstanceSettings() {
-  if (!account || !instanceId || !peerList) return;
-  try {
-    const instance = await fetchJson('/api/instance');
-    instanceId.textContent = instance.instanceId;
-    instancePublicKey.textContent = instance.publicKey;
-    const inviteFromUrl = new URLSearchParams(window.location.search).get('peerInvite');
-    if (inviteFromUrl && peerInviteToken && !peerInviteToken.value) {
-      peerInviteToken.value = inviteFromUrl;
-      if (peerInviteMessage) peerInviteMessage.textContent = 'Pairing invite loaded. Accept it to add this peer.';
-    }
-    peers = instance.peers || [];
-    peerList.innerHTML = peers.length ? peers.map((peer) => `<article class="peer-card" data-peer-id="${escapeHtml(peer.id)}"><div class="peer-card-copy"><strong>${escapeHtml(peer.name)}</strong><small>${escapeHtml(peer.baseUrl || 'Direct relay/VPN connection not configured')}</small><span class="peer-status peer-status-${escapeHtml(peer.status || 'paired')}">${escapeHtml(peer.status || 'paired')}${peer.lastSeenAt ? ` · seen ${escapeHtml(new Date(peer.lastSeenAt).toLocaleString())}` : ''}</span></div><div class="peer-actions"><button type="button" class="peer-test" ${peer.baseUrl ? '' : 'disabled'}>Test</button><button type="button" class="peer-sync" ${peer.baseUrl ? '' : 'disabled'}>Sync now</button><button type="button" class="peer-remove">Remove</button></div></article>`).join('') : '<p class="shared-message">No paired instances yet.</p>';
-    peerList.querySelectorAll('.peer-test, .peer-sync').forEach((button) => button.addEventListener('click', async () => {
-      const card = button.closest('.peer-card');
-      const action = button.classList.contains('peer-sync') ? 'sync' : 'test';
-      button.disabled = true;
-      const original = button.textContent;
-      button.textContent = action === 'sync' ? 'Syncing…' : 'Testing…';
-      try {
-        const result = await fetchJson(`/api/peers/${encodeURIComponent(card.dataset.peerId)}/${action}`, { method: 'POST' });
-        peerMessage.textContent = action === 'sync' ? `Sync complete · sent ${result.sent}, received ${result.received}, applied ${result.applied}.` : `Connected to ${result.name}.`;
-        peerMessage.classList.remove('error');
-        if (action === 'sync') {
-          gigs = await fetchJson('/api/gigs');
-          populateYearFilter();
-          renderGigs();
-          await refreshCollaboration();
-          await loadPeerNotifications();
-        }
-        await renderInstanceSettings();
-      } catch (error) { peerMessage.textContent = error.message; peerMessage.classList.add('error'); await renderInstanceSettings(); }
-      finally { button.disabled = false; button.textContent = original; }
-    }));
-    peerList.querySelectorAll('.peer-remove').forEach((button) => button.addEventListener('click', async () => {
-      const card = button.closest('.peer-card');
-      if (!confirm(`Remove ${card.querySelector('strong').textContent} as a paired instance?`)) return;
-      await fetchJson(`/api/peers/${encodeURIComponent(card.dataset.peerId)}`, { method: 'DELETE' });
-      renderInstanceSettings();
-    }));
-  } catch (error) { if (peerMessage) { peerMessage.textContent = error.message; peerMessage.classList.add('error'); } }
 }
 
 async function pollMediaRecognition(gigId, onMedia) {
@@ -2201,41 +2159,20 @@ const authController = authControllerModule.createController({
 });
 authController.bind();
 function showAuth(status) { return authController.show(status); }
-peerForm?.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (!peerMessage) return;
-  peerMessage.textContent = 'Pairing…'; peerMessage.classList.remove('error');
-  try {
-    await fetchJson('/api/peers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(peerForm).entries())) });
-    peerForm.reset(); peerMessage.textContent = 'Paired instance saved.'; await renderInstanceSettings();
-  } catch (error) { peerMessage.textContent = error.message; peerMessage.classList.add('error'); }
+const peerSettingsController = peerSettingsModule.createController({
+  window, navigator, fetchJson, escapeHtml,
+  elements: { instanceId, publicKey: instancePublicKey, form: peerForm, message: peerMessage, list: peerList, createInviteButton: createPeerInvite, inviteMessage: peerInviteMessage, inviteToken: peerInviteToken, importInviteButton: importPeerInvite },
+  onPeers: (nextPeers) => { peers = nextPeers; },
+  onSynced: async () => {
+    gigs = await fetchJson('/api/gigs');
+    populateYearFilter();
+    renderGigs();
+    await refreshCollaboration();
+    await loadPeerNotifications();
+  }
 });
-createPeerInvite?.addEventListener('click', async () => {
-  createPeerInvite.disabled = true;
-  try {
-    const invite = await fetchJson('/api/peers/invite', { method: 'POST' });
-    let copied = false;
-    try { await navigator.clipboard.writeText(invite.inviteUrl); copied = true; } catch {}
-    peerInviteMessage.textContent = copied ? 'Pairing invite copied. It expires in seven days.' : `Copy this invite URL: ${invite.inviteUrl}`;
-    peerInviteMessage.classList.remove('error');
-  } catch (error) { peerInviteMessage.textContent = error.message; peerInviteMessage.classList.add('error'); }
-  finally { createPeerInvite.disabled = false; }
-});
-importPeerInvite?.addEventListener('click', async () => {
-  const value = peerInviteToken.value.trim();
-  if (!value) return;
-  importPeerInvite.disabled = true;
-  try {
-    let token = value;
-    try { const parsed = new URL(value); token = parsed.searchParams.get('peerInvite') || value; } catch {}
-    const result = await fetchJson('/api/peers/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
-    peerInviteToken.value = '';
-    peerInviteMessage.textContent = result.message || 'Peer paired successfully.';
-    peerInviteMessage.classList.remove('error');
-    await renderInstanceSettings();
-  } catch (error) { peerInviteMessage.textContent = error.message; peerInviteMessage.classList.add('error'); }
-  finally { importPeerInvite.disabled = false; }
-});
+peerSettingsController.bind();
+async function renderInstanceSettings() { if (account) return peerSettingsController.render(); }
 inviteButton.addEventListener('click', async () => {
   try {
     const invite = await fetchJson('/api/auth/invites', { method: 'POST' });
