@@ -129,7 +129,7 @@ const providerResponse = apiUsage.requestJson;
 const setlistProvider = createSetlistFmProvider({ apiKey: process.env.SETLIST_FM_API_KEY, fetch, recordUsage: apiUsage.record, normaliseSongs });
 const metadataProvider = createMetadataProvider({ fetch, googleApiKey: process.env.GOOGLE_CUSTOM_SEARCH_API_KEY, googleEngineId: process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID });
 const spotifyProvider = createSpotifyProvider({ requestJson: providerResponse });
-const youtubeProvider = createYouTubeProvider({ requestJson: providerResponse });
+const youtubeProvider = createYouTubeProvider({ requestJson: providerResponse, regionCode: process.env.YOUTUBE_REGION_CODE || 'AU' });
 const appleMusicProvider = createAppleMusicProvider({ requestJson: providerResponse, developerToken: process.env.APPLE_MUSIC_DEVELOPER_TOKEN, storefront: process.env.APPLE_MUSIC_STOREFRONT || 'au' });
 const oauthService = createOAuthService({
   providers: {
