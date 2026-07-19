@@ -17,6 +17,7 @@ const archiveSearchModule = window.MasterListArchiveSearch;
 const timelinePageModule = window.MasterListTimelinePage;
 const overviewPageModule = window.MasterListOverviewPage;
 const entityProfilePageModule = window.MasterListEntityProfilePage;
+const metadataEditorModule = window.MasterListMetadataEditor;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1371,108 +1372,16 @@ const artistPageController = entityProfilePageModule.createArtistController({
 });
 function renderArtistPage() { return artistPageController.render(); }
 
-function updateMetadataPreview(preview, imageUrl, imagePosition = 'center') {
-  const frame = preview.closest('.metadata-image-preview');
-  preview.style.objectPosition = imagePosition;
-  preview.hidden = !imageUrl;
-  if (imageUrl) preview.src = imageUrl;
-  else preview.removeAttribute('src');
-  frame?.classList.toggle('has-image', Boolean(imageUrl));
-}
-
-function bindMetadataEditorPreview(form, preview) {
-  if (!form || form.dataset.previewBound) return;
-  form.dataset.previewBound = 'true';
-  let objectUrl = '';
-  const position = () => form.elements.imagePosition.value || 'center';
-  form.elements.imagePosition.addEventListener('change', () => { preview.style.objectPosition = position(); });
-  form.elements.image.addEventListener('input', () => {
-    if (form.elements.imageFile.files.length) return;
-    updateMetadataPreview(preview, form.elements.image.value.trim(), position());
-  });
-  form.elements.imageFile.addEventListener('change', () => {
-    if (objectUrl) URL.revokeObjectURL(objectUrl);
-    const file = form.elements.imageFile.files[0];
-    objectUrl = file ? URL.createObjectURL(file) : '';
-    updateMetadataPreview(preview, objectUrl || form.elements.image.value.trim(), position());
-  });
-}
-
-function imageUploadPayload(file) {
-  if (!file) return Promise.resolve(null);
-  try { directoryUi.validateImage(file); } catch (error) { return Promise.reject(error); }
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('The selected image could not be read.'));
-    reader.onload = () => resolve({ filename: file.name, mimeType: file.type, data: String(reader.result).split(',')[1] || '' });
-    reader.readAsDataURL(file);
-  });
-}
-
-async function metadataFormPayload(form) {
-  const payload = Object.fromEntries(new FormData(form).entries());
-  delete payload.imageFile;
-  if (form.elements.isClosed) payload.isClosed = form.elements.isClosed.checked;
-  const imageUpload = await imageUploadPayload(form.elements.imageFile.files[0]);
-  if (imageUpload) payload.imageUpload = imageUpload;
-  return payload;
-}
-
-function populateMetadataForm(form, preview, info) {
-  form.elements.title.value = info.title || '';
-  form.elements.description.value = info.description || '';
-  form.elements.bio.value = info.bio || '';
-  form.elements.image.value = info.image || '';
-  form.elements.source.value = info.source || '';
-  if (form.elements.genres) form.elements.genres.value = (info.genres || []).join(', ');
-  if (form.elements.isClosed) form.elements.isClosed.checked = Boolean(info.isClosed);
-  form.elements.imagePosition.value = info.imagePosition || 'center';
-  form.elements.imageFile.value = '';
-  updateMetadataPreview(preview, info.image || '', info.imagePosition || 'center');
-  bindMetadataEditorPreview(form, preview);
-}
-
-function populateVenueLocationFields(info) {
-  venueEditForm.elements.locationAddress.value = '';
-  venueEditForm.elements.latitude.value = info.coordinates?.lat ?? '';
-  venueEditForm.elements.longitude.value = info.coordinates?.lng ?? '';
-}
-
-function renderMetadataEditorStepper(container, type, currentName, currentCity = '') {
-  const ordered = directoryUi.editorEntries([...gigs, ...remoteSharedArchiveShows()], type);
-  const currentKey = `${currentName}|${type === 'venue' ? currentCity : ''}`.toLocaleLowerCase();
-  const index = ordered.findIndex((entry) => `${entry.name}|${entry.city}`.toLocaleLowerCase() === currentKey);
-  const linkFor = (entry) => type === 'artist' ? `/artist/edit?name=${encodeURIComponent(entry.name)}` : `/venue/edit?name=${encodeURIComponent(entry.name)}&city=${encodeURIComponent(entry.city)}`;
-  const step = (entry, direction) => entry
-    ? `<a class="metadata-step metadata-step-${direction}" href="${linkFor(entry)}"><small>${direction === 'previous' ? '← Previous' : 'Next →'}</small><strong>${escapeHtml(entry.name)}</strong></a>`
-    : `<span class="metadata-step metadata-step-${direction} is-disabled"><small>${direction === 'previous' ? '← Previous' : 'Next →'}</small><strong>End of list</strong></span>`;
-  if (index < 0 || !ordered.length) { container.hidden = true; return; }
-  container.hidden = false;
-  container.innerHTML = `${step(ordered[index - 1], 'previous')}<span class="metadata-step-count">${index + 1} / ${ordered.length}</span>${step(ordered[index + 1], 'next')}`;
-}
-
-async function renderArtistEditPage() {
-  if (page !== 'artist-edit') return;
-  if (!artistNameFromUrl) { artistEditMessage.textContent = 'Choose an artist to edit.'; artistEditMessage.classList.add('error'); return; }
-  const info = await fetchJson(`/api/artists?name=${encodeURIComponent(artistNameFromUrl)}`);
-  document.querySelector('#artist-edit-heading').textContent = `Edit ${info.title || artistNameFromUrl}`;
-  document.querySelector('#artist-edit-back').href = `/artist?name=${encodeURIComponent(artistNameFromUrl)}`;
-  populateMetadataForm(artistEditForm, artistEditPreview, info);
-  renderMetadataEditorStepper(artistEditStepper, 'artist', artistNameFromUrl);
-}
-
-artistEditForm.addEventListener('submit', async (event) => {
-  if (page !== 'artist-edit') return;
-  event.preventDefault();
-  const submit = artistEditForm.querySelector('button[type="submit"]');
-  submit.disabled = true; artistEditMessage.textContent = 'Saving artist info…'; artistEditMessage.classList.remove('error');
-  try {
-    const info = await fetchJson(`/api/artists?name=${encodeURIComponent(artistNameFromUrl)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(await metadataFormPayload(artistEditForm)) });
-    populateMetadataForm(artistEditForm, artistEditPreview, info);
-    artistEditMessage.textContent = 'Artist info saved.';
-  } catch (error) { artistEditMessage.textContent = error.message; artistEditMessage.classList.add('error'); }
-  finally { submit.disabled = false; }
+const metadataEditorEntries = (type) => directoryUi.editorEntries([...gigs, ...remoteSharedArchiveShows()], type);
+const artistMetadataEditor = metadataEditorModule.createController({
+  page, routePage: 'artist-edit', type: 'artist', name: artistNameFromUrl,
+  form: artistEditForm, preview: artistEditPreview, message: artistEditMessage,
+  stepper: artistEditStepper, heading: document.querySelector('#artist-edit-heading'),
+  backLink: document.querySelector('#artist-edit-back'), fetchJson,
+  validateImage: directoryUi.validateImage, getEntries: () => metadataEditorEntries('artist'), escapeHtml
 });
+artistMetadataEditor.bind();
+function renderArtistEditPage() { return artistMetadataEditor.load(); }
 
 const overviewPageController = overviewPageModule.createController({
   page, getGigs: () => gigs, getRemoteShows: remoteSharedArchiveShows,
@@ -1931,33 +1840,21 @@ const venuePageController = entityProfilePageModule.createVenueController({
 });
 function renderVenuePage() { return venuePageController.render(); }
 
-async function renderVenueEditPage() {
-  if (page !== 'venue-edit') return;
-  const info = await fetchJson(`/api/venues?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`);
-  document.querySelector('#venue-edit-heading').textContent = `Edit ${info.title || venueNameFromUrl}`;
-  document.querySelector('#venue-edit-back').href = `/venue?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`;
-  populateMetadataForm(venueEditForm, venueEditPreview, info);
-  populateVenueLocationFields(info);
-  renderMetadataEditorStepper(venueEditStepper, 'venue', venueNameFromUrl, venueCityFromUrl);
-}
-
-venueEditForm.addEventListener('submit', async (event) => {
-  if (page !== 'venue-edit') return;
-  event.preventDefault();
-  const submit = venueEditForm.querySelector('button[type="submit"]');
-  submit.disabled = true; venueEditMessage.textContent = 'Saving venue info…'; venueEditMessage.classList.remove('error');
-  try {
-    const info = await fetchJson(`/api/venues?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(await metadataFormPayload(venueEditForm)) });
-    populateMetadataForm(venueEditForm, venueEditPreview, info);
-    populateVenueLocationFields(info);
+const venueMetadataEditor = metadataEditorModule.createController({
+  page, routePage: 'venue-edit', type: 'venue', name: venueNameFromUrl, city: venueCityFromUrl,
+  form: venueEditForm, preview: venueEditPreview, message: venueEditMessage,
+  stepper: venueEditStepper, heading: document.querySelector('#venue-edit-heading'),
+  backLink: document.querySelector('#venue-edit-back'), fetchJson,
+  validateImage: directoryUi.validateImage, getEntries: () => metadataEditorEntries('venue'), escapeHtml,
+  afterSave: (info) => {
     venueHeading.textContent = info.title; venueDescription.textContent = info.description; venueBio.textContent = info.bio;
     venueClosedBadge.hidden = !info.isClosed;
     venueImage.hidden = !info.image; if (info.image) { venueImage.src = info.image; venueImage.alt = `${info.title} photo`; venueImage.style.objectPosition = info.imagePosition || 'center'; }
     venueSource.hidden = !info.source; if (info.source) venueSource.href = info.source;
-    venueEditMessage.textContent = 'Venue info saved.'; venueEditMessage.classList.remove('error');
-  } catch (error) { venueEditMessage.textContent = error.message; venueEditMessage.classList.add('error'); }
-  finally { submit.disabled = false; }
+  }
 });
+venueMetadataEditor.bind();
+function renderVenueEditPage() { return venueMetadataEditor.load(); }
 
 function renderEditPage() {
   if (page !== 'edit') return;
