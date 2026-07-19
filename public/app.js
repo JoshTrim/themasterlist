@@ -17,6 +17,7 @@ const editMediaUploadModule = window.MasterListEditMediaUpload;
 const youtubePlayerApiModule = window.MasterListYoutubePlayerApi;
 const addMediaUploadModule = window.MasterListAddMediaUpload;
 const shellRouter = window.MasterListShellRouter;
+const uploadLeaveGuardModule = window.MasterListUploadLeaveGuard;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -62,11 +63,8 @@ const jobQueue = jobUi.queue;
 const updateJob = jobUi.update;
 const loadPersistentJobs = jobUi.loadPersistent;
 const notificationPanel = document.createElement('aside'); notificationPanel.className = 'peer-notifications'; notificationPanel.hidden = true; notificationPanel.innerHTML = '<p class="eyebrow">From your peers</p><div class="peer-notification-list"></div>'; document.body.append(notificationPanel);
-window.addEventListener('beforeunload', (event) => {
-  const activeJob = [...jobQueue.values()].some((job) => job.type === 'Uploading' && job.status === 'running');
-  const queuedMobileUpload = mobileUploadController.isBusy(editMediaInput);
-  if (activeJob || queuedMobileUpload) { event.preventDefault(); event.returnValue = ''; }
-});
+const uploadLeaveGuard = uploadLeaveGuardModule.createGuard({ window, jobQueue, isMobileBusy: () => mobileUploadController.isBusy(editMediaInput) });
+uploadLeaveGuard.bind();
 const message = document.querySelector('#form-message');
 const results = document.querySelector('#search-results');
 const gigList = document.querySelector('#gig-list');
