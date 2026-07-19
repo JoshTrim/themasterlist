@@ -4,6 +4,7 @@ data/connections.json
 data/geocodes.json
 data/master-list.sqlite*
 data/media/
+data/backups/
 node_modules/
 .venv/
 .DS_Store
