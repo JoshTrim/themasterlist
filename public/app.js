@@ -21,6 +21,7 @@ const metadataEditorModule = window.MasterListMetadataEditor;
 const apiLimitsPageModule = window.MasterListApiLimitsPage;
 const activityPageModule = window.MasterListActivityPage;
 const conflictsPageModule = window.MasterListConflictsPage;
+const healthPageModule = window.MasterListHealthPage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1650,93 +1651,12 @@ const conflictsPageController = conflictsPageModule.createController({
 });
 function renderConflicts() { return conflictsPageController.render(); }
 
-let healthData = null;
-let healthFilter = 'all';
-const healthTypeLabels = { setlist: 'Setlists', albums: 'Albums', artist: 'Artists', venue: 'Venues', location: 'Map' };
-
-function manualMetadataForm(issue) {
-  if (issue.type === 'location') return `<form class="health-manual-form" hidden><div class="health-manual-grid"><label class="health-manual-wide">Venue address<input name="address" placeholder="Street, suburb, city, country" /></label><p class="health-coordinate-divider">Or enter exact coordinates</p><label>Latitude<input name="lat" type="number" min="-90" max="90" step="any" placeholder="-27.4698" /></label><label>Longitude<input name="lng" type="number" min="-180" max="180" step="any" placeholder="153.0251" /></label></div><button class="button" type="submit">Save location</button><button class="button button-secondary health-manual-cancel" type="button">Cancel</button></form>`;
-  if (!['artist', 'venue'].includes(issue.type)) return '';
-  return `<form class="health-manual-form" hidden><div class="health-manual-grid"><label>Display name<input name="title" value="${escapeHtml(issue.title)}" required /></label><label>Short description<input name="description" placeholder="Optional short description" /></label><label class="health-manual-wide">Biography<textarea name="bio" rows="4" placeholder="Enter the information you want displayed"></textarea></label><label>Photo URL<input name="image" type="url" placeholder="https://…" /></label><label>Source URL<input name="source" type="url" placeholder="https://…" /></label></div><button class="button" type="submit">Save manual entry</button><button class="button button-secondary health-manual-cancel" type="button">Cancel</button></form>`;
-}
-
-function renderHealthSnapshot(data) {
-  if (!healthSummary || !healthList) return;
-  healthData = data;
-  const repairable = data.issues.filter((issue) => issue.repairable).length;
-  healthSummary.innerHTML = `<article><strong>${data.totalShows}</strong><span>Shows scanned</span></article><article><strong>${data.issues.length}</strong><span>Issues found</span></article><article><strong>${repairable}</strong><span>Can auto-repair</span></article><article class="${data.healthy ? 'is-healthy' : ''}"><strong>${data.healthy ? '✓' : Math.max(0, data.totalShows - new Set(data.issues.filter((issue) => issue.href?.startsWith('/show') || issue.href?.startsWith('/edit')).map((issue) => issue.href)).size)}</strong><span>${data.healthy ? 'Archive healthy' : 'Shows without show-level issues'}</span></article>`;
-  const types = ['all', ...Object.keys(healthTypeLabels).filter((type) => data.counts[type])];
-  healthFilters.innerHTML = types.map((type) => `<button type="button" class="${type === healthFilter ? 'active' : ''}" data-health-filter="${type}">${type === 'all' ? 'All' : healthTypeLabels[type]} <span>${type === 'all' ? data.issues.length : data.counts[type]}</span></button>`).join('');
-  healthFilters.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => { healthFilter = button.dataset.healthFilter; renderHealthSnapshot(healthData); }));
-  const visible = data.issues.filter((issue) => healthFilter === 'all' || issue.type === healthFilter);
-  healthList.innerHTML = visible.length ? visible.map((issue) => `<article class="health-item" data-health-issue="${escapeHtml(issue.id)}"><div class="health-item-copy"><span class="health-type">${escapeHtml(healthTypeLabels[issue.type] || issue.type)}</span><h2>${escapeHtml(issue.title)}</h2><p>${escapeHtml(issue.detail)}</p></div><div class="health-actions"><a class="button button-secondary" href="${escapeHtml(issue.href)}">${['setlist', 'albums'].includes(issue.type) ? 'Edit manually' : 'Open'}</a>${issue.repairable ? '<button class="button health-repair" type="button">Repair</button>' : ''}${['artist', 'venue', 'location'].includes(issue.type) ? '<button class="button button-secondary health-manual-toggle" type="button">Enter manually</button>' : ''}</div>${manualMetadataForm(issue)}</article>`).join('') : `<div class="empty-state">${data.healthy ? 'Everything is in good shape.' : 'No issues match this filter.'}</div>`;
-  healthList.querySelectorAll('.health-repair').forEach((button) => {
-    const issue = visible.find((entry) => entry.id === button.closest('.health-item').dataset.healthIssue);
-    button.addEventListener('click', async () => {
-      button.disabled = true; button.textContent = 'Repairing…'; healthMessage.textContent = `Repairing ${issue.title}…`;
-      try { renderHealthSnapshot(await fetchJson('/api/health/repair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(issue) })); healthMessage.textContent = `${issue.title} checked.`; }
-      catch (error) { button.disabled = false; button.textContent = 'Retry'; healthMessage.textContent = error.message; healthMessage.classList.add('error'); }
-    });
-  });
-  healthList.querySelectorAll('.health-manual-toggle').forEach((button) => button.addEventListener('click', () => {
-    const form = button.closest('.health-item').querySelector('.health-manual-form');
-    form.hidden = !form.hidden;
-    button.textContent = form.hidden ? 'Enter manually' : 'Close manual entry';
-    if (!form.hidden) form.querySelector('input, textarea')?.focus();
-  }));
-  healthList.querySelectorAll('.health-manual-cancel').forEach((button) => button.addEventListener('click', () => {
-    const card = button.closest('.health-item'); card.querySelector('.health-manual-form').hidden = true; card.querySelector('.health-manual-toggle').textContent = 'Enter manually';
-  }));
-  healthList.querySelectorAll('.health-manual-form').forEach((form) => form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const issue = visible.find((entry) => entry.id === form.closest('.health-item').dataset.healthIssue);
-    const submit = form.querySelector('button[type="submit"]'); submit.disabled = true; submit.textContent = 'Saving…';
-    healthMessage.classList.remove('error'); healthMessage.textContent = `Saving ${issue.title}…`;
-    try {
-      const manual = Object.fromEntries(new FormData(form).entries());
-      renderHealthSnapshot(await fetchJson('/api/health/manual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...issue, ...manual }) }));
-      healthMessage.textContent = `${issue.title} saved.`;
-    } catch (error) { submit.disabled = false; submit.textContent = 'Retry save'; healthMessage.textContent = error.message; healthMessage.classList.add('error'); }
-  }));
-  repairAllMetadata.disabled = !repairable;
-  repairAllAlbums.disabled = !data.issues.some((issue) => issue.type === 'albums' && issue.repairable);
-}
-
-async function renderArchiveHealth() {
-  if (page !== 'health' || !healthList) return;
-  try { renderHealthSnapshot(await fetchJson('/api/health')); }
-  catch (error) { healthMessage.textContent = error.message; healthMessage.classList.add('error'); }
-}
-
-async function repairHealthIssues(repairable, button, idleLabel, albumOnly = false) {
-  if (!repairable.length) return;
-  repairAllMetadata.disabled = true;
-  repairAllAlbums.disabled = true;
-  healthMessage.classList.remove('error');
-  let latest = healthData;
-  for (const [index, issue] of repairable.entries()) {
-    button.textContent = `${index + 1} / ${repairable.length}`;
-    healthMessage.textContent = `Repairing ${issue.title}…`;
-    try { latest = await fetchJson('/api/health/repair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(issue) }); }
-    catch (error) { healthMessage.textContent = `${issue.title}: ${error.message}`; healthMessage.classList.add('error'); }
-  }
-  renderHealthSnapshot(latest);
-  button.textContent = idleLabel;
-  const remainingAlbums = latest.issues.filter((issue) => issue.type === 'albums').length;
-  healthMessage.textContent = albumOnly
-    ? remainingAlbums ? `Album search complete. ${remainingAlbums} set${remainingAlbums === 1 ? '' : 's'} still need manual album information.` : 'Album search complete. All setlist tracks have album information.'
-    : latest.issues.length ? 'Metadata repair pass complete. Some records may still need manual attention.' : 'Metadata repair complete. The archive is healthy.';
-}
-
-repairAllAlbums?.addEventListener('click', () => {
-  const repairable = (healthData?.issues || []).filter((issue) => issue.type === 'albums' && issue.repairable);
-  repairHealthIssues(repairable, repairAllAlbums, 'Find missing albums', true);
+const healthPageController = healthPageModule.createController({
+  page, fetchJson, escapeHtml,
+  elements: { summary: healthSummary, filters: healthFilters, list: healthList, message: healthMessage, repairAll: repairAllMetadata, repairAlbums: repairAllAlbums }
 });
-
-repairAllMetadata?.addEventListener('click', () => {
-  const repairable = (healthData?.issues || []).filter((issue) => issue.repairable);
-  repairHealthIssues(repairable, repairAllMetadata, 'Repair all available');
-});
+healthPageController.bind();
+function renderArchiveHealth() { return healthPageController.render(); }
 
 function renderVenueShows(records) {
   venueShows.replaceChildren();

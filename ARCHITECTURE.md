@@ -71,6 +71,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `api-limits-page.js` — provider quota estimates, operation usage, recent calls and authentication-aware errors.
 - `activity-page.js` — peer notification filtering, unread transitions, navigation and bulk read workflow.
 - `conflicts-page.js` — owner-only peer conflict comparison, merge choices and resolution persistence.
+- `health-page.js` — archive diagnostics, filtering, automated repair and manual metadata/location entry.
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 
