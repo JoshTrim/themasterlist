@@ -49,6 +49,8 @@ const { createPlaybackPlanRoutes } = require('./lib/routes/playback-plans');
 const { createApiUsage } = require('./lib/api-usage');
 const { createSharedShows } = require('./lib/shared-shows');
 const { createProfileImages } = require('./lib/profile-images');
+const { createMetadataCache } = require('./lib/metadata-cache');
+const { createFileServing } = require('./lib/file-serving');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -135,6 +137,15 @@ const oauthService = createOAuthService({
     youtube: { name: 'YouTube', clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET, authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth', tokenUrl: 'https://oauth2.googleapis.com/token', scope: 'https://www.googleapis.com/auth/youtube', authorizationParams: { access_type: 'offline', prompt: 'consent' } }
   }, requestJson: providerResponse, readConnections, writeConnections, randomUUID
 });
+const metadataCache = createMetadataCache({
+  database, provider: metadataProvider, youtubeProvider,
+  getAccessToken: (provider) => oauthService.accessToken(provider),
+  youtubeConfigured: () => configured('youtube'), normaliseGenres, youtubeVideoId, isoDurationSeconds
+});
+const {
+  cachedArtistGenres, saveArtistGenres, archiveGenreStats, fetchArtistInfo, fetchVenueInfo,
+  enrichGigAlbums, searchYouTubeForGig, refreshYouTubePlaybackMetadata
+} = metadataCache;
 const geocoding = createGeocodingService({ fetch, read: readGeocodes, write: writeGeocodes });
 const archiveHealthService = createArchiveHealthService({
   readGigs, readGeocodes: geocoding.read,
@@ -142,6 +153,7 @@ const archiveHealthService = createArchiveHealthService({
   venueInfo: (key) => database.prepare('SELECT bio, description, image FROM venue_info WHERE lookup_name = ?').get(key)
 });
 const archiveIntegrityService = createArchiveIntegrityService({ database, fs, path, mediaDir: MEDIA_DIR, databaseFile: DB_FILE, profileImageFilename: profileImages.filename });
+const fileServing = createFileServing({ fs, legacyFs, path, publicDir: PUBLIC_DIR, mediaDir: MEDIA_DIR, database, profileImages, sendError });
 const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup, manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore });
 const handleSetlistRoute = createSetlistRoutes({ provider: setlistProvider, enrichAlbums: enrichGigAlbums, sendJson, sendError });
 const handleStatsRoute = createStatsRoutes({ database, requireAccount, sendJson, genreStats: archiveGenreStats, usageDay: apiUsage.day, configured, youtubeQuota: process.env.YOUTUBE_DAILY_QUOTA_UNITS, setlistConfigured: Boolean(process.env.SETLIST_FM_API_KEY && process.env.SETLIST_FM_API_KEY !== 'replace-me') });
@@ -195,14 +207,6 @@ const mediaRecoveryPromise = recoverMediaWork({ database, fs, path, mediaDir: ME
   if (Object.values(result).some(Boolean)) console.log('[media] recovered interrupted work:', result);
 }).catch((error) => console.error('[media] recovery failed:', error.message));
 
-const contentTypes = {
-  '.css': 'text/css; charset=utf-8',
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml'
-};
-
 function migrateLegacyGigs() {
   const count = database.prepare('SELECT COUNT(*) AS count FROM gigs').get().count;
   if (count > 0 || !legacyFs.existsSync(GIGS_FILE)) return;
@@ -249,78 +253,6 @@ function configured(provider) {
   if (provider === 'apple-music') return Boolean(process.env.APPLE_MUSIC_DEVELOPER_TOKEN);
   if (provider === 'audd') return Boolean(process.env.AUDD_API_TOKEN);
   return false;
-}
-
-function cachedArtistGenres(name) {
-  const row = database.prepare('SELECT genres, source, updated_at AS updatedAt FROM artist_genres WHERE lookup_name = ?').get(String(name || '').trim().toLowerCase());
-  if (!row) return null;
-  try { return { genres: normaliseGenres(JSON.parse(row.genres || '[]')), source: row.source, updatedAt: row.updatedAt }; } catch { return { genres: [], source: row.source, updatedAt: row.updatedAt }; }
-}
-
-function saveArtistGenres(name, genres, source = 'manual') {
-  const artistName = String(name || '').trim();
-  const values = normaliseGenres(genres);
-  database.prepare('INSERT OR REPLACE INTO artist_genres (lookup_name, artist_name, genres, source, updated_at) VALUES (?, ?, ?, ?, ?)').run(artistName.toLowerCase(), artistName, JSON.stringify(values), source, new Date().toISOString());
-  return values;
-}
-
-async function fetchArtistGenres(name) {
-  const artistName = String(name || '').trim();
-  if (!artistName) return [];
-  const cached = cachedArtistGenres(artistName);
-  if (cached) return cached.genres;
-  let genres = [];
-  try {
-    genres = normaliseGenres(await metadataProvider.artistGenre(artistName));
-  } catch { /* Keep an empty cached result so Overview remains fast offline. */ }
-  return saveArtistGenres(artistName, genres, 'itunes');
-}
-
-async function archiveGenreStats() {
-  const gigs = database.prepare('SELECT artist FROM gigs').all();
-  const artistCounts = new Map();
-  for (const gig of gigs) artistCounts.set(gig.artist, (artistCounts.get(gig.artist) || 0) + 1);
-  const pending = [...artistCounts];
-  const entries = [];
-  await Promise.all(Array.from({ length: Math.min(4, pending.length) }, async () => {
-    while (pending.length) {
-      const [artist, shows] = pending.shift();
-      entries.push({ artist, shows, genres: await fetchArtistGenres(artist) });
-    }
-  }));
-  const totals = new Map();
-  for (const entry of entries) {
-    const genres = entry.genres.length ? entry.genres : ['Unknown'];
-    const weight = entry.shows / genres.length;
-    for (const genre of genres) totals.set(genre, (totals.get(genre) || 0) + weight);
-  }
-  const totalShows = gigs.length || 1;
-  return [...totals].map(([genre, shows]) => ({ genre, shows: Math.round(shows * 10) / 10, percentage: Math.round((shows / totalShows) * 1000) / 10 })).sort((a, b) => b.percentage - a.percentage || a.genre.localeCompare(b.genre));
-}
-
-async function fetchArtistInfo(name) {
-  const requestedName = String(name || '').trim();
-  if (!requestedName) throw new Error('An artist name is required.');
-  const lookupName = requestedName.toLowerCase();
-  const cached = database.prepare('SELECT title, description, bio, image, image_position AS imagePosition, is_manual AS isManual, source FROM artist_info WHERE lookup_name = ?').get(lookupName);
-  if (cached) return { name: requestedName, ...cached };
-  const info = await metadataProvider.artistInfo(requestedName);
-  database.prepare('INSERT OR REPLACE INTO artist_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
-  return info;
-}
-
-async function fetchVenueInfo(name, city = '') {
-  const requestedName = String(name || '').trim();
-  const requestedCity = String(city || '').trim();
-  if (!requestedName) throw new Error('A venue name is required.');
-  const lookupName = `${requestedName}|${requestedCity}`.toLowerCase();
-  const venueWords = requestedName.toLowerCase().split(/\s+/).filter((word) => word.length > 3);
-  const cached = database.prepare('SELECT title, description, bio, image, image_position AS imagePosition, is_manual AS isManual, is_closed AS isClosed, source FROM venue_info WHERE lookup_name = ?').get(lookupName);
-  if (cached && (cached.isManual || (venueWords.every((word) => cached.title.toLowerCase().includes(word)) && (cached.bio || cached.description || cached.image)))) return { name: requestedName, city: requestedCity, ...cached };
-  if (cached) database.prepare('DELETE FROM venue_info WHERE lookup_name = ?').run(lookupName);
-  const info = await metadataProvider.venueInfo(requestedName, requestedCity);
-  database.prepare('INSERT OR REPLACE INTO venue_info (lookup_name, title, description, bio, image, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(lookupName, info.title, info.description, info.bio, info.image, info.source, new Date().toISOString());
-  return info;
 }
 
 function playlistDetails(gig) {
@@ -396,52 +328,6 @@ async function receiveDatabaseRestore(request) {
   }
 }
 
-async function enrichGigAlbums(gigId, forceMissing = false) {
-  const gig = database.prepare('SELECT artist, songs FROM gigs WHERE id = ?').get(gigId);
-  if (!gig) throw new Error('Gig not found.');
-  const songs = JSON.parse(gig.songs || '[]');
-  if (forceMissing) songs.filter((song) => !String(song.album || '').trim() || /^unknown album$/i.test(String(song.album).trim())).forEach((song) => database.prepare('DELETE FROM album_lookup_cache WHERE cache_key = ?').run(`v6::${song.artist || gig.artist}::${song.title}`.toLowerCase()));
-  const enriched = await Promise.all(songs.map(async (song) => {
-    const currentAlbum = String(song.album || '').trim();
-    if (currentAlbum && !/^unknown album$/i.test(currentAlbum)) return song;
-    return { ...song, album: await resolveAlbum(song.artist || gig.artist, song.title) || null };
-  }));
-  database.prepare('UPDATE gigs SET songs = ? WHERE id = ?').run(JSON.stringify(enriched), gigId);
-  const counts = {};
-  enriched.forEach((song) => { const album = song.album || 'Unknown album'; counts[album] = (counts[album] || 0) + 1; });
-  return { songs: enriched, albums: counts };
-}
-
-async function resolveAlbum(artist, title) {
-  const key = `v6::${artist}::${title}`.toLowerCase();
-  const cached = database.prepare('SELECT album, created_at AS createdAt FROM album_lookup_cache WHERE cache_key = ?').get(key);
-  if (cached?.album) return cached.album;
-  if (cached && Date.now() - new Date(cached.createdAt).getTime() < 7 * 24 * 60 * 60 * 1000) return null;
-  const album = await metadataProvider.album(artist, title);
-  database.prepare('INSERT OR REPLACE INTO album_lookup_cache (cache_key, album, created_at) VALUES (?, ?, ?)').run(key, album, new Date().toISOString());
-  return album;
-}
-
-async function serveStatic(request, response, pathname) {
-  const requested = pathname === '/' ? '/index.html' : pathname;
-  const filePath = path.resolve(PUBLIC_DIR, `.${requested}`);
-  if (!filePath.startsWith(PUBLIC_DIR)) return sendError(response, 403, 'Forbidden');
-
-  try {
-    const file = await fs.readFile(filePath);
-    response.writeHead(200, { 'Content-Type': contentTypes[path.extname(filePath)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
-    response.end(file);
-  } catch (error) {
-    if (error.code === 'ENOENT' && !path.extname(requested)) {
-      const app = await fs.readFile(path.join(PUBLIC_DIR, 'index.html'));
-      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
-      return response.end(app);
-    }
-    if (error.code === 'ENOENT') return sendError(response, 404, 'Not found');
-    throw error;
-  }
-}
-
 async function getAccessToken(provider) {
   return oauthService.accessToken(provider);
 }
@@ -454,51 +340,6 @@ async function exportSpotify(gig) {
 async function exportYouTube(gig) {
   const accessToken = await getAccessToken('youtube');
   return youtubeProvider.exportPlaylist({ gig, accessToken, details: playlistDetails(gig) });
-}
-
-async function searchYouTubeForGig(gig) {
-  const accessToken = await getAccessToken('youtube');
-  const matches = [];
-  for (const [index, song] of gig.songs.entries()) {
-    // Include the embed check in the cache version so older cached results
-    // cannot reintroduce videos that YouTube reports as non-embeddable.
-    const cacheKey = `${gig.id}:${index}:${gig.artist}:${gig.venue}:${gig.date || ''}:embed-v2`;
-    const cached = database.prepare('SELECT results, created_at AS createdAt FROM youtube_search_cache WHERE cache_key = ?').get(cacheKey);
-    if (cached && Date.now() - Date.parse(cached.createdAt) < 24 * 60 * 60 * 1000) {
-      matches.push({ index, title: song.title, results: JSON.parse(cached.results) });
-      continue;
-    }
-    const results = await youtubeProvider.searchLiveVideos({ gig, song, accessToken });
-    database.prepare('INSERT INTO youtube_search_cache (cache_key, results, created_at) VALUES (?, ?, ?) ON CONFLICT(cache_key) DO UPDATE SET results = excluded.results, created_at = excluded.created_at').run(cacheKey, JSON.stringify(results), new Date().toISOString());
-    matches.push({ index, title: song.title, results });
-  }
-  return matches;
-}
-
-async function refreshYouTubePlaybackMetadata(gigId, media) {
-  const staleBefore = Date.now() - (30 * 24 * 60 * 60 * 1000);
-  const pending = media.filter((item) => item.mimeType === 'video/youtube' && youtubeVideoId(item.externalUrl || item.url) && (!item.sourceMetadataAt || Date.parse(item.sourceMetadataAt) < staleBefore));
-  if (!pending.length) return null;
-  if (!configured('youtube')) return 'YouTube metadata is not configured; title and AudD matching were used instead.';
-  try {
-    const token = await getAccessToken('youtube');
-    const byVideoId = new Map(pending.map((item) => [youtubeVideoId(item.externalUrl || item.url), item]));
-    const videos = await youtubeProvider.videoMetadata({ videoIds: [...byVideoId.keys()], accessToken: token });
-    const now = new Date().toISOString();
-    const update = database.prepare('UPDATE gig_media SET caption = ?, source_description = ?, source_duration = ?, source_metadata_at = ? WHERE id = ?');
-    const seen = new Set();
-    videos.forEach((video) => {
-      const item = byVideoId.get(video.id);
-      if (!item) return;
-      seen.add(video.id);
-      const caption = !item.caption || item.caption === 'YouTube video' ? video.snippet?.title || item.caption : item.caption;
-      update.run(caption, video.snippet?.description || '', isoDurationSeconds(video.contentDetails?.duration), now, item.id);
-    });
-    pending.forEach((item) => { if (!seen.has(youtubeVideoId(item.externalUrl || item.url))) database.prepare('UPDATE gig_media SET source_metadata_at = ? WHERE id = ?').run(now, item.id); });
-    return null;
-  } catch (error) {
-    return `YouTube metadata could not be refreshed: ${error.message}`;
-  }
 }
 
 async function exportAppleMusic(gig, musicUserToken) {
@@ -554,28 +395,7 @@ async function handleApi(request, response, url) {
     catch (error) { return sendError(response, 400, error.message); }
   }
 
-  const mediaFileMatch = url.pathname.match(/^\/api\/media\/([\w-]+)$/);
-  if (request.method === 'GET' && mediaFileMatch) {
-    const media = database.prepare('SELECT * FROM gig_media WHERE id = ?').get(mediaFileMatch[1]);
-    if (!media) return sendError(response, 404, 'Media not found.');
-    try {
-      const useCutout = url.searchParams.get('variant') === 'cutout' && media.background_filename;
-      const filePath = path.join(MEDIA_DIR, useCutout ? media.background_filename : (media.playback_filename || media.filename));
-      const stat = await fs.stat(filePath);
-      const responseMime = useCutout ? 'image/png' : (media.playback_mime || media.mime_type);
-      const range = request.headers.range;
-      if (range) {
-        const match = range.match(/bytes=(\d*)-(\d*)/);
-        const start = match?.[1] ? Number(match[1]) : 0;
-        const end = match?.[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
-        if (start >= stat.size || start > end) return sendError(response, 416, 'Requested range not satisfiable.');
-        response.writeHead(206, { 'Content-Type': responseMime, 'Content-Length': end - start + 1, 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=3600' });
-        return legacyFs.createReadStream(filePath, { start, end }).pipe(response);
-      }
-      response.writeHead(200, { 'Content-Type': responseMime, 'Content-Length': stat.size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=3600' });
-      return legacyFs.createReadStream(filePath).pipe(response);
-    } catch (error) { return sendError(response, 404, 'Media file not found.'); }
-  }
+  if (await fileServing.handleStoredFile(request, response, url)) return;
 
   if (request.method === 'GET' && url.pathname === '/api/profiles') {
     if (!accountsConfigured()) return sendJson(response, 200, []);
@@ -687,16 +507,6 @@ async function handleApi(request, response, url) {
     return sendJson(response, 200, { removed });
   }
 
-  const profileImage = profileImages.resolve(url.pathname);
-  if (request.method === 'GET' && profileImage) {
-    requireAccount(request);
-    try {
-      const stat = await fs.stat(profileImage.filePath);
-      response.writeHead(200, { 'Content-Type': profileImage.mimeType, 'Content-Length': stat.size, 'Cache-Control': 'private, max-age=86400' });
-      return legacyFs.createReadStream(profileImage.filePath).pipe(response);
-    } catch { return sendError(response, 404, 'Profile image not found.'); }
-  }
-
   if (await handleDirectoryRoute(request, response, url)) return;
 
   if (request.method === 'GET' && url.pathname === '/api/health') return sendJson(response, 200, await archiveHealth());
@@ -800,7 +610,7 @@ const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host}`);
     if (url.pathname.startsWith('/api/')) await handleApi(request, response, url);
     else if (url.pathname.startsWith('/auth/')) await handleAuth(request, response, url);
-    else await serveStatic(request, response, url.pathname);
+    else await fileServing.serveStatic(request, response, url.pathname);
   } catch (error) {
     if (!error.status || error.status >= 500) console.error(error);
     sendError(response, error.status || 500, error.message || 'Something went wrong.');

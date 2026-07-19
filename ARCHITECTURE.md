@@ -44,6 +44,8 @@
 - `lib/api-usage.js` — provider normalization, quota-cost classification, request accounting and JSON response handling.
 - `lib/shared-shows.js` — attendee normalization, shared reviews/contributions, media assignment merges and conflict resolution.
 - `lib/profile-images.js` — allowlisted profile-image validation, persistence, safe resolution and replacement cleanup.
+- `lib/metadata-cache.js` — persisted artist, venue, genre, album and YouTube metadata caching and enrichment, with manual-edit preservation.
+- `lib/file-serving.js` — contained SPA/static asset serving plus authenticated profile/media streaming and HTTP byte-range handling.
 
 `public/app.js` is the browser composition root: it owns page-level state, looks up server-rendered elements and injects dependencies into browser-safe CommonJS/UMD modules under `public/lib/`. UI behavior, rendering and event binding remain inside those tested modules, which load before the application bundle:
 
@@ -122,4 +124,4 @@ Styles retain their original cascade order through `public/styles.css`: `shell-a
 
 ## Next extraction boundaries
 
-New frontend behavior should be added to the relevant `public/lib/` controller with a focused regression test; `public/app.js` should remain wiring-only. The next refactoring area is `server.js`: extract its remaining API-usage accounting, shared-show/conflict orchestration and profile-image workflow in behavior-preserving, independently tested slices while keeping the executable file as the HTTP composition root.
+New frontend behavior should be added to the relevant `public/lib/` controller with a focused regression test; `public/app.js` should remain wiring-only. Backend behavior should likewise live in a focused service or route factory with direct tests. `server.js` now primarily composes those modules; its next useful boundary is the remaining maintenance/restore orchestration, while HTTP dispatch itself should stay in the executable composition root.
