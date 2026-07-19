@@ -192,6 +192,16 @@ const artistEditStepper = document.querySelector('#artist-edit-stepper');
 const artistShows = document.querySelector('#artist-shows');
 const artistEmpty = document.querySelector('#artist-empty');
 const artistStats = document.querySelector('#artist-stats');
+const artistHistory = document.querySelector('#artist-history');
+const artistHistorySummary = document.querySelector('#artist-history-summary');
+const artistSongFilter = document.querySelector('#artist-song-filter');
+const artistSongKind = document.querySelector('#artist-song-kind');
+const artistSongSort = document.querySelector('#artist-song-sort');
+const artistSongbookResult = document.querySelector('#artist-songbook-result');
+const artistSongbook = document.querySelector('#artist-songbook');
+const artistCompareFirst = document.querySelector('#artist-compare-first');
+const artistCompareSecond = document.querySelector('#artist-compare-second');
+const artistComparison = document.querySelector('#artist-comparison');
 const editForm = document.querySelector('#edit-form');
 const editMessage = document.querySelector('#edit-message');
 const editMediaInput = document.querySelector('#edit-media-input');
@@ -402,11 +412,14 @@ const profileShowListRenderer = profileShowListModule.createRenderer({
 });
 function renderArtistShows(records) { return profileShowListRenderer.renderArtist(artistShows, records); }
 const artistPageController = entityProfilePageModule.createArtistController({
-  page, name: artistNameFromUrl, getGigs: () => gigs, fetchJson, renderShows: renderArtistShows,
+  page, name: artistNameFromUrl, getGigs: () => gigs, fetchJson, renderShows: renderArtistShows, escapeHtml, formatDate: formatGigDate,
   elements: {
     heading: artistHeading, description: artistDescription, bio: artistBio,
     image: artistImage, source: artistSource, editLink: artistEditLink,
-    empty: artistEmpty, stats: artistStats
+    empty: artistEmpty, stats: artistStats, history: artistHistory, historySummary: artistHistorySummary,
+    songFilter: artistSongFilter, songKind: artistSongKind, songSort: artistSongSort,
+    songbookResult: artistSongbookResult, songbook: artistSongbook,
+    compareFirst: artistCompareFirst, compareSecond: artistCompareSecond, comparison: artistComparison
   }
 });
 function renderArtistPage() { return artistPageController.render(); }

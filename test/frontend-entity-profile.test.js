@@ -41,6 +41,31 @@ describe('artist and venue profile pages', () => {
     assert.equal(markup, '<span>1 show</span><span>1 venue</span><span>1 song performed</span><span>1 favourite</span>');
   });
 
+  test('builds a live song history across shows, years and releases', () => {
+    const history = profiles.buildArtistHistory([
+      { id: 'a', date: '2024-02-01', venue: 'Hall', city: 'Brisbane', songs: [{ title: 'Opening', album: 'First LP' }, { title: 'Rare Song' }, { title: 'Opening', album: 'First LP' }] },
+      { id: 'b', date: '2025-03-02', venue: 'Club', city: 'Brisbane', songs: [{ title: 'opening', album: 'First LP' }, { title: 'Middle' }] },
+      { id: 'c', date: '2026-04-03', venue: 'Arena', city: 'Sydney', songs: [{ title: 'Opening', album: 'First LP' }] }
+    ]);
+    assert.equal(history.uniqueSongs, 3);
+    assert.equal(history.totalPerformances, 5);
+    assert.equal(history.deepCuts, 2);
+    assert.equal(history.mostPlayed.title, 'Opening');
+    assert.equal(history.mostPlayed.count, 3);
+    assert.equal(history.mostPlayed.years.size, 3);
+    assert.equal(history.mostPlayed.album, 'First LP');
+    assert.equal(history.mostPlayed.kind, 'staple');
+    assert.equal(history.mostPlayed.first.gig.id, 'a');
+    assert.equal(history.mostPlayed.last.gig.id, 'c');
+  });
+
+  test('compares two setlists using normalized track identity', () => {
+    assert.deepEqual(profiles.compareSetlists(
+      { songs: [{ title: 'Opening' }, { title: 'First only' }] },
+      { songs: [{ title: 'opening' }, { title: 'Second only' }] }
+    ), { shared: ['Opening'], onlyFirst: ['First only'], onlySecond: ['Second only'], overlap: 33 });
+  });
+
   test('renders an artist profile and its local show summary', async () => {
     const elements = { heading: element(), description: element(), bio: element(), image: element(), source: element(), editLink: element(), empty: element(), stats: element() };
     let rendered = [];

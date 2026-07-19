@@ -22,7 +22,7 @@
       body[data-page="venue-edit"] #venue-edit-page, body[data-page="edit"] #edit-page,
       body[data-page="map"] #map-page, body[data-page="account"] #account-page { display: block; }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=css-split-3" />
+    <link rel="stylesheet" href="/styles.css?v=css-split-4" />
   </head>
   <body>
     <script>
@@ -161,6 +161,13 @@
           <img class="artist-image" id="artist-image" alt="" hidden />
         </div>
         <div class="artist-shows-heading"><p class="eyebrow">From your archive</p><h2>Shows attended</h2></div><div class="artist-stats" id="artist-stats"></div>
+        <section class="artist-history" id="artist-history" aria-labelledby="artist-history-heading">
+          <div class="artist-history-heading"><div><p class="eyebrow">Your live songbook</p><h2 id="artist-history-heading">Songs heard live</h2></div><p>Every track across your logged setlists, from one-off deep cuts to permanent fixtures.</p></div>
+          <div class="artist-history-summary" id="artist-history-summary"></div>
+          <div class="artist-songbook-controls"><label>Find a song<input id="artist-song-filter" type="search" placeholder="Track or album" autocomplete="off" /></label><label>Show<select id="artist-song-kind"><option value="all">All songs</option><option value="staple">Staples</option><option value="repeat">Heard more than once</option><option value="deep-cut">Deep cuts</option></select></label><label>Order<select id="artist-song-sort"><option value="count">Most heard</option><option value="recent">Most recently heard</option><option value="title">Track name</option></select></label></div>
+          <p class="artist-songbook-result" id="artist-songbook-result"></p><div class="artist-songbook" id="artist-songbook"></div>
+          <section class="artist-setlist-compare" aria-labelledby="artist-compare-heading"><div class="artist-history-heading"><div><p class="eyebrow">Show versus show</p><h3 id="artist-compare-heading">Compare setlists</h3></div><p>See what stayed, what disappeared, and how much the set changed.</p></div><div class="artist-compare-controls"><label>First show<select id="artist-compare-first"></select></label><span aria-hidden="true">VS</span><label>Second show<select id="artist-compare-second"></select></label></div><div class="artist-comparison" id="artist-comparison"></div></section>
+        </section>
         <div class="gig-list" id="artist-shows"></div>
         <p class="empty-state" id="artist-empty" hidden>No shows by this artist yet.</p>
       </section>
@@ -329,7 +336,7 @@
     <script src="/lib/archive-search.js?v=frontend-modules-8"></script>
     <script src="/lib/timeline-page.js?v=frontend-modules-9"></script>
     <script src="/lib/overview-page.js?v=frontend-modules-56"></script>
-    <script src="/lib/entity-profile-page.js?v=frontend-modules-54"></script>
+    <script src="/lib/entity-profile-page.js?v=frontend-modules-55"></script>
     <script src="/lib/metadata-editor.js?v=frontend-modules-12"></script>
     <script src="/lib/api-limits-page.js?v=frontend-modules-13"></script>
     <script src="/lib/activity-page.js?v=frontend-modules-14"></script>
@@ -351,6 +358,6 @@
     <script src="/lib/show-detail-page.js?v=frontend-modules-55"></script>
     <script src="/lib/mobile-upload-controller.js?v=frontend-modules-31"></script>
     <script src="/lib/media-workspace-controller.js?v=frontend-modules-32"></script>
-    <script src="/app.js?v=frontend-modules-57"></script>
+    <script src="/app.js?v=frontend-modules-58"></script>
   </body>
 </html>
