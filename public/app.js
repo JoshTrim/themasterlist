@@ -16,6 +16,7 @@ const directoryUi = window.MasterListDirectoryUi;
 const archiveSearchModule = window.MasterListArchiveSearch;
 const timelinePageModule = window.MasterListTimelinePage;
 const overviewPageModule = window.MasterListOverviewPage;
+const entityProfilePageModule = window.MasterListEntityProfilePage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1333,7 +1334,6 @@ function renderAttendeeSummary(container, gig, prefix = 'With') {
 
 function renderArtistShows(records) {
   artistShows.replaceChildren();
-  artistEmpty.hidden = records.length > 0;
   for (const gig of records) {
     const card = document.querySelector('#gig-template').content.cloneNode(true);
     card.querySelector('.edit-gig').href = `/edit?id=${encodeURIComponent(gig.id)}`;
@@ -1361,32 +1361,15 @@ function renderArtistShows(records) {
   }
 }
 
-async function renderArtistPage() {
-  if (page !== 'artist') return;
-  if (!artistNameFromUrl) {
-    artistHeading.textContent = 'Artist not found';
-    artistDescription.textContent = 'Choose an artist from your shows archive.';
-    return;
+const artistPageController = entityProfilePageModule.createArtistController({
+  page, name: artistNameFromUrl, getGigs: () => gigs, fetchJson, renderShows: renderArtistShows,
+  elements: {
+    heading: artistHeading, description: artistDescription, bio: artistBio,
+    image: artistImage, source: artistSource, editLink: artistEditLink,
+    empty: artistEmpty, stats: artistStats
   }
-  artistEditLink.href = `/artist/edit?name=${encodeURIComponent(artistNameFromUrl)}`;
-  artistHeading.textContent = artistNameFromUrl;
-  const artistRecords = gigs.filter((gig) => gig.artist.toLowerCase() === artistNameFromUrl.toLowerCase());
-  renderArtistShows(artistRecords);
-  artistStats.innerHTML = `<span>${artistRecords.length} show${artistRecords.length === 1 ? '' : 's'}</span><span>${new Set(artistRecords.map((gig) => `${gig.venue}|${gig.city}`)).size} venues</span><span>${artistRecords.reduce((sum, gig) => sum + (gig.songs?.length || 0), 0)} songs performed</span><span>${artistRecords.filter((gig) => gig.favorite).length} favourites</span>`;
-  try {
-    const info = await fetchJson(`/api/artists?name=${encodeURIComponent(artistNameFromUrl)}`);
-    artistHeading.textContent = info.title || artistNameFromUrl;
-    artistDescription.textContent = info.description || '';
-    artistBio.textContent = info.bio || 'No biography was found for this artist yet.';
-    artistImage.hidden = !info.image;
-    if (info.image) { artistImage.src = info.image; artistImage.alt = `${info.title || artistNameFromUrl} portrait`; artistImage.style.objectPosition = info.imagePosition || 'center'; }
-    artistSource.hidden = !info.source;
-    if (info.source) artistSource.href = info.source;
-  } catch (error) {
-    artistDescription.textContent = 'Artist information could not be loaded right now.';
-    artistBio.textContent = error.message;
-  }
-}
+});
+function renderArtistPage() { return artistPageController.render(); }
 
 function updateMetadataPreview(preview, imageUrl, imagePosition = 'center') {
   const frame = preview.closest('.metadata-image-preview');
@@ -1918,14 +1901,7 @@ repairAllMetadata?.addEventListener('click', () => {
   repairHealthIssues(repairable, repairAllMetadata, 'Repair all available');
 });
 
-async function renderVenuePage() {
-  if (page !== 'venue') return;
-  const records = gigs.filter((gig) => gig.venue.toLowerCase() === venueNameFromUrl.toLowerCase() && (!venueCityFromUrl || gig.city.toLowerCase() === venueCityFromUrl.toLowerCase()));
-  venueHeading.textContent = venueNameFromUrl || 'Venue not found';
-  venuePageCity.textContent = venueCityFromUrl;
-  venueClosedBadge.hidden = true;
-  venueStats.innerHTML = records.length ? `<span>${records.length} show${records.length === 1 ? '' : 's'}</span><span>${new Set(records.map((gig) => gig.artist)).size} artists</span><span>${new Set(records.map((gig) => gig.city)).size} cities</span><span>${records.reduce((sum, gig) => sum + (gig.songs?.length || 0), 0)} songs</span><span>${records.filter((gig) => gig.favorite).length} favourites</span>` : '';
-  venueEmpty.hidden = Boolean(records.length);
+function renderVenueShows(records) {
   venueShows.replaceChildren();
   records.forEach((gig) => {
     const card = document.querySelector('#gig-template').content.cloneNode(true);
@@ -1942,20 +1918,18 @@ async function renderVenuePage() {
     card.querySelectorAll('.artifact-section, .add-artifact-gig').forEach((element) => element.remove());
     venueShows.append(card);
   });
-  if (!venueNameFromUrl) return;
-  try {
-    const info = await fetchJson(`/api/venues?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`);
-    venueHeading.textContent = info.title || venueNameFromUrl;
-    venueDescription.textContent = info.description || '';
-    venueBio.textContent = info.bio || 'No venue biography was found yet.';
-    venueClosedBadge.hidden = !info.isClosed;
-    venueImage.hidden = !info.image;
-    if (info.image) { venueImage.src = info.image; venueImage.alt = `${info.title || venueNameFromUrl} photo`; venueImage.style.objectPosition = info.imagePosition || 'center'; }
-    venueSource.hidden = !info.source;
-    if (info.source) venueSource.href = info.source;
-    venueEditLink.href = `/venue/edit?name=${encodeURIComponent(venueNameFromUrl)}&city=${encodeURIComponent(venueCityFromUrl)}`;
-  } catch (error) { venueBio.textContent = 'Venue information could not be loaded right now.'; }
 }
+
+const venuePageController = entityProfilePageModule.createVenueController({
+  page, name: venueNameFromUrl, city: venueCityFromUrl,
+  getGigs: () => gigs, fetchJson, renderShows: renderVenueShows,
+  elements: {
+    heading: venueHeading, cityLabel: venuePageCity, closedBadge: venueClosedBadge,
+    stats: venueStats, empty: venueEmpty, description: venueDescription, bio: venueBio,
+    image: venueImage, source: venueSource, editLink: venueEditLink
+  }
+});
+function renderVenuePage() { return venuePageController.render(); }
 
 async function renderVenueEditPage() {
   if (page !== 'venue-edit') return;
