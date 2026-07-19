@@ -4,6 +4,7 @@ const playbackCore = window.MasterListPlaybackCore;
 const playbackMedia = window.MasterListPlaybackMedia;
 const playbackEditor = window.MasterListPlaybackEditor;
 const playbackEditorControllerModule = window.MasterListPlaybackEditorController;
+const playbackTimelineControllerModule = window.MasterListPlaybackTimelineController;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -399,107 +400,24 @@ function readPlaybackResume(gig) {
   } catch { return null; }
 }
 function clearPlaybackResume(gig) { try { localStorage.removeItem(playbackResumeKey(gig.id)); } catch {} }
-function playbackTimelineModel(gig) {
-  return playbackCore.timelineModel(gig, setQueue);
-}
-function focusedPlaybackTimelineModel(gig) {
-  return playbackCore.focusedTimelineModel(gig, setQueue, setQueueIndex, setTimelineZoom);
-}
-function setTimelineProgress(gig, mediaFraction = 0, currentSeconds = 0, durationSeconds = 0) {
-  const fullSegment = playbackTimelineModel(gig)[setQueueIndex];
-  const segment = focusedPlaybackTimelineModel(gig).find((item) => item.index === setQueueIndex);
-  if (!fullSegment || !segment) return;
-  const fraction = Math.max(0, Math.min(1, Number(mediaFraction) || 0));
-  setPlayerProgress.style.width = `${playbackCore.progressModel(segment, fraction) * 100}%`;
-  setPlayerOverviewProgress.style.width = `${playbackCore.progressModel(fullSegment, fraction) * 100}%`;
-  const bounds = playbackBounds(segment.entry, durationSeconds);
-  setPlayerElapsed.textContent = formatPlaybackTime(Math.max(0, (currentSeconds || 0) - bounds.start));
-  setPlayerTotal.textContent = bounds.length ? formatPlaybackTime(bounds.length) : '--:--';
-}
-function renderSetTimeline(gig) {
-  const fullModel = playbackTimelineModel(gig);
-  const model = focusedPlaybackTimelineModel(gig);
-  setPlayerOverviewMarkers.innerHTML = fullModel.map(({ entry, index, marker }) => { const title = setQueueEntryTitle(gig, entry); return `<button class="set-overview-marker${index === setQueueIndex ? ' active' : ''}${entry.media ? '' : ' is-gap'}${entry.isUnknown ? ' is-unknown' : ''}${marker <= 0 ? ' marker-first' : ''}${marker >= .999999 ? ' marker-last' : ''}" type="button" style="left:${marker * 100}%" title="${escapeHtml(title)}${entry.media ? '' : ' · no video'}" aria-label="Play ${escapeHtml(title)}"></button>`; }).join('');
-  setPlayerMarkers.innerHTML = model.map(({ entry, index, marker }) => { const title = setQueueEntryTitle(gig, entry); const label = entry.isUnknown ? title : `${entry.songIndex + 1} · ${title}`; return `<button class="set-marker${index === setQueueIndex ? ' active' : ''}${entry.media ? '' : ' is-gap'}${entry.isUnknown ? ' is-unknown' : ''}${marker <= 0 ? ' marker-first' : ''}${marker >= .999999 ? ' marker-last' : ''}" type="button" style="left:${marker * 100}%" title="${escapeHtml(title)}${entry.media ? '' : ' · no video'}" aria-label="${entry.media ? 'Play' : 'Skip to next video after'} ${escapeHtml(title)}"><span class="set-marker-label">${escapeHtml(label)}</span></button>`; }).join('');
-  setPlayerOverviewMarkers.querySelectorAll('.set-overview-marker').forEach((marker, index) => marker.addEventListener('click', (event) => { event.stopPropagation(); setQueueIndex = index; pendingSetSeek = { index, fraction: 0 }; playSetTrack(); }));
-  setPlayerMarkers.querySelectorAll('.set-marker').forEach((marker, localIndex) => marker.addEventListener('click', (event) => { event.stopPropagation(); const index = model[localIndex].index; setQueueIndex = index; pendingSetSeek = { index, fraction: 0 }; playSetTrack(); }));
-  setPlayer.dataset.timelineZoom = String(setTimelineZoom);
-  setTimelineProgress(gig, 0);
-}
-function applySetSeek(gig, fraction) {
-  const bounded = Math.max(0, Math.min(1, Number(fraction) || 0));
-  const entry = setQueue[setQueueIndex];
-  if (!entry?.media) return;
-  const video = setPlayerStage.querySelector('video.set-player-current, video:not(.set-player-preload)');
-  if (video) {
-    const seek = () => { if (Number.isFinite(video.duration) && video.duration > 0) { video.currentTime = playbackTimeAt(entry, bounded, video.duration); pendingSetSeek = null; setTimelineProgress(gig, bounded, video.currentTime, video.duration); } };
-    if (video.readyState >= 1) seek(); else video.addEventListener('loadedmetadata', seek, { once: true });
-    return;
+const playbackTimelineController = playbackTimelineControllerModule.createController({
+  core: playbackCore, escapeHtml, formatPlaybackTime,
+  getGig: () => gigs.find((entry) => entry.id === showDetailId), getQueue: () => setQueue,
+  getIndex: () => setQueueIndex, setIndex: (index) => { setQueueIndex = index; },
+  getZoom: () => setTimelineZoom, setZoom: (zoom) => { setTimelineZoom = zoom; },
+  entryTitle: setQueueEntryTitle, bounds: playbackBounds, timeAt: playbackTimeAt,
+  playTrack: () => playSetTrack(), setPendingSeek: (seek) => { pendingSetSeek = seek; },
+  getYoutubePlayer: () => activeYoutubePlayer,
+  elements: {
+    player: setPlayer, stage: setPlayerStage, timeline: setPlayerTimeline, progress: setPlayerProgress,
+    markers: setPlayerMarkers, overview: setPlayerOverview, overviewProgress: setPlayerOverviewProgress,
+    overviewMarkers: setPlayerOverviewMarkers, elapsed: setPlayerElapsed, total: setPlayerTotal, mediaQuery: setTimelineMedia
   }
-  if (activeYoutubePlayer?.seekTo && activeYoutubePlayer.getDuration) {
-    const duration = Number(activeYoutubePlayer.getDuration()) || 0;
-    if (duration > 0) { const time = playbackTimeAt(entry, bounded, duration); activeYoutubePlayer.seekTo(time, true); pendingSetSeek = null; setTimelineProgress(gig, bounded, time, duration); }
-  }
-}
-function seekSetTimeline(ratio, useFullTimeline = false) {
-  const gig = gigs.find((entry) => entry.id === showDetailId);
-  const model = gig ? (useFullTimeline ? playbackTimelineModel(gig) : focusedPlaybackTimelineModel(gig)) : [];
-  if (!model.length) return;
-  const target = playbackCore.seekTarget(model, ratio);
-  if (!target) return;
-  const { segment, fraction, ratio: bounded } = target;
-  const changedTrack = segment.index !== setQueueIndex;
-  setQueueIndex = segment.index;
-  pendingSetSeek = { index: segment.index, fraction: Math.max(0, Math.min(1, fraction)) };
-  setPlayerProgress.style.width = `${bounded * 100}%`;
-  if (changedTrack) playSetTrack(); else applySetSeek(gig, pendingSetSeek.fraction);
-}
-let timelinePointer = null;
-const timelinePointerRatio = (event) => {
-  const rect = setPlayerTimeline.getBoundingClientRect();
-  if (!rect.width) return 0;
-  return Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-};
-setPlayerOverview?.addEventListener('pointerup', (event) => {
-  if (event.target.closest('.set-overview-marker') || !setQueue.length) return;
-  const rect = setPlayerOverview.getBoundingClientRect();
-  if (!rect.width) return;
-  seekSetTimeline(Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), true);
 });
-setTimelineMedia.addEventListener?.('change', (event) => {
-  setTimelineZoom = event.matches ? 3 : 5;
-  const gig = gigs.find((entry) => entry.id === showDetailId);
-  if (gig && setQueue.length) renderSetTimeline(gig);
-});
-setPlayerTimeline?.addEventListener('pointerdown', (event) => {
-  if (event.target.closest('.set-marker') || event.button !== 0) return;
-  timelinePointer = { id: event.pointerId, x: event.clientX, y: event.clientY, scrubbing: false };
-});
-setPlayerTimeline?.addEventListener('pointermove', (event) => {
-  if (!timelinePointer || timelinePointer.id !== event.pointerId) return;
-  const dx = Math.abs(event.clientX - timelinePointer.x);
-  const dy = Math.abs(event.clientY - timelinePointer.y);
-  if (!timelinePointer.scrubbing && dx >= 8 && dx > dy) {
-    timelinePointer.scrubbing = true;
-    setPlayerTimeline.classList.add('is-scrubbing');
-    setPlayerTimeline.setPointerCapture?.(event.pointerId);
-  }
-  if (!timelinePointer.scrubbing) return;
-  setPlayerProgress.style.width = `${timelinePointerRatio(event) * 100}%`;
-});
-setPlayerTimeline?.addEventListener('pointerup', (event) => {
-  if (!timelinePointer || timelinePointer.id !== event.pointerId) return;
-  const pointer = timelinePointer;
-  timelinePointer = null;
-  setPlayerTimeline.classList.remove('is-scrubbing');
-  if (pointer.scrubbing) setPlayerTimeline.releasePointerCapture?.(event.pointerId);
-  else if (Math.abs(event.clientY - pointer.y) > 10) return;
-  seekSetTimeline(timelinePointerRatio(event));
-});
-setPlayerTimeline?.addEventListener('pointercancel', () => {
-  timelinePointer = null;
-  setPlayerTimeline.classList.remove('is-scrubbing');
-});
+playbackTimelineController.bind();
+function setTimelineProgress(gig, mediaFraction = 0, currentSeconds = 0, durationSeconds = 0) { return playbackTimelineController.setProgress(gig, mediaFraction, currentSeconds, durationSeconds); }
+function renderSetTimeline(gig) { return playbackTimelineController.render(gig); }
+function applySetSeek(gig, fraction) { return playbackTimelineController.applySeek(gig, fraction); }
 function loadYouTubeApi() {
   if (window.YT?.Player) return Promise.resolve(window.YT);
   if (!youtubeApiPromise) youtubeApiPromise = new Promise((resolve) => { const previous = window.onYouTubeIframeAPIReady; window.onYouTubeIframeAPIReady = () => { previous?.(); resolve(window.YT); }; const script = document.createElement('script'); script.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(script); });
@@ -1206,7 +1124,7 @@ setPlayerRestart.addEventListener('click', () => {
 });
 theatreController = theatreControllerModule.createController({
   document, window, player: setPlayer, fullscreenButton: setPlayerFullscreen, controlsToggle: setPlayerControlsToggle,
-  theatre: theatreUi, isPlaying: setPlaybackIsPlaying, timelineActive: () => Boolean(timelinePointer),
+  theatre: theatreUi, isPlaying: setPlaybackIsPlaying, timelineActive: playbackTimelineController.isActive,
   requestWakeLock: requestSetPlaybackWakeLock, releaseWakeLock: releaseSetPlaybackWakeLock,
   commands: {
     next: () => moveToPlayableTrack(1), previous: () => moveToPlayableTrack(-1),
