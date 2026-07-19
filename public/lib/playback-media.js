@@ -10,6 +10,13 @@
     } catch { return ''; }
   }
 
+  function youtubeEmbedUrl(url, { autoplay = false, origin = '' } = {}) {
+    const id = youtubeVideoId(url);
+    if (!id) return url;
+    const originQuery = origin ? `&origin=${encodeURIComponent(origin)}` : '';
+    return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?enablejsapi=1&autoplay=${autoplay ? 1 : 0}${originQuery}`;
+  }
+
   function sourcePresentation(entry) {
     const media = entry?.media;
     const kind = media?.mimeType === 'video/youtube' ? 'YouTube' : media ? 'Your upload' : 'No source';
@@ -30,5 +37,5 @@
     return current + preload;
   }
 
-  return { youtubeVideoId, sourcePresentation, stageMarkup };
+  return { youtubeVideoId, youtubeEmbedUrl, sourcePresentation, stageMarkup };
 }));

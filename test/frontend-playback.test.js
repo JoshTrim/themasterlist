@@ -81,6 +81,8 @@ describe('frontend playback media adapters', () => {
   test('parses common YouTube URLs and labels fallback sources', () => {
     assert.equal(mediaUi.youtubeVideoId('https://youtu.be/abc123'), 'abc123');
     assert.equal(mediaUi.youtubeVideoId('https://www.youtube.com/watch?v=xyz789'), 'xyz789');
+    assert.equal(mediaUi.youtubeEmbedUrl('https://youtu.be/abc123', { autoplay: true, origin: 'http://127.0.0.1:3000' }), 'https://www.youtube-nocookie.com/embed/abc123?enablejsapi=1&autoplay=1&origin=http%3A%2F%2F127.0.0.1%3A3000');
+    assert.equal(mediaUi.youtubeEmbedUrl('not a URL'), 'not a URL');
     assert.deepEqual(mediaUi.sourcePresentation({ media: { mimeType: 'video/youtube', caption: 'Full set' }, sourceIndex: 1 }), { kind: 'YouTube · Backup 1', label: 'Full set' });
   });
 

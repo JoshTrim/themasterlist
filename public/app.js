@@ -10,6 +10,7 @@ const youtubeShowSearchModule = window.MasterListYoutubeShowSearch;
 const profileShowListModule = window.MasterListProfileShowList;
 const showFormUiModule = window.MasterListShowFormUi;
 const peerSyncPollerModule = window.MasterListPeerSyncPoller;
+const mediaLightboxModule = window.MasterListMediaLightbox;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -381,26 +382,12 @@ async function addYouTubeMedia(gigId, input) {
   input.value = '';
 }
 
-function youtubeEmbedUrl(url, { autoplay = false } = {}) {
-  try {
-    const parsed = new URL(url);
-    const id = parsed.hostname === 'youtu.be' ? parsed.pathname.slice(1) : parsed.searchParams.get('v') || parsed.pathname.split('/').filter(Boolean).pop();
-    return id ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?enablejsapi=1&autoplay=${autoplay ? 1 : 0}&origin=${encodeURIComponent(window.location.origin)}` : url;
-  } catch { return url; }
-}
-
-function openMediaLightbox(item) {
-  mediaLightbox.hidden = false;
-  mediaLightboxImage.hidden = !item.mimeType.startsWith('image/');
-  mediaLightboxVideo.hidden = !item.mimeType.startsWith('video/');
-  if (mediaLightboxImage.hidden) mediaLightboxVideo.src = item.url; else mediaLightboxImage.src = item.url;
-  mediaLightboxImage.style.transform = `rotate(${item.rotation || 0}deg)`;
-  mediaLightboxVideo.style.transform = 'none';
-  mediaLightboxCaption.textContent = item.caption || item.filename || '';
-}
-
-mediaLightboxClose.addEventListener('click', () => { mediaLightbox.hidden = true; mediaLightboxVideo.pause(); });
-mediaLightbox.addEventListener('click', (event) => { if (event.target === mediaLightbox) mediaLightboxClose.click(); });
+function youtubeEmbedUrl(url, options = {}) { return playbackMedia.youtubeEmbedUrl(url, { ...options, origin: window.location.origin }); }
+const mediaLightboxController = mediaLightboxModule.createController({
+  elements: { lightbox: mediaLightbox, image: mediaLightboxImage, video: mediaLightboxVideo, caption: mediaLightboxCaption, closeButton: mediaLightboxClose }
+});
+mediaLightboxController.bind();
+function openMediaLightbox(item) { return mediaLightboxController.open(item); }
 
 function mediaRecognitionMarkup(item, songs = []) {
   return mediaUi.recognitionMarkup(item, songs, escapeHtml);
