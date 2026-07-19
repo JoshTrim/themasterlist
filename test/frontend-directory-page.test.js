@@ -28,8 +28,8 @@ describe('artist and venue directory page', () => {
     assert.equal(first, second);
   });
 
-  test('renders completion badges and hides source-only venue gaps', () => {
-    assert.match(directoryPage.metadataBadges({ isClosed: false, missingMetadata: [] }, escapeHtml), /Complete/);
+  test('only renders actionable metadata badges and hides source-only venue gaps', () => {
+    assert.equal(directoryPage.metadataBadges({ isClosed: false, missingMetadata: [] }, escapeHtml), '');
     const venue = directoryPage.metadataBadges({ isClosed: true, missingMetadata: ['source', 'bio'] }, escapeHtml, { venue: true });
     assert.match(venue, /Permanently closed/);
     assert.match(venue, /Missing biography/);

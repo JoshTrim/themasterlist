@@ -6,7 +6,7 @@
   function metadataBadges(entity, escapeHtml, { venue = false } = {}) {
     const closed = entity.isClosed ? '<span class="venue-status-closed">Permanently closed</span>' : '';
     const missing = venue ? (entity.missingMetadata || []).filter((field) => field !== 'source') : entity.missingMetadata;
-    if (!venue && !missing.length) return `${closed}<span class="metadata-status-complete">✓ Complete</span>`;
+    if (!missing.length) return closed;
     return closed + missing.map((field) => `<span class="metadata-status-missing">Missing ${escapeHtml(field === 'bio' ? 'biography' : field)}</span>`).join('');
   }
 
