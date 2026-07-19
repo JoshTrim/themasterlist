@@ -20,7 +20,7 @@ test('directory routes fetch and persist artist and venue metadata', async () =>
     fetchArtistInfo: async (name) => ({ name, title: name, imagePosition: 'bad' }), fetchVenueInfo: async (name, city) => ({ name, city, title: name }),
     cachedArtistGenres: () => ({ genres: ['Rock'] }), saveArtistGenres: (_name, genres) => genres,
     normaliseImagePosition: (value) => ['top', 'center', 'bottom'].includes(value) ? value : 'center',
-    saveProfileImageUpload: async () => null, removeReplacedProfileImage: async () => {}, geocoding,
+    profileImages: { save: async () => null, removeReplaced: async () => {} }, geocoding,
     validCoordinates: (lat, lng) => Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180,
     now: () => '2026-07-18T00:00:00.000Z'
   });
