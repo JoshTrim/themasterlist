@@ -34,6 +34,7 @@ const archivePageModule = window.MasterListArchivePage;
 const addShowPageModule = window.MasterListAddShowPage;
 const trackListEditorModule = window.MasterListTrackListEditor;
 const editShowPageModule = window.MasterListEditShowPage;
+const setlistPresentationModule = window.MasterListSetlistPresentation;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1539,52 +1540,11 @@ findAlbumInfo?.addEventListener('click', async () => {
   }
 });
 
-function renderAlbumStats(songs) {
-  const counts = new Map();
-  songs.forEach((song) => { const album = String(song.album || 'Unknown album').trim() || 'Unknown album'; counts.set(album, (counts.get(album) || 0) + 1); });
-  const total = songs.length;
-  const entries = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  return `<div class="album-stats"><p class="eyebrow">Album breakdown</p><div class="album-stat-bar album-stat-bar-stacked">${entries.map(([album, count], index) => `<span class="album-segment album-segment-${index % 8}" style="width:${count / total * 100}%" title="${escapeHtml(album)} · ${Math.round(count / total * 100)}%"></span>`).join('')}</div><div class="album-stat-key">${entries.map(([album, count], index) => `<span><i class="album-key-swatch album-segment-${index % 8}"></i>${escapeHtml(album)} <strong>${Math.round(count / total * 100)}%</strong></span>`).join('')}</div></div>`;
-}
-
-function renderTrackList(songs, albumFallback = 'Album data unavailable') {
-  return songs.map((song) => { const album = String(song.album || albumFallback).trim() || albumFallback; return `<li tabindex="0"><span class="track-title">${escapeHtml(song.title)}</span><span class="album-tooltip">${escapeHtml(album)}</span>${song.encore ? ' <b>Encore</b>' : ''}</li>`; }).join('');
-}
-
-function setupArchiveSetlist(setlist, gig, { fetchAlbums = true } = {}) {
-  const source = gig.setlistFmUrl ? `<a href="${escapeHtml(gig.setlistFmUrl)}" target="_blank" rel="noreferrer">View source on setlist.fm ↗</a>` : '';
-  const tracks = () => `<ol>${renderTrackList(gig.songs || [], fetchAlbums ? 'Loading album…' : 'Album data unavailable')}</ol>${source}`;
-  setlist.innerHTML = `<details class="setlist-accordion"><summary>Setlist <span>${gig.songs.length} tracks</span></summary><div class="setlist-accordion-content">${tracks()}</div></details>`;
-  const needsAlbumLookup = gig.songs.some((song) => !String(song.album || '').trim() || /^unknown album$/i.test(String(song.album).trim()));
-  if (!fetchAlbums || !needsAlbumLookup) return;
-  const details = setlist.querySelector('.setlist-accordion');
-  details.addEventListener('toggle', async () => {
-    if (!details.open || details.dataset.albumLoad) return;
-    details.dataset.albumLoad = 'loading';
-    try {
-      const data = await fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats`);
-      gig.songs = data.songs;
-      details.querySelector('.setlist-accordion-content').innerHTML = tracks();
-      details.dataset.albumLoad = 'complete';
-    } catch {
-      details.dataset.albumLoad = 'error';
-      details.querySelectorAll('.album-tooltip').forEach((tooltip) => { if (tooltip.textContent === 'Loading album…') tooltip.textContent = 'Album data unavailable'; });
-    }
-  });
-}
-
-document.addEventListener('click', (event) => {
-  const track = event.target.closest('.setlist li[tabindex]');
-  document.querySelectorAll('.setlist li.tooltip-open').forEach((item) => { if (item !== track) item.classList.remove('tooltip-open'); });
-  if (track) track.classList.toggle('tooltip-open');
-});
-document.addEventListener('keydown', (event) => {
-  if (!['Enter', ' '].includes(event.key)) return;
-  const track = event.target.closest('.setlist li[tabindex]');
-  if (!track) return;
-  event.preventDefault();
-  track.click();
-});
+const setlistPresenter = setlistPresentationModule.createController({ document, fetchJson, escapeHtml });
+setlistPresenter.bindTooltips();
+function renderAlbumStats(songs) { return setlistPresenter.albumStats(songs); }
+function renderTrackList(songs, albumFallback = 'Album data unavailable') { return setlistPresenter.trackList(songs, albumFallback); }
+function setupArchiveSetlist(setlist, gig, options = {}) { return setlistPresenter.setupArchive(setlist, gig, options); }
 
 function stopYoutubeTimelinePolling() { if (youtubeTimelineTimer) { clearInterval(youtubeTimelineTimer); youtubeTimelineTimer = null; } }
 function clearSetSourceLoadTimer() { if (setSourceLoadTimer) { clearTimeout(setSourceLoadTimer); setSourceLoadTimer = null; } }
