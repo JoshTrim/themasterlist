@@ -83,6 +83,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `archive-page.js` — show archive filtering, local/remote card orchestration, artist images and year controls.
 - `add-show-page.js` — setlist search and selection, duplicate checks, show creation, uploads and form reset state.
 - `track-list-editor.js` — metadata-safe setlist field editing, add/remove controls and pointer, keyboard or native drag reordering.
+- `edit-show-page.js` — edit form hydration, duplicate checks, attendee/media coordination and metadata-safe show persistence.
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 

@@ -33,6 +33,7 @@ const sharedShowsPageModule = window.MasterListSharedShowsPage;
 const archivePageModule = window.MasterListArchivePage;
 const addShowPageModule = window.MasterListAddShowPage;
 const trackListEditorModule = window.MasterListTrackListEditor;
+const editShowPageModule = window.MasterListEditShowPage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -668,10 +669,6 @@ function confirmDuplicateSave(container, values, excludeId = '') {
   const matches = showDuplicateWarning(container, values, excludeId);
   return !matches.length || window.confirm(`${matches.length} matching show ${matches.length === 1 ? 'already exists' : 'entries already exist'}. Save another copy anyway?`);
 }
-
-['artist', 'venue', 'city', 'date'].forEach((name) => {
-  editForm?.elements[name]?.addEventListener('input', () => showDuplicateWarning(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), editGigId));
-});
 
 function renderAttendeePicker(container, selected = []) {
   if (!container) return;
@@ -1449,53 +1446,41 @@ const editTrackListController = trackListEditorModule.createController({
 });
 editTrackListController.bind();
 
-function renderEditPage() {
-  if (page !== 'edit') return;
-  const gig = gigs.find((entry) => entry.id === editGigId);
-  if (!gig) { editMessage.textContent = 'Show not found.'; editMessage.classList.add('error'); return; }
-  if (!editMediaInput.dataset.immediateUpload) {
+const editShowPageController = editShowPageModule.createController({
+  page, gigId: editGigId, FormDataClass: FormData, fetchJson, editor: showEditor, workflow: showFormController, trackEditor: editTrackListController,
+  getGigs: () => gigs, onGigs: (nextGigs) => { gigs = nextGigs; },
+  setupImmediateUpload: (gig) => {
+    if (editMediaInput.dataset.immediateUpload) return;
     editMediaInput.dataset.immediateUpload = 'true';
     if (isMobileUpload) {
       const state = mobileUploadStateFor(editMediaInput, gig.id);
       state.onUploaded = (item) => { editMessage.textContent = `${item.name} uploaded.`; editMessage.classList.remove('error'); };
       state.onDrained = async () => { await pollMediaRecognition(gig.id, (refreshed) => renderEditMediaWorkspace(gig, refreshed)); };
       startMobileUploadQueue(editMediaInput, gig.id, state.onUploaded, state.onDrained);
-    } else editMediaInput.addEventListener('change', async () => { const files = pendingMedia.get(editMediaInput) || [...(editMediaInput.files || [])]; if (!files.length) return; editMessage.textContent = `Uploading ${files.length} file${files.length === 1 ? '' : 's'}…`; try { await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; }); pendingMedia.set(editMediaInput, []); editMediaInput.value = ''; editMessage.textContent = 'Media uploaded.'; const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`); renderEditMediaWorkspace(gig, refreshed); } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); } });
-  }
-  editForm.elements.artist.value = gig.artist;
-  editForm.elements.date.value = gig.date;
-  editForm.elements.venue.value = gig.venue;
-  editForm.elements.city.value = gig.city;
-  showDuplicateWarning(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), gig.id);
-  editTrackListController.load(gig.songs || []);
-  renderEditMediaWorkspace(gig, gig.media);
-  renderAttendeePicker(ensureEditAttendeePicker(), gig.attendees || []);
-  editForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const submitButton = editForm.querySelector('button[type="submit"]');
-    try {
-      if (!confirmDuplicateSave(editDuplicateWarning, Object.fromEntries(new FormData(editForm).entries()), gig.id)) return;
-      submitButton.disabled = true;
-      const tracks = editTrackListController.sync();
-      const update = showEditor.createEditPayload(Object.fromEntries(new FormData(editForm).entries()), { attendees: readAttendees(ensureEditAttendeePicker()), songs: tracks });
-      const files = pendingMedia.get(editMediaInput) || [...(editMediaInput?.files || [])];
-      const { saved, media } = await showFormController.updateShow({
-        gig, update, mediaFiles: files,
-        saveShow: (record, payload) => fetchJson(`/api/gigs/${record.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }),
-        uploadFiles: (record, uploads) => uploadGigMedia(record.id, uploads, (file, fraction) => { editMessage.textContent = fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; }),
-        addExternalMedia: (record) => addYouTubeMedia(record.id, editYoutubeMediaInput),
-        refreshMedia: (record) => fetchJson(`/api/gigs/${record.id}/media`)
-      });
-      Object.assign(gig, saved);
-      gigs = gigs.map((entry) => entry.id === gig.id ? gig : entry);
-      editMessage.textContent = files.length ? 'Show and media saved.' : 'Show saved.';
-      editMessage.classList.remove('error');
-      editMediaInput.value = '';
-      renderEditMediaWorkspace(gig, media);
-      renderGigs();
-    } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); } finally { submitButton.disabled = false; }
-  });
-}
+    } else editMediaInput.addEventListener('change', async () => {
+      const files = pendingMedia.get(editMediaInput) || [...(editMediaInput.files || [])];
+      if (!files.length) return;
+      editMessage.textContent = `Uploading ${files.length} file${files.length === 1 ? '' : 's'}…`;
+      try {
+        await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; });
+        pendingMedia.set(editMediaInput, []);
+        editMediaInput.value = '';
+        editMessage.textContent = 'Media uploaded.';
+        renderEditMediaWorkspace(gig, await fetchJson(`/api/gigs/${gig.id}/media`));
+      } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); }
+    });
+  },
+  showDuplicateWarning, confirmDuplicateSave, ensureAttendeePicker: ensureEditAttendeePicker,
+  renderAttendees: renderAttendeePicker, readAttendees,
+  renderMediaWorkspace: renderEditMediaWorkspace,
+  getMediaFiles: () => pendingMedia.get(editMediaInput) || [...(editMediaInput?.files || [])],
+  uploadFiles: (record, uploads) => uploadGigMedia(record.id, uploads, (file, fraction) => { editMessage.textContent = fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; }),
+  addExternalMedia: (record) => addYouTubeMedia(record.id, editYoutubeMediaInput),
+  renderArchive: renderGigs,
+  elements: { form: editForm, message: editMessage, mediaInput: editMediaInput, duplicateWarning: editDuplicateWarning }
+});
+editShowPageController.bind();
+function renderEditPage() { return editShowPageController.render(); }
 
 function renderShowPage() {
   if (!['show', 'playback'].includes(page)) return;
