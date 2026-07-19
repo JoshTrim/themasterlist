@@ -57,6 +57,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `page-controllers.js` — route-to-page action registry, OAuth result messaging and page-specific initialization ordering.
 - `edit-media-upload.js` — edit-page mobile/desktop upload setup, progress, recognition polling and workspace refreshes.
 - `youtube-player-api.js` — deduplicated iframe API script loading, callback chaining and recoverable load failures.
+- `add-media-upload.js` — add-page queued mobile uploads, save-time progress and post-upload recognition refreshes.
 - `playback-editor.js` — playback-plan validation, normalized clip payloads and suggestion presentation state.
 - `playback-editor-controller.js` — playback previews, fallback sources, draft preservation, suggestions, validation and plan persistence.
 - `playback-timeline-controller.js` — focused/full-set timeline rendering, pointer scrubbing and media-time seeking.

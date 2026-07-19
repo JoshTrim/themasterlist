@@ -15,6 +15,7 @@ const appBootstrapModule = window.MasterListAppBootstrap;
 const pageControllersModule = window.MasterListPageControllers;
 const editMediaUploadModule = window.MasterListEditMediaUpload;
 const youtubePlayerApiModule = window.MasterListYoutubePlayerApi;
+const addMediaUploadModule = window.MasterListAddMediaUpload;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -680,21 +681,21 @@ const peerSettingsController = peerSettingsModule.createController({
 });
 peerSettingsController.bind();
 async function renderInstanceSettings() { if (account) return peerSettingsController.render(); }
+const addMediaUploadController = addMediaUploadModule.createController({
+  input: mediaInput, pendingFiles: pendingMedia, mobileState: mobileUploadStateFor,
+  startMobileQueue: startMobileUploadQueue, pollRecognition: pollMediaRecognition,
+  uploadFiles: uploadGigMedia, setMessage,
+  onRecognized: (record, media) => { gigs = gigs.map((entry) => entry.id === record.id ? { ...entry, media } : entry); renderGigs(); }
+});
 const addShowPageController = addShowPageModule.createController({
   URLSearchParamsClass: URLSearchParams, FormDataClass: FormData, fetchJson, escapeHtml,
   editor: showEditor, workflow: showFormController,
   getAttendees: () => readAttendees(addAttendeePicker),
-  getMediaFiles: () => pendingMedia.get(mediaInput) || [...(mediaInput?.files || [])],
+  getMediaFiles: addMediaUploadController.files,
   isMobile: () => isMobileUpload,
   confirmDuplicateSave, showDuplicateWarning,
-  queueMobileUploads: async (record) => {
-    const uploadState = mobileUploadStateFor(mediaInput, record.id);
-    uploadState.releaseAfterDrain = true;
-    startMobileUploadQueue(mediaInput, record.id, (item) => setMessage(`${item.name} uploaded. Continuing the queue…`), async () => {
-      try { await pollMediaRecognition(record.id, (refreshed) => { gigs = gigs.map((entry) => entry.id === record.id ? { ...entry, media: refreshed } : entry); renderGigs(); }); } catch { /* the upload itself already succeeded */ }
-    });
-  },
-  uploadFiles: (record, uploads) => uploadGigMedia(record.id, uploads, (file, fraction) => setMessage(fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`)),
+  queueMobileUploads: addMediaUploadController.queueMobile,
+  uploadFiles: addMediaUploadController.uploadForSave,
   addExternalMedia: (record) => addYouTubeMedia(record.id, youtubeMediaInput),
   onSaved: (saved) => { gigs.unshift(saved); },
   afterSaved: async () => { renderGigs(); await loadPersistentJobs(); await renderDashboardStats(); },
