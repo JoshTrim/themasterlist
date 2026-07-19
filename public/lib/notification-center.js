@@ -15,6 +15,15 @@
     return `<article class="peer-notification" data-notification-id="${escapeHtml(notification.id)}"><a href="${notificationHref(notification)}"><strong>${escapeHtml(notification.title)}</strong><span>${escapeHtml(notification.body || '')}</span></a><button type="button" aria-label="Dismiss notification">×</button></article>`;
   }
 
+  function createPanel(document) {
+    const panel = document.createElement('aside');
+    panel.className = 'peer-notifications';
+    panel.hidden = true;
+    panel.innerHTML = '<p class="eyebrow">From your peers</p><div class="peer-notification-list"></div>';
+    document.body.append(panel);
+    return panel;
+  }
+
   function createController({ fetchJson, escapeHtml, navigate, getAccount, elements }) {
     const { panel, activityCount, conflictCount } = elements;
     const list = panel.querySelector('.peer-notification-list');
@@ -65,5 +74,5 @@
     return { render, load, loadConflicts };
   }
 
-  return { badgeText, notificationHref, notificationMarkup, createController };
+  return { badgeText, notificationHref, notificationMarkup, createPanel, createController };
 }));

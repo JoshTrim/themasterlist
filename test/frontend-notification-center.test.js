@@ -17,6 +17,17 @@ function fixture() {
 }
 
 describe('peer notification center', () => {
+  test('creates the hidden peer notification panel in the document body', () => {
+    const appended = [];
+    const panel = {};
+    const document = { createElement: (tag) => { assert.equal(tag, 'aside'); return panel; }, body: { append: (element) => appended.push(element) } };
+    assert.equal(notifications.createPanel(document), panel);
+    assert.equal(panel.className, 'peer-notifications');
+    assert.equal(panel.hidden, true);
+    assert.match(panel.innerHTML, /From your peers/);
+    assert.deepEqual(appended, [panel]);
+  });
+
   test('builds conflict and shared-show destinations safely', () => {
     assert.equal(notifications.notificationHref({ type: 'peer-sync-conflict' }), '/conflicts');
     assert.equal(notifications.notificationHref({ type: 'peer-show', sharedGigId: 'gig one' }), '/shows#shared-gig%20one');

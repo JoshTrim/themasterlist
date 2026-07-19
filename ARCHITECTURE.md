@@ -94,7 +94,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `playlist-export.js` — provider readiness, OAuth redirects, MusicKit authorization and playlist export results.
 - `auth-controller.js` — setup, login, invite registration, logout and account credential updates.
 - `peer-settings.js` — paired-instance identity, invite exchange, connection tests, synchronization and removal.
-- `notification-center.js` — peer notification popover, navigation badges, read state and conflict counts.
+- `notification-center.js` — peer notification panel, navigation badges, read state and conflict counts.
 - `shared-shows-page.js` — shared-show grouping, attendee contribution summaries and review rating controls.
 - `archive-page.js` — show archive filtering, local/remote card orchestration, artist images and year controls.
 - `add-show-page.js` — setlist search and selection, duplicate checks, show creation, uploads and form reset state.

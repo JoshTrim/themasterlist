@@ -63,7 +63,7 @@ const jobUi = window.MasterListJobs.createJobQueue({ document, fetchJson, escape
 const jobQueue = jobUi.queue;
 const updateJob = jobUi.update;
 const loadPersistentJobs = jobUi.loadPersistent;
-const notificationPanel = document.createElement('aside'); notificationPanel.className = 'peer-notifications'; notificationPanel.hidden = true; notificationPanel.innerHTML = '<p class="eyebrow">From your peers</p><div class="peer-notification-list"></div>'; document.body.append(notificationPanel);
+const notificationPanel = notificationCenterModule.createPanel(document);
 const uploadLeaveGuard = uploadLeaveGuardModule.createGuard({ window, jobQueue, isMobileBusy: () => mobileUploadController.isBusy(editMediaInput) });
 uploadLeaveGuard.bind();
 const message = document.querySelector('#form-message');
