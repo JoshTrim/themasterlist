@@ -18,6 +18,7 @@ const timelinePageModule = window.MasterListTimelinePage;
 const overviewPageModule = window.MasterListOverviewPage;
 const entityProfilePageModule = window.MasterListEntityProfilePage;
 const metadataEditorModule = window.MasterListMetadataEditor;
+const apiLimitsPageModule = window.MasterListApiLimitsPage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -1554,36 +1555,11 @@ const archiveSearchController = archiveSearchModule.createSearchController({
   summary: globalSearchSummary, results: globalSearchResults
 });
 function renderGlobalSearch() { return archiveSearchController.render(); }
-function formatApiTime(value) {
-  if (!value) return 'No requests today';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-async function renderApiLimits() {
-  if (page !== 'api-limits' || !apiLimitsGrid) return;
-  try {
-    const data = await fetchJson('/api/limits');
-    apiLimitsNote.textContent = `Tracking window: ${data.day} (YouTube quota resets at midnight Pacific Time). These figures are local estimates, not provider billing data.`;
-    apiLimitsGrid.innerHTML = data.providers.map((provider) => {
-      const hasLimit = provider.limit !== null;
-      const percent = hasLimit ? Math.min(100, (provider.units / provider.limit) * 100) : 0;
-      const status = provider.configured ? 'Configured' : 'Not configured';
-      const usage = hasLimit ? `${provider.units.toLocaleString()} / ${provider.limit.toLocaleString()} ${provider.unit}` : `${provider.requests.toLocaleString()} ${provider.unit}`;
-      const remaining = hasLimit ? `<strong>${provider.remaining.toLocaleString()}</strong> ${provider.unit} estimated remaining` : `${provider.errors ? `${provider.errors} error${provider.errors === 1 ? '' : 's'} today` : 'No error responses today'}`;
-      return `<article class="api-limit-card"><div class="api-limit-card-heading"><div><p class="eyebrow">${escapeHtml(status)}</p><h2>${escapeHtml(provider.name)}</h2></div><span class="api-limit-status">${escapeHtml(provider.reset)}</span></div><div class="api-limit-usage"><strong>${escapeHtml(usage)}</strong><span>${escapeHtml(remaining)}</span></div>${hasLimit ? `<div class="api-limit-bar" aria-label="${Math.round(percent)} percent used"><i style="width:${percent}%"></i></div>` : ''}<p>${escapeHtml(provider.note)}</p><small>Last request: ${escapeHtml(formatApiTime(provider.lastRequest))}</small></article>`;
-    }).join('');
-    const trackedOperations = data.operations.filter((entry) => entry.requests > 0);
-    const operationMarkup = trackedOperations.length ? `<div><p class="eyebrow">Today by operation</p><div class="api-usage-list">${trackedOperations.map((entry) => `<span><b>${escapeHtml(entry.provider)}</b> · ${escapeHtml(entry.operation)} <em>${Number(entry.units).toLocaleString()} units · ${entry.requests} call${entry.requests === 1 ? '' : 's'}</em></span>`).join('')}</div></div>` : '';
-    const recentMarkup = data.recent.length ? `<div><p class="eyebrow">Recent tracked calls</p><div class="api-usage-list">${data.recent.map((entry) => `<span><b>${escapeHtml(entry.provider)}</b> · ${escapeHtml(entry.operation)} <em>${entry.units ? `${entry.units} units` : 'auth'} · ${formatApiTime(entry.requestedAt)}${entry.status ? ` · HTTP ${entry.status}` : ''}</em></span>`).join('')}</div></div>` : '';
-    apiUsageDetail.innerHTML = `${operationMarkup}${recentMarkup}`;
-  } catch (error) {
-    apiLimitsNote.textContent = account ? error.message : 'Sign in to view tracked API usage.';
-    apiLimitsNote.classList.add('error');
-    apiLimitsGrid.innerHTML = '';
-    apiUsageDetail.innerHTML = '';
-  }
-}
+const apiLimitsPageController = apiLimitsPageModule.createController({
+  page, fetchJson, getAccount: () => account, escapeHtml,
+  elements: { grid: apiLimitsGrid, note: apiLimitsNote, detail: apiUsageDetail }
+});
+function renderApiLimits() { return apiLimitsPageController.render(); }
 
 function renderIntegrity(data) {
   if (!integrityList) return;
