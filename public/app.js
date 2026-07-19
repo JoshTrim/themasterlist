@@ -38,6 +38,7 @@ const setlistPresentationModule = window.MasterListSetlistPresentation;
 const showDetailPageModule = window.MasterListShowDetailPage;
 const mobileUploadControllerModule = window.MasterListMobileUploadController;
 const formatUploadSize = mobileUploadControllerModule.formatSize;
+const mediaWorkspaceControllerModule = window.MasterListMediaWorkspaceController;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -684,91 +685,14 @@ const mediaGalleryController = mediaGalleryModule.createGallery({
 function renderMediaGallery(container, media = [], options = {}) {
   return mediaGalleryController.render(container, media, options);
 }
-let mediaWorkspaceFilter = 'all';
-let activeEditGig = null;
-
-function mediaWorkspaceState(item) {
-  return mediaUi.workspaceState(item);
-}
-
-function applyMediaWorkspaceFilter() {
-  if (!editGallery || !mediaWorkspaceEmpty) return;
-  let visible = 0;
-  editGallery.querySelectorAll('.media-item').forEach((card) => {
-    const show = mediaWorkspaceFilter === 'all' || card.dataset.processingState === mediaWorkspaceFilter;
-    card.hidden = !show;
-    if (show) visible += 1;
-  });
-  mediaWorkspaceEmpty.hidden = visible > 0;
-  mediaWorkspaceFilters?.querySelectorAll('button').forEach((button) => button.classList.toggle('active', button.dataset.mediaFilter === mediaWorkspaceFilter));
-}
-
-async function refreshEditMediaWorkspace(gig = activeEditGig) {
-  if (!gig) return;
-  const refreshed = await fetchJson(`/api/gigs/${gig.id}/media`);
-  gig.media = refreshed;
-  renderEditMediaWorkspace(gig, refreshed);
-}
-
-function decorateMediaWorkspace(container, media, gig) {
-  const totals = mediaUi.workspaceTotals(media);
-  mediaWorkspaceStats.innerHTML = `<span><b>${totals.all}</b>Total</span><span><b>${totals.processing}</b>Processing</span><span><b>${totals.failed}</b>Needs attention</span><span><b>${totals.unassigned}</b>Unassigned</span><span><b>${totals.ready}</b>Ready</span>`;
-  container.querySelectorAll('.media-item').forEach((card) => {
-    const item = media.find((entry) => entry.id === card.dataset.mediaId);
-    if (!item) return;
-    const state = mediaWorkspaceState(item);
-    card.dataset.processingState = state.key;
-    const health = document.createElement('div');
-    health.className = `media-processing-state is-${state.key}`;
-    const sizeLine = item.mimeType === 'video/youtube' ? 'YouTube embed' : `${formatUploadSize(item.size || 0)} original${item.playbackSize ? ` · ${formatUploadSize(item.playbackSize)} playback` : ''}`;
-    health.innerHTML = `<div><span class="media-processing-badge">${escapeHtml(state.label)}</span><small>${escapeHtml(sizeLine)}</small></div><p>${escapeHtml(state.detail)}</p><div class="media-processing-actions"></div>`;
-    const actions = health.querySelector('.media-processing-actions');
-    const uploadedVideo = String(item.mimeType || '').startsWith('video/') && item.mimeType !== 'video/youtube';
-    if (uploadedVideo && item.originalExists !== false && ['error', 'not_started'].includes(item.playbackStatus)) {
-      const retryEncode = document.createElement('button');
-      retryEncode.type = 'button'; retryEncode.textContent = item.playbackStatus === 'not_started' ? 'Create playback copy' : 'Retry playback copy';
-      retryEncode.addEventListener('click', async () => {
-        retryEncode.disabled = true; retryEncode.textContent = 'Queued…';
-        try {
-          const job = await fetchJson(`/api/media/${item.id}/retry-encode`, { method: 'POST' });
-          updateJob(job.jobId, { id: job.jobId, type: 'Encode video', name: item.caption || item.filename, status: 'running', progress: 1 });
-          const status = await mediaJobs.poll({ fetchStatus: () => fetchJson(`/api/jobs/${job.jobId}`), onUpdate: (current) => updateJob(job.jobId, current) });
-          if (status.status === 'error') throw new Error(status.error || 'Playback encoding failed.');
-          await refreshEditMediaWorkspace(gig);
-        } catch (error) { retryEncode.disabled = false; retryEncode.textContent = error.message; }
-      });
-      actions.append(retryEncode);
-    }
-    if (uploadedVideo && item.originalExists !== false && !['queued', 'running'].includes(item.recognitionStatus)) {
-      const detectRecognition = document.createElement('button');
-      const detectionLabel = item.recognitionStatus === 'error' ? 'Retry audio detection' : item.recognitionTitle ? 'Detect audio again' : 'Detect audio';
-      detectRecognition.type = 'button'; detectRecognition.textContent = detectionLabel;
-      detectRecognition.addEventListener('click', async () => {
-        detectRecognition.disabled = true; detectRecognition.textContent = 'Detecting…';
-        try {
-          await fetchJson(`/api/media/${item.id}/retry-recognition`, { method: 'POST' });
-          await pollMediaRecognition(gig.id, (refreshed) => { gig.media = refreshed; renderEditMediaWorkspace(gig, refreshed); });
-        } catch (error) { detectRecognition.disabled = false; detectRecognition.textContent = error.message; }
-      });
-      actions.append(detectRecognition);
-    }
-    if (!actions.childElementCount) actions.remove();
-    card.querySelector('figcaption')?.insertAdjacentElement('afterend', health);
-  });
-  applyMediaWorkspaceFilter();
-}
-
-function renderEditMediaWorkspace(gig, media = []) {
-  if (!editGallery || !mediaWorkspaceStats) return;
-  activeEditGig = gig;
-  gig.media = media;
-  renderMediaGallery(editGallery, media, {
-    editable: true,
-    songs: gig.songs || [],
-    onDelete: (removed) => { const ids = new Set(removed.map((item) => item.id)); gig.media = gig.media.filter((item) => !ids.has(item.id)); },
-    afterRender: (container, current) => { decorateMediaWorkspace(container, current, gig); renderPlaybackEditor(gig); }
-  });
-}
+const mediaWorkspaceController = mediaWorkspaceControllerModule.createController({
+  document, fetchJson, escapeHtml, formatSize: formatUploadSize, mediaUi, mediaJobs, updateJob,
+  pollRecognition: pollMediaRecognition, renderGallery: renderMediaGallery, renderPlaybackEditor,
+  elements: { gallery: editGallery, stats: mediaWorkspaceStats, filters: mediaWorkspaceFilters, empty: mediaWorkspaceEmpty, refreshButton: mediaWorkspaceRefresh }
+});
+mediaWorkspaceController.bind();
+function refreshEditMediaWorkspace(gig) { return mediaWorkspaceController.refresh(gig); }
+function renderEditMediaWorkspace(gig, media = []) { return mediaWorkspaceController.render(gig, media); }
 
 function playbackSourceLabel(item) {
   return playbackCore.sourceLabel(item);
@@ -1143,12 +1067,6 @@ autoBuildPlaybackPlan?.addEventListener('click', async () => {
     autoBuildPlaybackPlan.disabled = false;
     autoBuildPlaybackPlan.textContent = '✦ Suggest plan';
   }
-});
-
-mediaWorkspaceFilters?.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => { mediaWorkspaceFilter = button.dataset.mediaFilter; applyMediaWorkspaceFilter(); }));
-mediaWorkspaceRefresh?.addEventListener('click', async () => {
-  mediaWorkspaceRefresh.disabled = true; mediaWorkspaceRefresh.textContent = 'Refreshing…';
-  try { await refreshEditMediaWorkspace(); } finally { mediaWorkspaceRefresh.disabled = false; mediaWorkspaceRefresh.textContent = 'Refresh status'; }
 });
 
 function attendeeNames(gig) {

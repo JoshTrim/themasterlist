@@ -87,6 +87,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `setlist-presentation.js` — track tooltips, album breakdowns and lazy album hydration for archive setlists.
 - `show-detail-page.js` — show-memory header, facts, setlist hydration, album repair and media/artifact presentation.
 - `mobile-upload-controller.js` — sequential per-input upload queues, progress/retry state, wake locks and pending-file clearing.
+- `media-workspace-controller.js` — edit-page media health summaries, filtering, retry actions, recognition and gallery refreshes.
 - `api-client.js` — consistent JSON response parsing and API error objects.
 - `page-runtime.js` — route-specific data requirements, controller dispatch and lazy third-party assets.
 
