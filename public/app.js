@@ -30,6 +30,7 @@ const authControllerModule = window.MasterListAuthController;
 const peerSettingsModule = window.MasterListPeerSettings;
 const notificationCenterModule = window.MasterListNotificationCenter;
 const sharedShowsPageModule = window.MasterListSharedShowsPage;
+const archivePageModule = window.MasterListArchivePage;
 const pageRuntime = window.MasterListPageRuntime;
 const apiClient = window.MasterListApiClient.createApiClient({ fetch: (...args) => window.fetch(...args) });
 const { toggle: mobileMenuToggle, nav: siteNav } = window.MasterListNavigation.initNavigation({ document, location: window.location });
@@ -152,7 +153,6 @@ let integrations = {};
 let profiles = [];
 let peers = [];
 let sharedShows = [];
-const archiveArtistImageCache = new Map();
 let activeProfileId = '';
 let account = null;
 
@@ -2101,125 +2101,20 @@ form.addEventListener('submit', async (event) => {
   } finally { submitButton.disabled = false; }
 });
 
-function remoteSharedArchiveShows() {
-  const localIds = new Set(gigs.flatMap((gig) => [gig.id, gig.sharedId].filter(Boolean)));
-  return sharedShows.filter((show) => show.contributions?.length && !localIds.has(show.id) && !localIds.has(show.sourceGigId));
-}
+const archivePageController = archivePageModule.createController({
+  window, document, OptionClass: Option, fetchJson, escapeHtml, formatDate: formatGigDate,
+  showsModule: window.MasterListShows, cardsModule: window.MasterListShowCards,
+  getState: () => ({ gigs, sharedShows }), onGigs: (nextGigs) => { gigs = nextGigs; }, setMessage,
+  renderAttendeeSummary, setupSetlist: setupArchiveSetlist, setupExports: setupExportButtons, renderMediaGallery,
+  elements: { count, stats: archiveStats, list: gigList, empty: emptyState, queryInput: showFilter, yearInput: yearFilter, sortInput: sortFilter, favouriteInput: favouriteFilter, template: document.querySelector('#gig-template') }
+});
+archivePageController.bind();
+function remoteSharedArchiveShows() { return archivePageController.remoteShows(); }
+function setupShowMediaSection(card, media = [], options = {}) { return archivePageController.setupMedia(card, media, options); }
+function setupArtifactSection(card, gig) { return archivePageController.setupArtifacts(card, gig); }
+function setupArchiveArtistVisual(card, artist) { return archivePageController.setupArtistVisual(card, artist); }
 
-function setupShowMediaSection(card, media = [], options = {}) {
-  window.MasterListShowCards.setupMediaSection(card, media, options, renderMediaGallery);
-}
-
-function setupArtifactSection(card, gig) {
-  window.MasterListShowCards.setupArtifactSection(card, gig, renderMediaGallery);
-}
-
-function setupArchiveArtistVisual(card, artist) {
-  const article = card.querySelector('.gig-card');
-  const date = card.querySelector('.gig-date');
-  if (!article || !date) return;
-  const visual = document.createElement('div');
-  visual.className = 'gig-artist-visual';
-  const link = document.createElement('a');
-  link.className = 'gig-artist-image';
-  link.href = `/artist?name=${encodeURIComponent(artist)}`;
-  link.setAttribute('aria-label', `View ${artist}`);
-  const initials = artist.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '♪';
-  link.innerHTML = `<span aria-hidden="true">${escapeHtml(initials)}</span><img alt="" loading="lazy" decoding="async" hidden>`;
-  visual.append(link, date);
-  article.prepend(visual);
-  article.dataset.artistName = artist;
-}
-
-async function artistImageForArchive(artist) {
-  const key = artist.trim().toLocaleLowerCase();
-  if (!archiveArtistImageCache.has(key)) {
-    archiveArtistImageCache.set(key, fetchJson(`/api/artists?name=${encodeURIComponent(artist)}`)
-      .then((info) => info.image || '')
-      .catch(() => ''));
-  }
-  return archiveArtistImageCache.get(key);
-}
-
-function hydrateArchiveArtistImages() {
-  const visuals = [...gigList.querySelectorAll('.gig-card[data-artist-name] .gig-artist-image')];
-  const artists = new Map();
-  for (const visual of visuals) {
-    const artist = visual.closest('.gig-card')?.dataset.artistName;
-    if (!artist) continue;
-    const key = artist.trim().toLocaleLowerCase();
-    if (!artists.has(key)) artists.set(key, { artist, visuals: [] });
-    artists.get(key).visuals.push(visual);
-  }
-  for (const { artist, visuals: artistVisuals } of artists.values()) {
-    artistImageForArchive(artist).then((imageUrl) => {
-      if (!imageUrl) return;
-      for (const visual of artistVisuals) {
-        if (!visual.isConnected) continue;
-        const image = visual.querySelector('img');
-        image.addEventListener('load', () => visual.classList.add('has-image'), { once: true });
-        image.addEventListener('error', () => {
-          visual.classList.remove('has-image');
-          image.hidden = true;
-          image.removeAttribute('src');
-        }, { once: true });
-        image.hidden = false;
-        image.src = imageUrl;
-      }
-    });
-  }
-}
-
-function renderRemoteSharedGig(show) {
-  return window.MasterListShowCards.createRemoteCard({ template: document.querySelector('#gig-template'), show, formatGigDate, escapeHtml, setupArtistVisual: setupArchiveArtistVisual, setupSetlist: setupArchiveSetlist });
-}
-
-function renderGigs() {
-  const remoteShows = remoteSharedArchiveShows();
-  const allShows = [...gigs, ...remoteShows];
-  const stats = window.MasterListShows.archiveStats(gigs, remoteShows);
-  count.textContent = `${allShows.length} show${allShows.length === 1 ? '' : 's'}`;
-  archiveStats.innerHTML = `<span>${stats.shows} shows</span><span>${stats.artists} artists</span><span>${stats.venues} venues</span><span>${stats.favourites} favourites</span><span>${stats.songs} songs</span>`;
-  const query = showFilter?.value.trim().toLowerCase() || '';
-  const year = yearFilter?.value || '';
-  const sort = sortFilter?.value || 'newest';
-  const { local: orderedGigs, remote: orderedRemoteShows } = window.MasterListShows.selectArchiveShows({ gigs, remoteShows, query, year, favouritesOnly: Boolean(favouriteFilter?.checked), sort });
-  const { compareDates } = window.MasterListShows;
-  emptyState.hidden = Boolean(orderedGigs.length || orderedRemoteShows.length);
-  gigList.replaceChildren();
-  for (const gig of orderedGigs) {
-    const card = window.MasterListShowCards.createLocalCard({
-      document,
-      template: document.querySelector('#gig-template'),
-      gig,
-      sharedShows,
-      formatGigDate,
-      escapeHtml,
-      setupArtistVisual: setupArchiveArtistVisual,
-      renderAttendeeSummary,
-      setupSetlist: setupArchiveSetlist,
-      setupExports: setupExportButtons,
-      setupMedia: setupShowMediaSection,
-      setupArtifacts: setupArtifactSection,
-      patchGig: (id, body) => fetchJson(`/api/gigs/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
-      deleteGig: (id) => fetchJson(`/api/gigs/${id}`, { method: 'DELETE' }),
-      onUpdate: (updated) => { gigs = gigs.map((entry) => entry.id === updated.id ? updated : entry); renderGigs(); },
-      onDelete: (removed) => { gigs = gigs.filter((item) => item.id !== removed.id); renderGigs(); },
-      onError: (error) => setMessage(error.message, true),
-      confirm: window.confirm.bind(window)
-    });
-    gigList.append(card);
-  }
-  for (const show of orderedRemoteShows) gigList.append(renderRemoteSharedGig(show));
-  const cards = [...gigList.children].sort((a, b) => sort === 'oldest'
-    ? compareDates(a.dataset.showDate, b.dataset.showDate, true)
-    : sort === 'rating'
-      ? Number(b.dataset.showRating || 0) - Number(a.dataset.showRating || 0) || compareDates(a.dataset.showDate, b.dataset.showDate)
-      : compareDates(a.dataset.showDate, b.dataset.showDate));
-  gigList.append(...cards);
-  hydrateArchiveArtistImages();
-  if (window.location.hash.startsWith('#shared-')) requestAnimationFrame(() => document.querySelector(window.location.hash)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
-}
+function renderGigs() { return archivePageController.render(); }
 
 const cityPageController = locationsPageModule.createCityController({
   page, window, getGigs: () => gigs, escapeHtml,
@@ -2228,14 +2123,8 @@ const cityPageController = locationsPageModule.createCityController({
 function renderCityPage() { return cityPageController.render(); }
 
 function populateYearFilter() {
-  if (!yearFilter) return;
-  const selected = yearFilter.value;
-  yearFilter.replaceChildren(new Option('All years', ''));
-  [...new Set([...gigs, ...remoteSharedArchiveShows()].map((gig) => gig.date.slice(0, 4)).filter(Boolean))].sort().reverse().forEach((year) => yearFilter.add(new Option(year, year)));
-  yearFilter.value = selected;
+  return archivePageController.populateYears();
 }
-
-[showFilter, yearFilter, sortFilter, favouriteFilter].forEach((control) => control?.addEventListener('input', renderGigs));
 
 const mapPageController = locationsPageModule.createMapController({
   page, getGigs: () => gigs, loadLeaflet: () => pageRuntime.loadLeaflet({ document, window }),
