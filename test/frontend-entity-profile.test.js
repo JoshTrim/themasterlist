@@ -36,6 +36,11 @@ describe('artist and venue profile pages', () => {
     assert.deepEqual(profiles.venueStats(venueRecords), { shows: 2, artists: 2, cities: 1, songs: 1, favourites: 1 });
   });
 
+  test('separates artist statistics and uses singular labels correctly', () => {
+    const markup = profiles.artistStatsMarkup({ shows: 1, venues: 1, songs: 1, favourites: 1 });
+    assert.equal(markup, '<span>1 show</span><span>1 venue</span><span>1 song performed</span><span>1 favourite</span>');
+  });
+
   test('renders an artist profile and its local show summary', async () => {
     const elements = { heading: element(), description: element(), bio: element(), image: element(), source: element(), editLink: element(), empty: element(), stats: element() };
     let rendered = [];

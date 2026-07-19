@@ -35,7 +35,7 @@
   }
 
   function artistStatsMarkup(stats) {
-    return `<span>${stats.shows} show${stats.shows === 1 ? '' : 's'}</span><span>${stats.venues} venues</span><span>${stats.songs} songs performed</span><span>${stats.favourites} favourites</span>`;
+    return `<span>${stats.shows} show${stats.shows === 1 ? '' : 's'}</span><span>${stats.venues} venue${stats.venues === 1 ? '' : 's'}</span><span>${stats.songs} song${stats.songs === 1 ? '' : 's'} performed</span><span>${stats.favourites} favourite${stats.favourites === 1 ? '' : 's'}</span>`;
   }
 
   function venueStatsMarkup(stats) {
@@ -121,5 +121,5 @@
     };
   }
 
-  return { artistShows, venueShows, artistStats, venueStats, presentVenueMetadata, createArtistController, createVenueController };
+  return { artistShows, venueShows, artistStats, venueStats, artistStatsMarkup, venueStatsMarkup, presentVenueMetadata, createArtistController, createVenueController };
 }));
