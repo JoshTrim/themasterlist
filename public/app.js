@@ -11,6 +11,7 @@ const profileShowListModule = window.MasterListProfileShowList;
 const showFormUiModule = window.MasterListShowFormUi;
 const peerSyncPollerModule = window.MasterListPeerSyncPoller;
 const mediaLightboxModule = window.MasterListMediaLightbox;
+const appBootstrapModule = window.MasterListAppBootstrap;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -756,63 +757,46 @@ const playlistExporter = playlistExportModule.createExporter({
 });
 function setupExportButtons(exports, gig) { return playlistExporter.setupButtons(exports, gig); }
 
-async function initializeApp() {
-  if (page === 'shared') { window.location.replace('/shows'); return; }
-  const auth = await fetchJson('/api/auth/status');
-  const authState = window.MasterListAuthState.resolveAuthState(auth, page);
-  account = authState.account;
-  window.MasterListAuthState.applyAuthState(authState, { navSignIn, authPanel, profileBar, inviteButton, accountName: accountForm?.elements.name });
-  if (authState.redirectToLogin) { window.location.replace('/login'); return; }
-  if (!authState.authenticated) {
-    showAuth(auth);
-    return;
-  } else {
-    activeProfileId = account.id;
-  }
-  const data = await pageRuntime.loadPageData(page, { authenticated: true, fetchJson });
-  ({ gigs, integrations, profiles, sharedShows, peers } = data);
-  if (pageRuntime.requirementsFor(page).includes('gigs')) {
-    const total = gigs.length + (pageRuntime.requirementsFor(page).includes('sharedShows') ? remoteSharedArchiveShows().length : 0);
-    count.textContent = `${total} show${total === 1 ? '' : 's'}`;
-  } else {
-    const stats = await fetchJson('/api/stats').catch(() => null);
-    if (stats) count.textContent = `${stats.shows} show${stats.shows === 1 ? '' : 's'}`;
-  }
-  const controllers = {
-    home: async () => {},
-    login: async () => {},
-    overview: renderDashboardStats,
-    artists: renderEntityDirectories,
-    venues: renderEntityDirectories,
-    timeline: async () => renderTimeline(),
-    search: async () => renderGlobalSearch(),
-    health: renderArchiveHealth,
-    'api-limits': renderApiLimits,
-    maintenance: renderMaintenance,
-    activity: renderActivity,
-    conflicts: renderConflicts,
-    add: async () => { renderAttendeePicker(addAttendeePicker, []); populateShowAutofill(); },
-    shows: async () => {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('connected')) setMessage(`${providerName(params.get('connected'))} connected. Choose a show to export.`);
-      if (params.get('integrationError')) setMessage('Could not connect that music service. Check its configuration and try again.', true);
-      populateYearFilter(); renderGigs();
-    },
-    artist: renderArtistPage,
-    'artist-edit': renderArtistEditPage,
-    show: async () => renderShowPage(),
-    playback: async () => renderShowPage(),
-    city: async () => renderCityPage(),
-    venue: renderVenuePage,
-    'venue-edit': renderVenueEditPage,
-    edit: async () => { populateShowAutofill(); renderEditPage(); },
-    map: () => mapPageController.render(),
-    account: async () => { renderProfiles(); renderSharedShows(); await renderInstanceSettings(); }
-  };
-  await pageRuntime.runController(page, controllers, { account, data });
-  await loadPeerNotifications();
-  await loadConflictCount();
-  peerSyncPoller.start(5_000);
-}
+const pageControllers = {
+  home: async () => {},
+  login: async () => {},
+  overview: renderDashboardStats,
+  artists: renderEntityDirectories,
+  venues: renderEntityDirectories,
+  timeline: async () => renderTimeline(),
+  search: async () => renderGlobalSearch(),
+  health: renderArchiveHealth,
+  'api-limits': renderApiLimits,
+  maintenance: renderMaintenance,
+  activity: renderActivity,
+  conflicts: renderConflicts,
+  add: async () => { renderAttendeePicker(addAttendeePicker, []); populateShowAutofill(); },
+  shows: async () => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('connected')) setMessage(`${providerName(params.get('connected'))} connected. Choose a show to export.`);
+    if (params.get('integrationError')) setMessage('Could not connect that music service. Check its configuration and try again.', true);
+    populateYearFilter(); renderGigs();
+  },
+  artist: renderArtistPage,
+  'artist-edit': renderArtistEditPage,
+  show: async () => renderShowPage(),
+  playback: async () => renderShowPage(),
+  city: async () => renderCityPage(),
+  venue: renderVenuePage,
+  'venue-edit': renderVenueEditPage,
+  edit: async () => { populateShowAutofill(); renderEditPage(); },
+  map: () => mapPageController.render(),
+  account: async () => { renderProfiles(); renderSharedShows(); await renderInstanceSettings(); }
+};
+const appBootstrap = appBootstrapModule.createBootstrap({
+  window, page, fetchJson, runtime: pageRuntime, authStateModule: window.MasterListAuthState,
+  authElements: { navSignIn, authPanel, profileBar, inviteButton, accountName: accountForm?.elements.name },
+  showAuth, onAccount: (nextAccount) => { account = nextAccount; },
+  onAuthenticated: (signedIn) => { activeProfileId = signedIn.id; },
+  onData: (data) => { ({ gigs, integrations, profiles, sharedShows, peers } = data); },
+  remoteShowCount: () => remoteSharedArchiveShows().length, controllers: pageControllers, countElement: count,
+  afterRun: async () => { await loadPeerNotifications(); await loadConflictCount(); peerSyncPoller.start(5_000); }
+});
+function initializeApp() { return appBootstrap.initialize(); }
 
 initializeApp().catch((error) => setMessage(error.message, true));

@@ -53,6 +53,7 @@ The browser application is progressively split from `public/app.js`. Browser-saf
 - `playback-core.js` — playback sources, clip bounds, queue construction, gap handling and timeline interpolation.
 - `playback-media.js` — YouTube URL/embed normalization, upload source presentation and player-stage markup.
 - `media-lightbox.js` — image/video lightbox source selection, captions, rotation presentation and close behavior.
+- `app-bootstrap.js` — authentication gating, route data loading, archive counts, controller dispatch and post-render startup.
 - `playback-editor.js` — playback-plan validation, normalized clip payloads and suggestion presentation state.
 - `playback-editor-controller.js` — playback previews, fallback sources, draft preservation, suggestions, validation and plan persistence.
 - `playback-timeline-controller.js` — focused/full-set timeline rendering, pointer scrubbing and media-time seeking.
