@@ -13,6 +13,7 @@ const peerSyncPollerModule = window.MasterListPeerSyncPoller;
 const mediaLightboxModule = window.MasterListMediaLightbox;
 const appBootstrapModule = window.MasterListAppBootstrap;
 const pageControllersModule = window.MasterListPageControllers;
+const editMediaUploadModule = window.MasterListEditMediaUpload;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -580,35 +581,21 @@ const editTrackListController = trackListEditorModule.createController({
 });
 editTrackListController.bind();
 
+const editMediaUploadController = editMediaUploadModule.createController({
+  isMobile: () => isMobileUpload, input: editMediaInput, message: editMessage, pendingFiles: pendingMedia,
+  mobileState: mobileUploadStateFor, startMobileQueue: startMobileUploadQueue,
+  pollRecognition: pollMediaRecognition, renderWorkspace: renderEditMediaWorkspace,
+  uploadFiles: uploadGigMedia, fetchJson
+});
 const editShowPageController = editShowPageModule.createController({
   page, gigId: editGigId, FormDataClass: FormData, fetchJson, editor: showEditor, workflow: showFormController, trackEditor: editTrackListController,
   getGigs: () => gigs, onGigs: (nextGigs) => { gigs = nextGigs; },
-  setupImmediateUpload: (gig) => {
-    if (editMediaInput.dataset.immediateUpload) return;
-    editMediaInput.dataset.immediateUpload = 'true';
-    if (isMobileUpload) {
-      const state = mobileUploadStateFor(editMediaInput, gig.id);
-      state.onUploaded = (item) => { editMessage.textContent = `${item.name} uploaded.`; editMessage.classList.remove('error'); };
-      state.onDrained = async () => { await pollMediaRecognition(gig.id, (refreshed) => renderEditMediaWorkspace(gig, refreshed)); };
-      startMobileUploadQueue(editMediaInput, gig.id, state.onUploaded, state.onDrained);
-    } else editMediaInput.addEventListener('change', async () => {
-      const files = pendingMedia.get(editMediaInput) || [...(editMediaInput.files || [])];
-      if (!files.length) return;
-      editMessage.textContent = `Uploading ${files.length} file${files.length === 1 ? '' : 's'}…`;
-      try {
-        await uploadGigMedia(gig.id, files, (file, fraction) => { editMessage.textContent = `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; });
-        pendingMedia.set(editMediaInput, []);
-        editMediaInput.value = '';
-        editMessage.textContent = 'Media uploaded.';
-        renderEditMediaWorkspace(gig, await fetchJson(`/api/gigs/${gig.id}/media`));
-      } catch (error) { editMessage.textContent = error.message; editMessage.classList.add('error'); }
-    });
-  },
+  setupImmediateUpload: editMediaUploadController.setup,
   showDuplicateWarning, confirmDuplicateSave, ensureAttendeePicker: ensureEditAttendeePicker,
   renderAttendees: renderAttendeePicker, readAttendees,
   renderMediaWorkspace: renderEditMediaWorkspace,
-  getMediaFiles: () => pendingMedia.get(editMediaInput) || [...(editMediaInput?.files || [])],
-  uploadFiles: (record, uploads) => uploadGigMedia(record.id, uploads, (file, fraction) => { editMessage.textContent = fraction >= 1 ? `Upload complete · preparing mobile playback for ${file.name}…` : `Uploading ${file.name} · ${Math.round(fraction * 100)}%`; }),
+  getMediaFiles: editMediaUploadController.files,
+  uploadFiles: editMediaUploadController.uploadForSave,
   addExternalMedia: (record) => addYouTubeMedia(record.id, editYoutubeMediaInput),
   renderArchive: renderGigs,
   elements: { form: editForm, message: editMessage, mediaInput: editMediaInput, duplicateWarning: editDuplicateWarning }
