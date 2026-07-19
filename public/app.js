@@ -12,6 +12,7 @@ const showFormUiModule = window.MasterListShowFormUi;
 const peerSyncPollerModule = window.MasterListPeerSyncPoller;
 const mediaLightboxModule = window.MasterListMediaLightbox;
 const appBootstrapModule = window.MasterListAppBootstrap;
+const pageControllersModule = window.MasterListPageControllers;
 const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
@@ -757,37 +758,17 @@ const playlistExporter = playlistExportModule.createExporter({
 });
 function setupExportButtons(exports, gig) { return playlistExporter.setupButtons(exports, gig); }
 
-const pageControllers = {
-  home: async () => {},
-  login: async () => {},
-  overview: renderDashboardStats,
-  artists: renderEntityDirectories,
-  venues: renderEntityDirectories,
-  timeline: async () => renderTimeline(),
-  search: async () => renderGlobalSearch(),
-  health: renderArchiveHealth,
-  'api-limits': renderApiLimits,
-  maintenance: renderMaintenance,
-  activity: renderActivity,
-  conflicts: renderConflicts,
-  add: async () => { renderAttendeePicker(addAttendeePicker, []); populateShowAutofill(); },
-  shows: async () => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('connected')) setMessage(`${providerName(params.get('connected'))} connected. Choose a show to export.`);
-    if (params.get('integrationError')) setMessage('Could not connect that music service. Check its configuration and try again.', true);
-    populateYearFilter(); renderGigs();
-  },
-  artist: renderArtistPage,
-  'artist-edit': renderArtistEditPage,
-  show: async () => renderShowPage(),
-  playback: async () => renderShowPage(),
-  city: async () => renderCityPage(),
-  venue: renderVenuePage,
-  'venue-edit': renderVenueEditPage,
-  edit: async () => { populateShowAutofill(); renderEditPage(); },
-  map: () => mapPageController.render(),
-  account: async () => { renderProfiles(); renderSharedShows(); await renderInstanceSettings(); }
-};
+const pageControllers = pageControllersModule.createRegistry({
+  window, providerName, setMessage,
+  actions: {
+    renderDashboard: renderDashboardStats, renderDirectories: renderEntityDirectories, renderTimeline, renderSearch: renderGlobalSearch,
+    renderHealth: renderArchiveHealth, renderApiLimits, renderMaintenance, renderActivity, renderConflicts,
+    renderAddAttendees: () => renderAttendeePicker(addAttendeePicker, []), populateAutofill: populateShowAutofill,
+    populateYears: populateYearFilter, renderGigs, renderArtist: renderArtistPage, renderArtistEdit: renderArtistEditPage,
+    renderShow: renderShowPage, renderCity: renderCityPage, renderVenue: renderVenuePage, renderVenueEdit: renderVenueEditPage,
+    renderEdit: renderEditPage, renderMap: () => mapPageController.render(), renderProfiles, renderSharedShows, renderInstanceSettings
+  }
+});
 const appBootstrap = appBootstrapModule.createBootstrap({
   window, page, fetchJson, runtime: pageRuntime, authStateModule: window.MasterListAuthState,
   authElements: { navSignIn, authPanel, profileBar, inviteButton, accountName: accountForm?.elements.name },
