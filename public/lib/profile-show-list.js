@@ -8,6 +8,16 @@
     return `<ol>${songs.map((song) => `<li>${escapeHtml(song.title)}${song.encore ? ' <b>Encore</b>' : ''}</li>`).join('')}</ol>`;
   }
 
+  function appendAttendeeSummary({ document, container, gig, attendeeNames, prefix = 'With' }) {
+    const names = attendeeNames(gig);
+    if (names.length < 2) return null;
+    const summary = document.createElement('p');
+    summary.className = 'gig-attendees-summary';
+    summary.textContent = `${prefix} ${names.join(', ')}`;
+    container.append(summary);
+    return summary;
+  }
+
   function createRenderer({ template, escapeHtml, formatGigDate, renderAttendeeSummary, setupMedia }) {
     function baseCard(gig) {
       const card = template.content.cloneNode(true);
@@ -54,5 +64,5 @@
     return { renderArtist, renderVenue };
   }
 
-  return { createRenderer, setlistMarkup };
+  return { appendAttendeeSummary, createRenderer, setlistMarkup };
 }));

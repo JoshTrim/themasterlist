@@ -392,12 +392,7 @@ function attendeeNames(gig) {
 }
 
 function renderAttendeeSummary(container, gig, prefix = 'With') {
-  const names = attendeeNames(gig);
-  if (names.length < 2) return;
-  const summary = document.createElement('p');
-  summary.className = 'gig-attendees-summary';
-  summary.textContent = `${prefix} ${names.join(', ')}`;
-  container.append(summary);
+  return profileShowListModule.appendAttendeeSummary({ document, container, gig, attendeeNames, prefix });
 }
 
 const profileShowListRenderer = profileShowListModule.createRenderer({

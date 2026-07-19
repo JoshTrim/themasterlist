@@ -33,6 +33,20 @@ function fixture() {
 }
 
 describe('profile show list renderer', () => {
+  test('only appends attendee summaries for shared shows', () => {
+    const children = [];
+    const container = { append: (child) => children.push(child) };
+    const document = { createElement: () => ({}) };
+    const attendeeNames = (gig) => gig.names;
+    assert.equal(profileShows.appendAttendeeSummary({ document, container, gig: { names: ['Archive Owner'] }, attendeeNames }), null);
+    const summary = profileShows.appendAttendeeSummary({
+      document, container, gig: { names: ['Archive Owner', 'Sam'] }, attendeeNames, prefix: 'Attended by'
+    });
+    assert.equal(summary.className, 'gig-attendees-summary');
+    assert.equal(summary.textContent, 'Attended by Archive Owner, Sam');
+    assert.deepEqual(children, [summary]);
+  });
+
   test('escapes track titles while retaining encore labels', () => {
     const markup = profileShows.setlistMarkup([{ title: 'One & <Two>', encore: true }], (value) => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;'));
     assert.equal(markup, '<ol><li>One &amp; &lt;Two> <b>Encore</b></li></ol>');
