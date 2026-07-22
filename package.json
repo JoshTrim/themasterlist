@@ -4,6 +4,14 @@
   "private": true,
   "license": "GPL-3.0-only",
   "description": "A personal archive of live music events and their setlists.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JoshTrim/themasterlist.git"
+  },
+  "homepage": "https://github.com/JoshTrim/themasterlist#readme",
+  "bugs": {
+    "url": "https://github.com/JoshTrim/themasterlist/issues"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",

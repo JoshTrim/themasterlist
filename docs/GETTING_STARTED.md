@@ -17,8 +17,8 @@ API credentials are optional. You can create an account and enter shows manually
 1. Clone the repository and enter it:
 
    ```sh
-   git clone YOUR_REPOSITORY_URL
-   cd the-master-list
+   git clone https://github.com/JoshTrim/themasterlist.git
+   cd themasterlist
    ```
 
 2. Create the local configuration:
