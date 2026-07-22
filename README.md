@@ -32,7 +32,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-The app is bound to `127.0.0.1:3000` by default and all mutable state is mounted at `/data` from the local `./data` directory. The container runs without Linux capabilities, with a read-only application filesystem and a private writable data volume. Set `OWNER_SETUP_TOKEN` to a long random value before the first production launch and enter it when creating the owner account; it can be removed after setup. The health check calls `/api/healthz` and verifies both SQLite and media-folder write access. Back up the entire `data` directory if you also want the original media files; scheduled snapshots cover the SQLite database only.
+The app is bound to `127.0.0.1:3000` by default and all mutable state is mounted at `/data` from the local `./data` directory. The container runs without Linux capabilities, with a read-only application filesystem and a private writable data volume. Before the first production launch, set `OWNER_SETUP_TOKEN` to a long random value and generate `CONNECTIONS_ENCRYPTION_KEY` with `openssl rand -base64 32`. Enter the setup token when creating the owner account; it can be removed afterward, but the encryption key must be retained. The health check calls `/api/healthz` and verifies both SQLite and media-folder write access. Back up the entire `data` directory if you also want the original media files; scheduled snapshots cover the SQLite database only.
 
 For LAN or VPN access, set both values explicitly before starting:
 
@@ -80,15 +80,15 @@ On the edit page, selecting a different setlist track—or selecting **Unassigne
 
 Every saved show with a setlist has export buttons. Exports create **private** playlists and show the number of songs that could not be matched. The matching uses the setlist artist (or the credited cover artist) and song title.
 
-Copy `.env.playlists.example` values into your local `.env`, complete the credentials, and restart the server. Do not commit `.env` or `data/connections.json`; the latter holds local OAuth refresh tokens.
+Copy `.env.playlists.example` values into your local `.env`, complete the credentials, and restart the server. Do not commit `.env` or `data/connections.json`; the latter holds locally encrypted OAuth credentials.
 
 | Service | One-time setup | What the app does |
 | --- | --- | --- |
-| Spotify | Create an app in the Spotify developer dashboard and add `http://127.0.0.1:3000/auth/spotify/callback` as a redirect URI. | Connect via OAuth, search each song, create a private playlist, and add matches. |
-| YouTube | Enable YouTube Data API v3 in Google Cloud, create Web Application OAuth credentials, and add `http://localhost:3000/auth/youtube/callback`. | Connect via OAuth, find music videos/audio, and create a private YouTube playlist. |
+| Spotify | Create an app in the Spotify developer dashboard and add `http://127.0.0.1:3000/auth/spotify/callback` locally, or your exact HTTPS `SPOTIFY_REDIRECT_URI` when deployed. | Connect via OAuth, search each song, create a private playlist, and add matches. |
+| YouTube | Enable YouTube Data API v3 in Google Cloud, create Web Application OAuth credentials, and add `${APP_ORIGIN}/auth/youtube/callback` (for example, `http://localhost:3000/auth/youtube/callback`). | Connect via OAuth, find music videos/audio, and create a private YouTube playlist. |
 | Apple Music | Apple Developer Program membership, a MusicKit identifier/key, and a signed developer token. | MusicKit asks the subscriber for permission, then creates a library playlist and adds matched catalog songs. |
 
-The OAuth connections are local to this prototype. A future hosted version should use user accounts, encrypted token storage, and a proper callback domain.
+OAuth access and refresh tokens are encrypted with AES-256-GCM when `CONNECTIONS_ENCRYPTION_KEY` is configured, and the setting is mandatory in production. An existing plaintext `data/connections.json` is encrypted automatically on first read. Keep the key outside `/data` and back it up separately: losing it makes existing OAuth connections unrecoverable. To rotate it, move the old value to `CONNECTIONS_ENCRYPTION_KEY_PREVIOUS`, put the new value in `CONNECTIONS_ENCRYPTION_KEY`, start the app once, then remove the previous key.
 
 ## Peer collaboration
 
@@ -106,7 +106,7 @@ The archive and uploaded originals remain in the local `data` directory. Optiona
 - YouTube discovery and playlist export send show and track search terms to Google/YouTube.
 - When AudD is enabled, track detection extracts a 12-second MP3 sample from an uploaded video and sends that sample to AudD.
 
-OAuth refresh tokens are stored unencrypted in `data/connections.json`, protected by owner-only filesystem permissions. Protect backups and the entire `data` directory as sensitive personal data.
+OAuth credentials are encrypted in `data/connections.json` and protected by owner-only filesystem permissions. Encryption limits exposure from a copied data volume or database backup, but not from an attacker controlling the running server. Protect `.env`, encryption keys, backups and the entire `data` directory as sensitive data.
 
 ## Licence
 
