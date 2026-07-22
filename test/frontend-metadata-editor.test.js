@@ -30,6 +30,10 @@ function messageFixture() {
   return { textContent: '', classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name), contains: (name) => classes.has(name) } };
 }
 
+function buttonFixture() {
+  return { disabled: false, listeners: {}, addEventListener(name, handler) { this.listeners[name] = handler; } };
+}
+
 describe('metadata editor', () => {
   test('serializes image uploads and venue-only fields', async () => {
     const form = formFixture({ venue: true });
@@ -90,5 +94,36 @@ describe('metadata editor', () => {
     assert.deepEqual(JSON.parse(requests[1][1].body), { title: 'Updated' });
     assert.equal(message.textContent, 'Artist info saved.');
     assert.equal(form.submit.disabled, false);
+  });
+
+  test('refetches artist fields from the source URL and waits for save before persistence', async () => {
+    const form = formFixture();
+    const preview = previewFixture();
+    const message = messageFixture();
+    const heading = { textContent: '' };
+    const refetchButton = buttonFixture();
+    const requests = [];
+    form.elements.source.value = 'https://en.wikipedia.org/wiki/Correct_Artist';
+    const controller = editor.createController({
+      page: 'artist-edit', routePage: 'artist-edit', type: 'artist', name: 'Artist',
+      form, preview, message, stepper: { hidden: true, innerHTML: '' }, heading, backLink: { href: '' }, refetchButton,
+      fetchJson: async (url, options) => {
+        requests.push([url, options]);
+        return { title: 'Correct Artist', description: 'Musician', bio: 'Fetched biography', image: '/artist.jpg', source: form.elements.source.value, genres: ['Rock'], imagePosition: 'top' };
+      },
+      validateImage: () => {}, getEntries: () => [], escapeHtml: String,
+      urls: { createObjectURL: () => '', revokeObjectURL: () => {} }
+    });
+    controller.bind();
+    await controller.refetch();
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0][0], '/api/artists/refetch?name=Artist');
+    assert.equal(requests[0][1].method, 'POST');
+    assert.equal(form.elements.title.value, 'Correct Artist');
+    assert.equal(form.elements.bio.value, 'Fetched biography');
+    assert.equal(form.elements.genres.value, 'Rock');
+    assert.equal(preview.src, '/artist.jpg');
+    assert.equal(message.textContent, 'Artist info fetched. Review the fields, then save your changes.');
+    assert.equal(refetchButton.disabled, false);
   });
 });

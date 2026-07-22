@@ -84,7 +84,7 @@
 
   function createController({
     page, routePage, type, name, city = '', form, preview, message, stepper, heading, backLink,
-    fetchJson, validateImage, getEntries, escapeHtml, urls = globalThis.URL,
+    fetchJson, validateImage, getEntries, escapeHtml, refetchButton = null, urls = globalThis.URL,
     FormDataClass = globalThis.FormData, FileReaderClass = globalThis.FileReader,
     afterSave = () => {}
   }) {
@@ -135,15 +135,41 @@
       }
     }
 
+    async function refetch() {
+      if (type !== 'artist' || !refetchButton) return;
+      const source = form.elements.source.value.trim();
+      if (!source) {
+        message.textContent = 'Paste a Wikipedia article URL first.';
+        message.classList.add('error');
+        form.elements.source.focus?.();
+        return;
+      }
+      refetchButton.disabled = true;
+      message.textContent = 'Fetching artist info…';
+      message.classList.remove('error');
+      try {
+        const info = await fetchJson(`/api/artists/refetch?name=${encodeURIComponent(name)}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source })
+        });
+        applyInfo(info);
+        heading.textContent = `Edit ${info.title || name}`;
+        message.textContent = 'Artist info fetched. Review the fields, then save your changes.';
+      } catch (error) {
+        message.textContent = error.message;
+        message.classList.add('error');
+      } finally { refetchButton.disabled = false; }
+    }
+
     function bind() {
       form.addEventListener('submit', (event) => {
         if (page !== routePage) return;
         event.preventDefault();
         save();
       });
+      refetchButton?.addEventListener('click', refetch);
     }
 
-    return { load, save, bind };
+    return { load, save, refetch, bind };
   }
 
   return { updatePreview, bindPreview, readImageUpload, formPayload, populateForm, populateVenueLocation, renderStepper, createController };

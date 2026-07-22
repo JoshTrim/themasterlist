@@ -95,6 +95,8 @@
 .metadata-edit-form select { cursor: pointer; padding-right: 40px; background-image: linear-gradient(45deg, transparent 50%, #ff82c8 50%), linear-gradient(135deg, #ff82c8 50%, transparent 50%); background-position: calc(100% - 17px) 19px, calc(100% - 11px) 19px; background-size: 6px 6px; background-repeat: no-repeat; }
 .metadata-edit-form select option { background: #160a24; color: #fff0fa; }
 .metadata-edit-form :is(input:not([type="file"]), textarea, select):focus { border-color: #ff2d9b; box-shadow: inset 3px 3px 0 rgba(4, 0, 12, .55), 0 0 15px rgba(255, 45, 155, .4); }
+.metadata-source-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: stretch; }
+.metadata-source-row .button { min-height: 48px; padding-inline: 16px; white-space: nowrap; }
 .metadata-edit-form .metadata-toggle { display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: center; gap: 4px 11px; padding: 13px; border: 1px solid #7422a0; background: rgba(16, 7, 25, .86); cursor: pointer; }
 .metadata-edit-form .metadata-toggle input[type="checkbox"] { appearance: none; width: 24px; min-width: 24px; height: 24px; margin: 0; padding: 0; border: 2px solid #a83bd8; background: #090410; cursor: pointer; box-shadow: 3px 3px 0 #08010f; }
 .metadata-edit-form .metadata-toggle input[type="checkbox"]:checked { border-color: #ff2d9b; background: #ff2d9b; box-shadow: inset 0 0 0 5px #190923, 0 0 12px rgba(255, 45, 155, .55); }
@@ -117,6 +119,7 @@
   .metadata-edit-form, .venue-edit-form.metadata-edit-form { grid-template-columns: 1fr; padding: 16px; }
   .metadata-edit-fields { grid-template-columns: 1fr; }
   .metadata-edit-wide { grid-column: 1; }
+  .metadata-source-row { grid-template-columns: 1fr; }
   .metadata-image-editor { grid-row: 1; }
   .metadata-edit-actions .button { width: 100%; }
 }

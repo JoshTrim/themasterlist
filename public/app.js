@@ -189,6 +189,7 @@ const artistEditForm = document.querySelector('#artist-edit-form');
 const artistEditPreview = document.querySelector('#artist-edit-preview');
 const artistEditMessage = document.querySelector('#artist-edit-message');
 const artistEditStepper = document.querySelector('#artist-edit-stepper');
+const artistRefetchInfo = document.querySelector('#artist-refetch-info');
 const artistShows = document.querySelector('#artist-shows');
 const artistEmpty = document.querySelector('#artist-empty');
 const artistStats = document.querySelector('#artist-stats');
@@ -428,6 +429,7 @@ const metadataEditorEntries = (type) => directoryUi.editorEntries([...gigs, ...r
 const artistMetadataEditor = metadataEditorModule.createController({
   page, routePage: 'artist-edit', type: 'artist', name: artistNameFromUrl,
   form: artistEditForm, preview: artistEditPreview, message: artistEditMessage,
+  refetchButton: artistRefetchInfo,
   stepper: artistEditStepper, heading: document.querySelector('#artist-edit-heading'),
   backLink: document.querySelector('#artist-edit-back'), fetchJson,
   validateImage: directoryUi.validateImage, getEntries: () => metadataEditorEntries('artist'), escapeHtml

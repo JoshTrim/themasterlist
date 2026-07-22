@@ -1,6 +1,6 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { cleanMusicName, pageMetadata, createMetadataProvider } = require('../lib/providers/metadata');
+const { cleanMusicName, pageMetadata, wikipediaArticle, createMetadataProvider } = require('../lib/providers/metadata');
 
 const response = (body, { ok = true } = {}) => ({ ok, json: async () => body, text: async () => String(body) });
 
@@ -23,6 +23,20 @@ describe('metadata provider', () => {
     } });
     assert.deepEqual(await provider.artistInfo('Poppy'), { name: 'Poppy', title: 'Poppy', description: 'American singer', bio: 'Biography', image: 'photo.jpg', source: 'wiki' });
     assert.match(calls[0], /Poppy\+musician/);
+  });
+
+  test('refetches an artist from an explicit Wikipedia article without allowing arbitrary hosts', async () => {
+    let requested = '';
+    const provider = createMetadataProvider({ fetch: async (url) => {
+      requested = String(url);
+      return response({ title: 'Correct Artist', description: 'Musician', extract: 'Updated biography', thumbnail: { source: 'https://images.example/artist.jpg' }, content_urls: { desktop: { page: 'https://en.wikipedia.org/wiki/Correct_Artist' } } });
+    } });
+    const info = await provider.artistInfoFromUrl('Artist', 'https://en.m.wikipedia.org/wiki/Correct_Artist#Music');
+    assert.match(requested, /^https:\/\/en\.wikipedia\.org\/api\/rest_v1\/page\/summary\/Correct_Artist$/);
+    assert.equal(info.bio, 'Updated biography');
+    assert.equal(info.source, 'https://en.wikipedia.org/wiki/Correct_Artist');
+    assert.throws(() => wikipediaArticle('http://127.0.0.1/wiki/Artist'), /Wikipedia/);
+    assert.throws(() => wikipediaArticle('https://example.com/wiki/Artist'), /Wikipedia/);
   });
 
   test('prefers a full album over a same-track single', async () => {

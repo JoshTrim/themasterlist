@@ -22,7 +22,7 @@
       body[data-page="venue-edit"] #venue-edit-page, body[data-page="edit"] #edit-page,
       body[data-page="map"] #map-page, body[data-page="account"] #account-page { display: block; }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=css-split-4" />
+    <link rel="stylesheet" href="/styles.css?v=css-split-5" />
   </head>
   <body>
     <script>
@@ -176,7 +176,7 @@
         <a class="text-button" id="artist-edit-back" href="/artists">← Back to artist</a>
         <div class="section-heading"><p class="eyebrow">Artist metadata</p><h1 id="artist-edit-heading">Edit artist info</h1><p class="lede">Override scraped details and choose how this artist appears throughout your archive.</p></div>
         <form class="metadata-edit-form" id="artist-edit-form">
-          <div class="metadata-edit-fields"><label>Display name<input name="title" required /></label><label>Short description<input name="description" /></label><label class="metadata-edit-wide">Genres<input name="genres" placeholder="Alternative, electronic, metal" /><small>Separate multiple genres with commas.</small></label><label class="metadata-edit-wide">Biography<textarea name="bio" rows="7"></textarea></label><label>Photo URL<input name="image" type="text" inputmode="url" placeholder="https://…" /></label><label>Source URL<input name="source" type="url" placeholder="https://…" /></label></div>
+          <div class="metadata-edit-fields"><label>Display name<input name="title" required /></label><label>Short description<input name="description" /></label><label class="metadata-edit-wide">Genres<input name="genres" placeholder="Alternative, electronic, metal" /><small>Separate multiple genres with commas.</small></label><label class="metadata-edit-wide">Biography<textarea name="bio" rows="7"></textarea></label><label>Photo URL<input name="image" type="text" inputmode="url" placeholder="https://…" /></label><label class="metadata-edit-wide">Source URL<div class="metadata-source-row"><input name="source" type="url" placeholder="https://en.wikipedia.org/wiki/…" /><button class="button button-secondary" id="artist-refetch-info" type="button">Refetch info</button></div><small>Paste the correct Wikipedia article, then review the fetched fields before saving.</small></label></div>
           <aside class="metadata-image-editor"><div class="metadata-image-preview"><span>No photo</span><img id="artist-edit-preview" alt="Artist preview" hidden /></div><label class="metadata-file-picker">Upload local photo<input name="imageFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif" /><small>JPEG, PNG, WebP or GIF · maximum 8 MB</small></label><label>Image focus<select name="imagePosition"><option value="top">Top</option><option value="center">Centre</option><option value="bottom">Bottom</option></select></label></aside>
           <div class="metadata-edit-actions"><button class="button" type="submit">Save artist info</button><p class="form-message" id="artist-edit-message" role="status"></p></div>
         </form>
@@ -336,7 +336,7 @@
     <script src="/lib/timeline-page.js?v=frontend-modules-9"></script>
     <script src="/lib/overview-page.js?v=frontend-modules-56"></script>
     <script src="/lib/entity-profile-page.js?v=frontend-modules-55"></script>
-    <script src="/lib/metadata-editor.js?v=frontend-modules-12"></script>
+    <script src="/lib/metadata-editor.js?v=frontend-modules-59"></script>
     <script src="/lib/api-limits-page.js?v=frontend-modules-13"></script>
     <script src="/lib/activity-page.js?v=frontend-modules-14"></script>
     <script src="/lib/conflicts-page.js?v=frontend-modules-15"></script>
@@ -357,6 +357,6 @@
     <script src="/lib/show-detail-page.js?v=frontend-modules-55"></script>
     <script src="/lib/mobile-upload-controller.js?v=frontend-modules-31"></script>
     <script src="/lib/media-workspace-controller.js?v=frontend-modules-32"></script>
-    <script src="/app.js?v=frontend-modules-58"></script>
+    <script src="/app.js?v=frontend-modules-59"></script>
   </body>
 </html>

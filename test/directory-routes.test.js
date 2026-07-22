@@ -17,7 +17,9 @@ test('directory routes fetch and persist artist and venue metadata', async () =>
   const handle = createDirectoryRoutes({
     database, requireAccount: () => ({}), readBody: async () => body,
     sendJson: (_response, status, payload) => replies.push({ status, payload }), sendError: (_response, status, error) => replies.push({ status, payload: { error } }),
-    fetchArtistInfo: async (name) => ({ name, title: name, imagePosition: 'bad' }), fetchVenueInfo: async (name, city) => ({ name, city, title: name }),
+    fetchArtistInfo: async (name) => ({ name, title: name, imagePosition: 'bad' }),
+    refetchArtistInfo: async (name, source) => ({ name, title: 'Fetched Artist', bio: 'Fetched bio', source }),
+    fetchVenueInfo: async (name, city) => ({ name, city, title: name }),
     cachedArtistGenres: () => ({ genres: ['Rock'] }), saveArtistGenres: (_name, genres) => genres,
     normaliseImagePosition: (value) => ['top', 'center', 'bottom'].includes(value) ? value : 'center',
     profileImages: { save: async () => null, removeReplaced: async () => {} }, geocoding,
@@ -27,6 +29,12 @@ test('directory routes fetch and persist artist and venue metadata', async () =>
 
   assert.equal(await handle({ method: 'GET' }, {}, new URL('http://x/api/artists?name=Poppy')), true);
   assert.deepEqual(replies.pop().payload.genres, ['Rock']);
+
+  body = { source: 'https://en.wikipedia.org/wiki/Poppy_(singer)' };
+  await handle({ method: 'POST' }, {}, new URL('http://x/api/artists/refetch?name=Poppy'));
+  assert.deepEqual(replies.pop(), { status: 200, payload: {
+    name: 'Poppy', title: 'Fetched Artist', bio: 'Fetched bio', source: body.source, imagePosition: 'center', genres: ['Rock']
+  } });
 
   body = { title: 'Poppy', bio: 'Artist bio', genres: ['Metal'], imagePosition: 'top' };
   await handle({ method: 'PATCH' }, {}, new URL('http://x/api/artists?name=Poppy'));
