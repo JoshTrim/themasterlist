@@ -34,6 +34,18 @@ docker compose ps
 
 The port should begin with `0.0.0.0:3000`. Use the exact `APP_ORIGIN` URL on the phone, check the host firewall, and ensure both devices are on a network that permits client-to-client traffic. See [Phone and LAN access](GETTING_STARTED.md#phone-and-lan-access) for the complete setup.
 
+## Login says `Cross-site request rejected`
+
+The URL in the browser does not match the configured `APP_ORIGIN`. For LAN access, set `APP_ORIGIN` to the Mac's exact LAN URL, such as `http://192.168.1.20:3000`, with no path or trailing slash. Remove duplicate active `APP_ORIGIN` entries from `.env`, then recreate and inspect the container:
+
+```sh
+docker compose down
+docker compose up -d
+docker compose exec master-list printenv APP_ORIGIN
+```
+
+Use the printed URL on both the phone and Mac. A session created at `127.0.0.1` is separate, so sign in again at the LAN URL. Do not disable the origin check; it protects authenticated browser actions from cross-site requests.
+
 ## `better-sqlite3` was compiled for another Node version
 
 Switch to the repository’s Node version and reinstall native dependencies:

@@ -116,6 +116,18 @@ docker compose ps
 
 The port shown by `docker compose ps` should begin with `0.0.0.0:3000`. On a phone connected to the same Wi-Fi, visit the `APP_ORIGIN` address—for this example, `http://192.168.1.20:3000`.
 
+Use that same LAN URL on the Mac while this configuration is active. Browser sessions belong to a specific hostname, and mutating requests such as login are accepted only from the exact configured `APP_ORIGIN`. Continuing to use `http://127.0.0.1:3000` on the Mac while `APP_ORIGIN` contains the LAN address can produce a **Cross-site request rejected** error.
+
+If that error appears, check that `.env` has only one active `APP_ORIGIN` entry, recreate the container, and verify the value received by the application:
+
+```sh
+docker compose down
+docker compose up -d
+docker compose exec master-list printenv APP_ORIGIN
+```
+
+The final command must print the exact URL shown in the phone's address bar, without a trailing slash. Sign in again at the LAN URL because an existing `127.0.0.1` browser session does not carry over to the LAN hostname.
+
 Compose's detached mode (`-d`) keeps the app running after Terminal closes, and the service's `restart: unless-stopped` policy starts it again when Docker starts. Enable **Start Docker Desktop when you sign in** if it should return after restarting the Mac.
 
 If the phone still cannot connect, allow Docker through the macOS firewall and confirm the Wi-Fi network permits devices to communicate with one another. Guest networks commonly block this traffic. Do not use `0.0.0.0` as a browser URL, and do not expose port 3000 directly to the internet.
