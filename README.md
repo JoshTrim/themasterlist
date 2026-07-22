@@ -1,7 +1,7 @@
 # The Master List
 
 <p align="center">
-  <img src="docs/assets/chest-header.png" alt="The Master List pixel-art treasure chest" width="447">
+  <img src="docs/assets/chest-header.png" alt="The Master List pixel-art treasure chest" width="900">
 </p>
 
 A self-hosted archive for live shows, setlists, photos, videos, ratings and shared gig memories.
