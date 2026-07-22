@@ -2,6 +2,7 @@
   "name": "the-master-list",
   "version": "0.1.0",
   "private": true,
+  "license": "GPL-3.0-only",
   "description": "A personal archive of live music events and their setlists.",
   "scripts": {
     "start": "node server.js",

@@ -108,5 +108,9 @@ The archive and uploaded originals remain in the local `data` directory. Optiona
 
 OAuth refresh tokens are stored unencrypted in `data/connections.json`, protected by owner-only filesystem permissions. Protect backups and the entire `data` directory as sensitive personal data.
 
+## Licence
+
+Copyright © 2026 Josh Trim. The Master List is free software distributed under the [GNU General Public License version 3](LICENSE).
+
 2. Add a review screen for ambiguous song matches before each export.
 3. Add photos, ratings, support acts, and filtering by artist, venue, city, or year.
