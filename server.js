@@ -12,7 +12,7 @@ const { normaliseGenres, normaliseImagePosition, normaliseSongs, validateGig, no
 const { createAuth } = require('./lib/auth');
 const { sendJson, sendError, redirect, readBody } = require('./lib/http');
 const { createBackupService } = require('./lib/backups');
-const { mediaExtension, mediaCategory, safeMediaName, hashFile } = require('./lib/media-utils');
+const { mediaExtension, mediaCategory, safeMediaName, validMediaSignature, hashFile } = require('./lib/media-utils');
 const { createAuthRoutes } = require('./lib/routes/auth');
 const { createConflictStore } = require('./lib/conflicts');
 const { migrateSchema } = require('./lib/schema');
@@ -51,6 +51,8 @@ const { createSharedShows } = require('./lib/shared-shows');
 const { createProfileImages } = require('./lib/profile-images');
 const { createMetadataCache } = require('./lib/metadata-cache');
 const { createFileServing } = require('./lib/file-serving');
+const { secureStorage } = require('./lib/storage-security');
+const { resolveAppOrigin, validateRequestOrigin, applySecurityHeaders } = require('./lib/security');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -67,10 +69,10 @@ const PENDING_RESTORE_FILE = path.join(DATA_DIR, 'restore-pending.sqlite');
 const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
 const GEOCODES_FILE = path.join(DATA_DIR, 'geocodes.json');
 const MAX_MEDIA_SIZE = Number(process.env.MAX_MEDIA_SIZE_GB || 50) * 1024 * 1024 * 1024;
+const MAX_MEDIA_STORAGE_SIZE = Number(process.env.MAX_MEDIA_STORAGE_GB || 500) * 1024 * 1024 * 1024;
 
-legacyFs.mkdirSync(DATA_DIR, { recursive: true });
-legacyFs.mkdirSync(MEDIA_DIR, { recursive: true });
-legacyFs.mkdirSync(BACKUP_DIR, { recursive: true });
+process.umask(0o077);
+secureStorage({ fs: legacyFs, path, dataDir: DATA_DIR, mediaDir: MEDIA_DIR, backupDir: BACKUP_DIR });
 if (legacyFs.existsSync(PENDING_RESTORE_FILE)) {
   legacyFs.mkdirSync(BACKUP_DIR, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -83,6 +85,7 @@ if (legacyFs.existsSync(PENDING_RESTORE_FILE)) {
 }
 const database = new Database(DB_FILE);
 database.pragma('journal_mode = WAL');
+secureStorage({ fs: legacyFs, path, dataDir: DATA_DIR, mediaDir: MEDIA_DIR, backupDir: BACKUP_DIR });
 migrateSchema(database);
 const peerIdentity = createPeerIdentity({ database, crypto, instanceName: () => process.env.INSTANCE_NAME || 'The Master List instance' });
 peerIdentity.ensure();
@@ -115,7 +118,13 @@ ensureBackupSettings();
 
 const authService = createAuth({ database });
 const { currentAccount, accountsConfigured, requireAccount } = authService;
-const handleAuthApi = createAuthRoutes({ database, auth: authService, appOrigin });
+const handleAuthApi = createAuthRoutes({
+  database,
+  auth: authService,
+  appOrigin,
+  setupToken: process.env.OWNER_SETUP_TOKEN || '',
+  requireSetupToken: process.env.NODE_ENV === 'production'
+});
 const backupService = createBackupService({ database, fs, path, backupDir: BACKUP_DIR, getSetting: appSetting, setSetting: setAppSetting });
 const { settings: backupSettings, prune: pruneScheduledBackups, create: createScheduledBackup, runCheck: runScheduledBackupCheck } = backupService;
 const backgroundJobs = createBackgroundJobs({ database });
@@ -167,10 +176,10 @@ const mediaRecognition = createMediaRecognition({
 });
 const handleMediaUpload = createMediaUploadRoutes({
   database, fs, legacyFs, path, mediaDir: MEDIA_DIR, maxMediaSize: MAX_MEDIA_SIZE,
-  randomUUID, createHash, mediaExtension, mediaCategory, hashFile, mediaRows,
+  randomUUID, createHash, mediaExtension, mediaCategory, validMediaSignature, hashFile, mediaRows,
   readBody, sendJson, sendError,
   startPlaybackEncode: mediaEncoding.start, recognizeVideoTrack: mediaRecognition.recognize,
-  auddConfigured: () => Boolean(process.env.AUDD_API_TOKEN)
+  auddConfigured: () => Boolean(process.env.AUDD_API_TOKEN), maxStorageSize: MAX_MEDIA_STORAGE_SIZE
 });
 const handleMediaMutation = createMediaMutationRoutes({
   database, fs, existsSync: legacyFs.existsSync, path, mediaDir: MEDIA_DIR, randomUUID,
@@ -245,7 +254,7 @@ async function writeGeocodes(geocodes) {
 }
 
 function appOrigin(request) {
-  return process.env.APP_ORIGIN || `http://${request.headers.host}`;
+  return resolveAppOrigin(request, process.env);
 }
 
 function configured(provider) {
@@ -347,6 +356,7 @@ async function exportAppleMusic(gig, musicUserToken) {
 }
 
 async function handleAuth(request, response, url) {
+  const account = requireAccount(request);
   const provider = url.pathname.includes('/spotify') ? 'spotify' : url.pathname.includes('/youtube') ? 'youtube' : null;
   if (!provider) return sendError(response, 404, 'Not found');
   if (!configured(provider)) return redirect(response, '/?integrationError=missing-config');
@@ -358,11 +368,11 @@ async function handleAuth(request, response, url) {
     : `${appOrigin(request)}${callbackPath}`;
 
   if (url.pathname === `/auth/${provider}`) {
-    return redirect(response, oauthService.begin(provider, callbackUrl));
+    return redirect(response, oauthService.begin(provider, callbackUrl, account.id));
   }
 
   if (url.pathname === callbackPath) {
-    const result = await oauthService.complete(provider, { state: url.searchParams.get('state'), code: url.searchParams.get('code'), error: url.searchParams.get('error') });
+    const result = await oauthService.complete(provider, { state: url.searchParams.get('state'), code: url.searchParams.get('code'), error: url.searchParams.get('error'), subject: account.id });
     return redirect(response, result.error ? `/?integrationError=${result.error}` : `/?connected=${provider}`);
   }
   return sendError(response, 404, 'Not found');
@@ -404,7 +414,7 @@ async function handleApi(request, response, url) {
   }
 
   if (request.method === 'POST' && url.pathname === '/api/profiles') {
-    return sendError(response, 403, 'Create accounts with an invite link.');
+    return sendError(response, 410, 'This instance has one owner account. Pair another instance to collaborate.');
   }
 
   if (request.method === 'GET' && url.pathname === '/api/shared/shows') {
@@ -607,14 +617,18 @@ async function handleApi(request, response, url) {
 
 const server = http.createServer(async (request, response) => {
   try {
+    const origin = appOrigin(request);
+    applySecurityHeaders(response, { secure: origin.startsWith('https://') });
     const url = new URL(request.url, `http://${request.headers.host}`);
+    if (!validateRequestOrigin(request, url.pathname, origin)) return sendError(response, 403, 'Cross-site request rejected.');
     if (url.pathname.startsWith('/api/')) await handleApi(request, response, url);
     else if (url.pathname.startsWith('/auth/')) await handleAuth(request, response, url);
     else await fileServing.serveStatic(request, response, url.pathname);
   } catch (error) {
     if (!error.status || error.status >= 500) console.error(error);
     if (error instanceof OAuthError) return sendJson(response, error.status || 400, { error: error.message, code: error.code });
-    sendError(response, error.status || 500, error.message || 'Something went wrong.');
+    const status = error.status || 500;
+    sendError(response, status, status >= 500 ? 'Something went wrong.' : (error.message || 'Request failed.'));
   }
 });
 

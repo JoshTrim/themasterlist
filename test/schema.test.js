@@ -11,7 +11,7 @@ describe('SQLite schema migrations', () => {
   test('creates every current subsystem table and can run repeatedly', () => {
     assert.doesNotThrow(() => migrateSchema(database));
     const tables = new Set(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").pluck().all());
-    for (const table of ['gigs', 'gig_media', 'media_playback_clips', 'profiles', 'sessions', 'instance_identity', 'peer_instances', 'peer_nonces', 'peer_sync_baselines', 'peer_sync_conflicts', 'app_settings', 'background_jobs']) assert.ok(tables.has(table), table);
+    for (const table of ['gigs', 'gig_media', 'media_playback_clips', 'profiles', 'sessions', 'instance_identity', 'peer_instances', 'peer_nonces', 'peer_invites', 'peer_sync_baselines', 'peer_sync_conflicts', 'app_settings', 'background_jobs']) assert.ok(tables.has(table), table);
   });
 
   test('contains columns introduced by incremental media and metadata migrations', () => {

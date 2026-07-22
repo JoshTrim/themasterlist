@@ -3,10 +3,6 @@
   if (typeof module === 'object' && module.exports) module.exports = authController;
   else root.MasterListAuthController = authController;
 }(typeof globalThis !== 'undefined' ? globalThis : this, function createAuthControllerModule() {
-  function inviteToken(window) {
-    return new URLSearchParams(window.location.search).get('invite');
-  }
-
   function createController({ window, fetchJson, FormDataClass = globalThis.FormData, elements, onSignedIn, onLoggedOut, onAccountUpdated }) {
     const { panel, profileBar, setupForm, loginForm, registerForm, message, logoutButton, accountForm, accountMessage } = elements;
 
@@ -15,10 +11,13 @@
       profileBar.hidden = true;
       setupForm.hidden = Boolean(status.configured);
       loginForm.hidden = !status.configured;
-      const invite = inviteToken(window);
-      registerForm.hidden = !invite;
-      if (invite) loginForm.hidden = true;
-      message.textContent = invite ? 'Create your account to join this shared instance.' : status.configured ? 'Sign in to your account.' : 'Create the owner account for this shared instance.';
+      const setupTokenField = setupForm.querySelector?.('#setup-token-field');
+      if (setupTokenField) {
+        setupTokenField.hidden = !status.setupTokenRequired;
+        setupTokenField.querySelector('input').required = Boolean(status.setupTokenRequired);
+      }
+      if (registerForm) registerForm.hidden = true;
+      message.textContent = status.configured ? 'Sign in to your archive.' : 'Create the owner account for this instance.';
     }
 
     async function submit(form, endpoint, extra = {}) {
@@ -53,7 +52,6 @@
     function bind() {
       setupForm.addEventListener('submit', (event) => { event.preventDefault(); submit(setupForm, '/api/auth/setup'); });
       loginForm.addEventListener('submit', (event) => { event.preventDefault(); submit(loginForm, '/api/auth/login'); });
-      registerForm.addEventListener('submit', (event) => { event.preventDefault(); submit(registerForm, '/api/auth/register', { inviteToken: inviteToken(window) }); });
       logoutButton.addEventListener('click', logout);
       accountForm?.addEventListener('submit', (event) => { event.preventDefault(); updateAccount(); });
     }
@@ -61,5 +59,5 @@
     return { show, submit, logout, updateAccount, bind };
   }
 
-  return { inviteToken, createController };
+  return { createController };
 }));

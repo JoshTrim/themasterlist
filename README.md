@@ -12,7 +12,7 @@ cp .env.example .env
 npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). The first person to open a new instance creates its single owner account. Do this before exposing the service to any shared network.
 
 ## Tests and architecture
 
@@ -32,7 +32,16 @@ docker compose up -d --build
 docker compose ps
 ```
 
-The app is exposed on port 3000 and all mutable state is mounted at `/data` from the local `./data` directory. The container health check calls `/api/healthz` and verifies both SQLite and media-folder write access. Back up the entire `data` directory if you also want the original media files; scheduled snapshots cover the SQLite database only.
+The app is bound to `127.0.0.1:3000` by default and all mutable state is mounted at `/data` from the local `./data` directory. The container runs without Linux capabilities, with a read-only application filesystem and a private writable data volume. Set `OWNER_SETUP_TOKEN` to a long random value before the first production launch and enter it when creating the owner account; it can be removed after setup. The health check calls `/api/healthz` and verifies both SQLite and media-folder write access. Back up the entire `data` directory if you also want the original media files; scheduled snapshots cover the SQLite database only.
+
+For LAN or VPN access, set both values explicitly before starting:
+
+```sh
+BIND_ADDRESS=0.0.0.0
+APP_ORIGIN=http://192.168.1.20:3000
+```
+
+For internet access, put the app behind an HTTPS reverse proxy, set `APP_ORIGIN` to the exact public `https://` origin, set `SESSION_COOKIE_SECURE=true`, and restrict access with a VPN or an additional proxy authentication layer where possible. Never publish port 3000 directly from a router.
 
 To update the app later:
 
@@ -81,16 +90,23 @@ Copy `.env.playlists.example` values into your local `.env`, complete the creden
 
 The OAuth connections are local to this prototype. A future hosted version should use user accounts, encrypted token storage, and a proper callback domain.
 
-## Shared shows (first collaboration slice)
+## Peer collaboration
 
-When two people use the same hosted instance, create a profile for each person, choose your profile, then use **Share** on a gig. A shared show keeps its own attendee list and every attendee has an independent performance rating, venue rating, favourite status, and memory.
-
-Accounts are password-protected and sign-in is required to use the API. Create the owner account on first launch; the owner can generate one-week invite links for additional people. Keep the instance behind a private network such as Tailscale until a public HTTPS deployment and per-account ownership controls are added.
+Each installation has one password-protected owner account. To collaborate, each person runs their own instance and pairs it from the Account page. Do not create multiple people on one server. Peer pairing invites expire after one week and can be accepted only once.
 
 If both instances change the same shared show after their last common sync, the owner receives a conflict notification. Open **System → Conflicts** to keep the local or peer version, or merge notes, ratings, setlists and matching media assignments. Media files themselves are not copied by this merge; assignments are applied to matching uploads using their checksum, external URL or shared media ID.
 
-## Suggested next increments
+## Privacy and external services
 
-1. Add accounts and cloud storage so the archive is available on every device.
+The archive and uploaded originals remain in the local `data` directory. Optional features send limited information to external providers:
+
+- Setlist searches send artist, city and optionally date to setlist.fm.
+- Map lookup sends venue/address text to OpenStreetMap Nominatim.
+- Album, artist and venue enrichment queries Apple, MusicBrainz, Wikipedia and, when configured, Google Custom Search.
+- YouTube discovery and playlist export send show and track search terms to Google/YouTube.
+- When AudD is enabled, track detection extracts a 12-second MP3 sample from an uploaded video and sends that sample to AudD.
+
+OAuth refresh tokens are stored unencrypted in `data/connections.json`, protected by owner-only filesystem permissions. Protect backups and the entire `data` directory as sensitive personal data.
+
 2. Add a review screen for ambiguous song matches before each export.
 3. Add photos, ratings, support acts, and filtering by artist, venue, city, or year.

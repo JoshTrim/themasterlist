@@ -22,18 +22,18 @@ function harness({ clock = 1_000, connected = {} } = {}) {
 describe('OAuth service', () => {
   test('creates provider-specific authorization URLs', () => {
     const { service } = harness();
-    const spotify = service.begin('spotify', 'http://127.0.0.1/callback');
+    const spotify = service.begin('spotify', 'http://127.0.0.1/callback', 'owner');
     assert.equal(spotify.searchParams.get('state'), 'state-1');
     assert.equal(spotify.searchParams.get('scope'), 'playlist');
-    const youtube = harness().service.begin('youtube', 'http://localhost/callback');
+    const youtube = harness().service.begin('youtube', 'http://localhost/callback', 'owner');
     assert.equal(youtube.searchParams.get('access_type'), 'offline');
     assert.equal(youtube.searchParams.get('prompt'), 'consent');
   });
 
   test('exchanges a valid callback and persists its connection', async () => {
     const state = harness();
-    state.service.begin('spotify', 'http://127.0.0.1/callback');
-    assert.deepEqual(await state.service.complete('spotify', { state: 'state-1', code: 'code' }), { connected: 'spotify' });
+    state.service.begin('spotify', 'http://127.0.0.1/callback', 'owner');
+    assert.deepEqual(await state.service.complete('spotify', { state: 'state-1', code: 'code', subject: 'owner' }), { connected: 'spotify' });
     assert.equal(state.connections().spotify.accessToken, 'new-token');
     const request = state.requests[0];
     assert.match(request.options.headers.Authorization, /^Basic /);
@@ -41,11 +41,18 @@ describe('OAuth service', () => {
   });
 
   test('rejects expired, replayed and denied callbacks', async () => {
-    const expired = harness(); expired.service.begin('spotify', 'callback'); expired.advance(10 * 60_000 + 1);
-    assert.deepEqual(await expired.service.complete('spotify', { state: 'state-1', code: 'code' }), { error: 'invalid-state' });
-    const denied = harness(); denied.service.begin('youtube', 'callback');
-    assert.deepEqual(await denied.service.complete('youtube', { state: 'state-1', error: 'access_denied' }), { error: 'authorization-denied' });
-    assert.deepEqual(await denied.service.complete('youtube', { state: 'state-1', code: 'code' }), { error: 'invalid-state' });
+    const expired = harness(); expired.service.begin('spotify', 'callback', 'owner'); expired.advance(10 * 60_000 + 1);
+    assert.deepEqual(await expired.service.complete('spotify', { state: 'state-1', code: 'code', subject: 'owner' }), { error: 'invalid-state' });
+    const denied = harness(); denied.service.begin('youtube', 'callback', 'owner');
+    assert.deepEqual(await denied.service.complete('youtube', { state: 'state-1', error: 'access_denied', subject: 'owner' }), { error: 'authorization-denied' });
+    assert.deepEqual(await denied.service.complete('youtube', { state: 'state-1', code: 'code', subject: 'owner' }), { error: 'invalid-state' });
+  });
+
+  test('binds pending authorization state to the signed-in owner', async () => {
+    const state = harness();
+    state.service.begin('spotify', 'callback', 'owner-one');
+    assert.deepEqual(await state.service.complete('spotify', { state: 'state-1', code: 'code', subject: 'owner-two' }), { error: 'invalid-state' });
+    assert.equal(state.requests.length, 0);
   });
 
   test('reuses valid tokens and refreshes expiring ones', async () => {

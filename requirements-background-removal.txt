@@ -1,1 +1,1 @@
-rembg[cpu,cli]>=2.0.75,<3
+rembg[cpu,cli]==2.0.75

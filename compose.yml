@@ -3,16 +3,26 @@ services:
     build: .
     container_name: the-master-list
     restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
-      - "3000:3000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3000}:3000"
     env_file:
       - .env
     environment:
       HOST: 0.0.0.0
       PORT: 3000
       MASTER_LIST_DATA_DIR: /data
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+      OWNER_SETUP_TOKEN: ${OWNER_SETUP_TOKEN:-}
     volumes:
       - ./data:/data
+    tmpfs:
+      - /tmp:size=2G,mode=1777
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s

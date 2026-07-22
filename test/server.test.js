@@ -374,7 +374,7 @@ describe('The Master List API regressions', { concurrency: false }, () => {
   });
 
   test('identical uploaded files are deduplicated without creating a second database row', async () => {
-    const image = Buffer.from('not-a-real-png-but-valid-upload-bytes');
+    const image = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('test-image-data')]);
     const upload = () => api(`/api/gigs/${gig.id}/media`, {
       method: 'POST',
       headers: { 'Content-Type': 'image/png', 'Content-Length': String(image.length), 'X-Media-Filename': 'ticket.png' },

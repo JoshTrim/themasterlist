@@ -26,6 +26,7 @@ RUN npm ci --omit=dev \
   && /opt/rembg/bin/pip install --no-cache-dir -r requirements-background-removal.txt
 
 COPY server.js ./
+COPY lib ./lib
 COPY public ./public
 
 RUN mkdir -p /data/media /data/backups && chown -R node:node /app /data /opt/rembg

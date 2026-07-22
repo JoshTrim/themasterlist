@@ -16,28 +16,27 @@ function fixture(search = '') {
 }
 
 describe('frontend authentication controller', () => {
-  test('shows setup, login and invite registration states', () => {
+  test('shows only owner setup or login states', () => {
     const view = fixture('');
     const controller = auth.createController({ window: view.window, fetchJson: async () => {}, FormDataClass: FormDataStub, elements: view.elements, onSignedIn() {}, onLoggedOut() {}, onAccountUpdated() {} });
     controller.show({ configured: false });
     assert.equal(view.elements.setupForm.hidden, false);
     assert.equal(view.elements.loginForm.hidden, true);
     assert.match(view.elements.message.textContent, /Create the owner account/);
-    view.window.location.search = '?invite=secret';
     controller.show({ configured: true });
-    assert.equal(view.elements.registerForm.hidden, false);
-    assert.equal(view.elements.loginForm.hidden, true);
-    assert.match(view.elements.message.textContent, /join this shared instance/);
+    assert.equal(view.elements.registerForm.hidden, true);
+    assert.equal(view.elements.loginForm.hidden, false);
+    assert.match(view.elements.message.textContent, /Sign in to your archive/);
   });
 
-  test('submits credentials, applies extra invite data and redirects home', async () => {
-    const view = fixture('?invite=secret');
+  test('submits owner credentials and redirects home', async () => {
+    const view = fixture();
     const requests = [];
     let signedIn;
-    view.elements.registerForm.entries = [['name', 'Archive Owner'], ['password', 'pass']];
+    view.elements.loginForm.entries = [['name', 'Archive Owner'], ['password', 'pass']];
     const controller = auth.createController({ window: view.window, FormDataClass: FormDataStub, elements: view.elements, onSignedIn: (account) => { signedIn = account; }, onLoggedOut() {}, onAccountUpdated() {}, fetchJson: async (url, options) => { requests.push([url, options]); return { id: 'owner', name: 'Archive Owner' }; } });
-    await controller.submit(view.elements.registerForm, '/api/auth/register', { inviteToken: auth.inviteToken(view.window) });
-    assert.deepEqual(JSON.parse(requests[0][1].body), { name: 'Archive Owner', password: 'pass', inviteToken: 'secret' });
+    await controller.submit(view.elements.loginForm, '/api/auth/login');
+    assert.deepEqual(JSON.parse(requests[0][1].body), { name: 'Archive Owner', password: 'pass' });
     assert.equal(signedIn.id, 'owner');
     assert.equal(view.window.location.replaced, '/');
   });

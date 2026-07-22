@@ -1,7 +1,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { Readable } = require('node:stream');
-const { mediaExtension, mediaCategory, safeMediaName, hashFile } = require('../lib/media-utils');
+const { mediaExtension, mediaCategory, safeMediaName, validMediaSignature, hashFile } = require('../lib/media-utils');
 
 describe('media utilities', () => {
   test('chooses known, filename-derived and safe fallback extensions', () => {
@@ -21,6 +21,13 @@ describe('media utilities', () => {
     assert.equal(safeMediaName(' Poppy @ Fortitude Music Hall! '), 'poppy-fortitude-music-hall');
     assert.equal(safeMediaName('***'), 'unknown');
     assert.ok(safeMediaName('a'.repeat(100)).length <= 60);
+  });
+
+  test('checks image and video container signatures instead of trusting MIME declarations', () => {
+    assert.equal(validMediaSignature(Buffer.from([0xff, 0xd8, 0xff, 0x00]), 'image/jpeg'), true);
+    assert.equal(validMediaSignature(Buffer.from('not a jpeg'), 'image/jpeg'), false);
+    assert.equal(validMediaSignature(Buffer.from([0, 0, 0, 20, ...Buffer.from('ftypisom')]), 'video/mp4'), true);
+    assert.equal(validMediaSignature(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), 'video/webm'), true);
   });
 
   test('hashes streamed file content for duplicate detection', async () => {

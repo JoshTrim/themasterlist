@@ -34,10 +34,16 @@ test('pair, hello and replay protection work without an account session', async 
   const alpha = instance('Alpha'); const beta = instance('Beta');
   const route = handler(beta);
   const pairEnvelope = alpha.identity.signEnvelope({ type: 'pair', name: 'Alpha', publicKey: alpha.identity.row().publicKey, baseUrl: 'http://alpha.test' });
+  const inviteToken = beta.identity.createInvite('http://beta.test');
   const paired = response();
-  await route({ method: 'POST', headers: {}, body: { inviteToken: beta.identity.createInvite('http://beta.test'), envelope: pairEnvelope } }, paired, new URL('http://beta.test/api/sync/pair'));
+  await route({ method: 'POST', headers: {}, body: { inviteToken, envelope: pairEnvelope } }, paired, new URL('http://beta.test/api/sync/pair'));
   assert.equal(paired.status, 200);
   assert.equal(beta.database.prepare('SELECT status FROM peer_instances').get().status, 'connected');
+  const reused = response();
+  const secondEnvelope = alpha.identity.signEnvelope({ type: 'pair', name: 'Alpha', publicKey: alpha.identity.row().publicKey, baseUrl: 'http://alpha.test' });
+  await route({ method: 'POST', headers: {}, body: { inviteToken, envelope: secondEnvelope } }, reused, new URL('http://beta.test/api/sync/pair'));
+  assert.equal(reused.status, 400);
+  assert.match(JSON.parse(reused.body).error, /already been used/);
 
   const helloEnvelope = alpha.identity.signEnvelope({ type: 'hello' });
   const hello = response();
@@ -75,6 +81,11 @@ test('account-facing peer creation validates URLs and requires authentication', 
   await route({ method: 'POST', headers: {}, body: { peerId: 'remote', name: 'Remote', publicKey: 'key', baseUrl: 'file:///tmp/peer' } }, invalid, new URL('http://local.test/api/peers'));
   assert.equal(invalid.status, 400);
   assert.equal(authChecks, 1);
+  for (const baseUrl of ['http://127.0.0.1:3000', 'http://localhost:3000', 'http://169.254.169.254/latest/meta-data']) {
+    const blocked = response();
+    await route({ method: 'POST', headers: {}, body: { peerId: `remote-${baseUrl}`, name: 'Remote', publicKey: 'key', baseUrl } }, blocked, new URL('http://local.test/api/peers'));
+    assert.equal(blocked.status, 400);
+  }
   assert.equal(app.database.prepare('SELECT COUNT(*) AS count FROM peer_instances').get().count, 0);
   app.database.close();
 });

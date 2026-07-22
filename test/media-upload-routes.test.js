@@ -10,7 +10,7 @@ const Database = require('better-sqlite3');
 const { migrateSchema } = require('../lib/schema');
 const { createMediaRepository } = require('../lib/media-repository');
 const { createMediaUploadRoutes } = require('../lib/routes/media-uploads');
-const { mediaExtension, mediaCategory, hashFile } = require('../lib/media-utils');
+const { mediaExtension, mediaCategory, validMediaSignature, hashFile } = require('../lib/media-utils');
 const { sendJson, sendError } = require('../lib/http');
 
 function response() {
@@ -21,7 +21,7 @@ function response() {
   };
 }
 
-function fixture() {
+function fixture({ maxStorageSize = Infinity } = {}) {
   const mediaDir = fs.mkdtempSync(path.join(os.tmpdir(), 'master-list-upload-routes-'));
   const database = new Database(':memory:');
   migrateSchema(database);
@@ -32,11 +32,11 @@ function fixture() {
   const queuedRecognition = [];
   const handle = createMediaUploadRoutes({
     database, fs: fsp, legacyFs: fs, path, mediaDir, maxMediaSize: 1024 * 1024,
-    randomUUID: () => `media-${++sequence}`, createHash, mediaExtension, mediaCategory, hashFile,
+    randomUUID: () => `media-${++sequence}`, createHash, mediaExtension, mediaCategory, validMediaSignature, hashFile,
     mediaRows: repository.list, readBody: async (request) => request.body, sendJson, sendError,
     startPlaybackEncode(...args) { queuedEncodes.push(args); },
     recognizeVideoTrack(...args) { queuedRecognition.push(args); },
-    logger: { log() {} }, schedule: (callback) => callback()
+    logger: { log() {} }, schedule: (callback) => callback(), maxStorageSize
   });
   return { database, mediaDir, handle, queuedEncodes, queuedRecognition };
 }
@@ -66,9 +66,10 @@ test('artifact uploads reject videos before touching disk', async () => {
 test('raw uploads are checksummed and duplicate content reuses the first record', async () => {
   const { database, handle } = fixture();
   const upload = async () => {
-    const request = Readable.from([Buffer.from('same-photo')]);
+    const content = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from('same-photo')]);
+    const request = Readable.from([content]);
     request.method = 'POST';
-    request.headers = { 'content-type': 'image/jpeg', 'content-length': '10', 'x-media-filename': 'shirt.jpg' };
+    request.headers = { 'content-type': 'image/jpeg', 'content-length': String(content.length), 'x-media-filename': 'shirt.jpg' };
     const result = response();
     await handle(request, result, new URL('http://localhost/api/gigs/gig/media'));
     return result;
@@ -83,13 +84,14 @@ test('raw uploads are checksummed and duplicate content reuses the first record'
 
 test('chunked mobile uploads resume at the server offset and finalize once', async () => {
   const { database, handle } = fixture();
-  const sendChunk = async (content, offset) => {
-    const request = Readable.from([Buffer.from(content)]);
+  const content = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from('photo-data')]);
+  const sendChunk = async (chunk, offset) => {
+    const request = Readable.from([chunk]);
     request.method = 'POST';
     request.headers = {
       'content-type': 'image/jpeg',
       'x-upload-id': 'phone-upload',
-      'x-upload-total': '10',
+      'x-upload-total': String(content.length),
       'x-upload-offset': String(offset),
       'x-media-filename': 'merch.jpg'
     };
@@ -98,15 +100,41 @@ test('chunked mobile uploads resume at the server offset and finalize once', asy
     return result;
   };
 
-  const first = await sendChunk('same', 0);
+  const first = await sendChunk(content.subarray(0, 4), 0);
   assert.equal(first.status, 200);
   assert.deepEqual(JSON.parse(first.body), { complete: false, offset: 4 });
-  const wrongOffset = await sendChunk('ignored', 2);
+  const wrongOffset = await sendChunk(Buffer.from('ignored'), 2);
   assert.equal(wrongOffset.status, 409);
   assert.deepEqual(JSON.parse(wrongOffset.body), { offset: 4 });
-  const complete = await sendChunk('-photo', 4);
+  const complete = await sendChunk(content.subarray(4), 4);
   assert.equal(complete.status, 201);
   assert.equal(JSON.parse(complete.body).complete, true);
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM gig_media').get().count, 1);
+  database.close();
+});
+
+test('rejects declared media whose bytes have a different file signature', async () => {
+  const { database, handle, mediaDir } = fixture();
+  const request = Readable.from([Buffer.from('plain text pretending to be an image')]);
+  request.method = 'POST';
+  request.headers = { 'content-type': 'image/jpeg', 'content-length': '36', 'x-media-filename': 'fake.jpg' };
+  const result = response();
+  await handle(request, result, new URL('http://localhost/api/gigs/gig/media'));
+  assert.equal(result.status, 415);
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM gig_media').get().count, 0);
+  assert.deepEqual(fs.readdirSync(mediaDir), []);
+  database.close();
+});
+
+test('rejects uploads that exceed the total archive storage quota', async () => {
+  const { database, handle } = fixture({ maxStorageSize: 5 });
+  const content = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from('photo')]);
+  const request = Readable.from([content]);
+  request.method = 'POST';
+  request.headers = { 'content-type': 'image/jpeg', 'content-length': String(content.length), 'x-media-filename': 'large.jpg' };
+  const result = response();
+  await handle(request, result, new URL('http://localhost/api/gigs/gig/media'));
+  assert.equal(result.status, 507);
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM gig_media').get().count, 0);
   database.close();
 });
