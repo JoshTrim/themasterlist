@@ -90,7 +90,13 @@ The first cutout job downloads its model and takes longer than later jobs.
 
 ## Phone and LAN access
 
-Find the server’s LAN address, then update `.env` with that exact address. For example:
+Docker binds the app to `127.0.0.1` by default, so other devices cannot reach it. Find the Mac’s current Wi-Fi address in **System Settings → Wi-Fi → Details → IP Address**, or run:
+
+```sh
+ipconfig getifaddr en0
+```
+
+Update `.env` with that exact address. For example, if the Mac is `192.168.1.20`:
 
 ```env
 BIND_ADDRESS=0.0.0.0
@@ -98,7 +104,21 @@ HOST=0.0.0.0
 APP_ORIGIN=http://192.168.1.20:3000
 ```
 
-Restart the server and visit the same `APP_ORIGIN` URL from the phone. Allow incoming connections through the host firewall if prompted. Do not use `0.0.0.0` as a browser URL, and do not expose this configuration directly to the internet.
+`BIND_ADDRESS` publishes Docker's port to the trusted local network. `HOST` controls the native Node server and is already set correctly inside the container; setting only `HOST=0.0.0.0` on a Compose command does not change Docker's host-side binding.
+
+Recreate the container so the new binding and origin take effect:
+
+```sh
+docker compose down
+docker compose up -d
+docker compose ps
+```
+
+The port shown by `docker compose ps` should begin with `0.0.0.0:3000`. On a phone connected to the same Wi-Fi, visit the `APP_ORIGIN` address—for this example, `http://192.168.1.20:3000`.
+
+Compose's detached mode (`-d`) keeps the app running after Terminal closes, and the service's `restart: unless-stopped` policy starts it again when Docker starts. Enable **Start Docker Desktop when you sign in** if it should return after restarting the Mac.
+
+If the phone still cannot connect, allow Docker through the macOS firewall and confirm the Wi-Fi network permits devices to communicate with one another. Guest networks commonly block this traffic. Do not use `0.0.0.0` as a browser URL, and do not expose port 3000 directly to the internet.
 
 ## Updating
 

@@ -24,7 +24,15 @@ If Google says the app is limited to approved testers, add the signing-in Google
 
 ## Phone cannot open the app
 
-Set `BIND_ADDRESS=0.0.0.0`, `HOST=0.0.0.0`, and set `APP_ORIGIN` to the server’s real LAN IP and port. Restart the app, use that same URL on the phone, and check the host firewall. Both devices must be on a network that permits client-to-client traffic.
+For Docker, set `BIND_ADDRESS=0.0.0.0` in `.env` and set `APP_ORIGIN` to the server’s real LAN IP and port. Setting only `HOST=0.0.0.0` on the Compose command does not publish the port to the LAN. Recreate the container and verify the mapping:
+
+```sh
+docker compose down
+docker compose up -d
+docker compose ps
+```
+
+The port should begin with `0.0.0.0:3000`. Use the exact `APP_ORIGIN` URL on the phone, check the host firewall, and ensure both devices are on a network that permits client-to-client traffic. See [Phone and LAN access](GETTING_STARTED.md#phone-and-lan-access) for the complete setup.
 
 ## `better-sqlite3` was compiled for another Node version
 
