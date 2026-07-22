@@ -111,6 +111,3 @@ OAuth credentials are encrypted in `data/connections.json` and protected by owne
 ## Licence
 
 Copyright © 2026 Josh Trim. The Master List is free software distributed under the [GNU General Public License version 3](LICENSE).
-
-2. Add a review screen for ambiguous song matches before each export.
-3. Add photos, ratings, support acts, and filtering by artist, venue, city, or year.
