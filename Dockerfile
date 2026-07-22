@@ -1,4 +1,4 @@
-FROM node:26-bookworm-slim
+FROM node:24.16.0-bookworm-slim
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
@@ -20,10 +20,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY package.json package-lock.json requirements-background-removal.txt ./
-RUN npm ci --omit=dev \
-  && python3 -m venv /opt/rembg \
-  && /opt/rembg/bin/pip install --no-cache-dir -r requirements-background-removal.txt
+COPY requirements-background-removal.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python3 -m venv /opt/rembg \
+  && /opt/rembg/bin/pip install -r requirements-background-removal.txt
+
+COPY package.json package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --include=dev \
+  && find node_modules/better-sqlite3/prebuilds -type f -delete \
+  && ./node_modules/.bin/node-gyp rebuild --release --force_build=1 --directory node_modules/better-sqlite3 \
+  && npm prune --omit=dev \
+  && node -e "const Database = require('better-sqlite3'); const database = new Database(':memory:'); database.close();"
 
 COPY server.js ./
 COPY lib ./lib

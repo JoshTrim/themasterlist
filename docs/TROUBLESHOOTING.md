@@ -37,6 +37,18 @@ npm ci
 
 If dependencies must be retained, `npm rebuild better-sqlite3` can rebuild only the native module.
 
+If Docker reports a missing `GLIBC` version for `better_sqlite3.node`, pull the current source and rebuild the image without its old dependency layers:
+
+```sh
+git pull
+docker compose down
+docker compose build --no-cache master-list
+docker compose up -d
+docker compose logs -f master-list
+```
+
+The Dockerfile compiles `better-sqlite3` against its pinned Debian runtime and verifies that the module loads while building. Do not copy a host `node_modules` directory into the image.
+
 ## FFmpeg is missing or media processing does not start
 
 Docker includes FFmpeg. Native installations must make both `ffmpeg` and `ffprobe` available on `PATH`.
