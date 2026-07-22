@@ -136,6 +136,10 @@ npm start
 
 Use `npm run dev` for automatic server restarts, `npm run test:coverage` for Node's coverage report, and `npm run setup:hooks` to enable the repository’s pre-commit checks.
 
+
+## Disclaimer
+This project is 100% vibe coded, so if you are allergic to synthetic code generation feel free to not use it.
+
 ## Licence
 
 Copyright © 2026 Josh Trim. The Master List is free software distributed under the [GNU General Public License version 3](LICENSE).
