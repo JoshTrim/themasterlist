@@ -1,116 +1,145 @@
 # The Master List
 
-A personal archive for the live music shows you have attended. The first release lets you log a gig, find the matching setlist on setlist.fm, and preserve the songs with your own note.
+<p align="center">
+  <img src="docs/assets/chest-header.png" alt="The Master List pixel-art treasure chest" width="900">
+</p>
 
-## Run it
+A self-hosted archive for live shows, setlists, photos, videos, ratings and shared gig memories.
 
-Requires Node.js 20 or later, FFmpeg for media processing, and the optional Python worker described below for artifact cutouts.
+The Master List can find setlists through setlist.fm, export them as playlists, build whole-show playback from uploaded or YouTube media, map attended venues, and sync shared shows between trusted instances. Each installation belongs to one owner; collaboration happens by pairing separate installations.
+
+## Features
+
+- Record attended shows, memories, ratings and favourites.
+- Fetch and edit setlists, album metadata, artists and venues.
+- Upload photos, large videos and artifact images such as merch or paper setlists.
+- Build editable whole-set playback with chapters, fallbacks and theatre mode.
+- Export setlists to Spotify, YouTube and Apple Music.
+- Explore artists, venues, maps, timelines and archive statistics.
+- Pair trusted self-hosted instances and resolve simultaneous edits.
+- Schedule SQLite backups and inspect archive health from the app.
+
+## Tour
+
+The captures use demonstration data. Open a section to see that part of the application in motion.
+
+<details open>
+<summary><strong>Home</strong> — unlock the archive through its pixel-art chest</summary>
+
+<p align="center"><img src="docs/assets/home-page.webp" alt="Opening The Master List archive from its home page" width="900"></p>
+</details>
+
+<details>
+<summary><strong>Shows and adding a show</strong> — browse the archive, find a setlist and record a memory</summary>
+
+<p align="center"><img src="docs/assets/add-show.webp" alt="Browsing shows and adding a show" width="900"></p>
+</details>
+
+<details>
+<summary><strong>Overview</strong> — see archive totals, favourites and listening patterns</summary>
+
+<p align="center"><img src="docs/assets/overview.webp" alt="Archive overview and statistics" width="900"></p>
+</details>
+
+<details>
+<summary><strong>Artists</strong> — explore artist history, metadata and attended shows</summary>
+
+<p align="center"><img src="docs/assets/artists.webp" alt="Artist directory and artist profile" width="900"></p>
+</details>
+
+<details>
+<summary><strong>Venues</strong> — revisit venues and their show history</summary>
+
+<p align="center"><img src="docs/assets/venues.webp" alt="Venue directory and venue profile" width="900"></p>
+</details>
+
+<details>
+<summary><strong>Map</strong> — plot attended venues around the world</summary>
+
+<p align="center"><img src="docs/assets/map.webp" alt="Map of attended venues" width="900"></p>
+</details>
+
+<details>
+<summary><strong>Timeline</strong> — follow how the archive has grown over the years</summary>
+
+<p align="center"><img src="docs/assets/timeline.webp" alt="Timeline of attended shows" width="900"></p>
+</details>
+
+<details>
+<summary><strong>System tools</strong> — activity, metadata health, backups, API limits and account settings</summary>
+
+<p align="center"><img src="docs/assets/system-pages.webp" alt="The Master List system and maintenance pages" width="900"></p>
+</details>
+
+## Quick start with Docker
+
+Docker is the recommended way to run the complete stack. It includes Node.js, FFmpeg and the CPU background-removal worker.
+
+1. Copy the configuration template:
+
+   ```sh
+   cp .env.example .env
+   ```
+
+2. Generate the two production secrets:
+
+   ```sh
+   openssl rand -hex 32
+   openssl rand -base64 32
+   ```
+
+3. Open `.env` and paste the first value into `OWNER_SETUP_TOKEN` and the second into `CONNECTIONS_ENCRYPTION_KEY`.
+
+4. Start the application:
+
+   ```sh
+   docker compose up -d --build
+   docker compose ps
+   ```
+
+5. Open [http://127.0.0.1:3000](http://127.0.0.1:3000), create the owner account, and enter `OWNER_SETUP_TOKEN` when prompted. After the account exists, the setup token can be removed from `.env`; keep the encryption key permanently.
+
+Application state lives in `./data`. Do not commit or publicly share `.env`, `data`, backups, pairing invitations or the encryption key.
+
+For a native Node installation, LAN access, upgrades and the first-show walkthrough, see [Getting started](docs/GETTING_STARTED.md).
+
+## Documentation
+
+| Guide | Use it for |
+| --- | --- |
+| [Getting started](docs/GETTING_STARTED.md) | Docker, native installation, first login, first show and upgrades |
+| [Configuration](docs/CONFIGURATION.md) | Every environment variable and deployment setting |
+| [Integrations](docs/INTEGRATIONS.md) | setlist.fm, Spotify, YouTube, Apple Music, AudD and metadata providers |
+| [Data and backups](docs/DATA_AND_BACKUPS.md) | Storage layout, backup scope, restore and OAuth encryption |
+| [Peer collaboration](docs/PEER_COLLABORATION.md) | Pairing instances, shared shows, conflicts and trust boundaries |
+| [Privacy](docs/PRIVACY.md) | Local data and information sent to optional external services |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Common startup, OAuth, media and network problems |
+| [Architecture](ARCHITECTURE.md) | Module boundaries and testing strategy |
+| [Contributing](CONTRIBUTING.md) | Development setup, tests and pull-request expectations |
+| [Security policy](SECURITY.md) | Safe deployment and vulnerability reporting |
+
+## Safe deployment
+
+The default Docker binding is `127.0.0.1:3000`, so the app is not exposed to the LAN. For phone access, use a trusted LAN or private VPN and follow the exact `APP_ORIGIN` instructions in [Getting started](docs/GETTING_STARTED.md). For internet access, use an HTTPS reverse proxy, secure cookies and preferably a VPN or additional access-control layer. Never forward port 3000 directly from a router.
+
+OAuth credentials are encrypted with AES-256-GCM when `CONNECTIONS_ENCRYPTION_KEY` is configured, and that key is mandatory in production. Encryption protects a copied data volume, but it cannot protect secrets from an attacker who controls the running server.
+
+## Development
+
+Node.js 24 is recommended and the minimum supported version is Node.js 20.
 
 ```sh
-cp .env.example .env
-# Add your setlist.fm API key to .env (optional until you use search)
+npm ci
+npm test
 npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The first person to open a new instance creates its single owner account. Do this before exposing the service to any shared network.
+Use `npm run dev` for automatic server restarts, `npm run test:coverage` for Node's coverage report, and `npm run setup:hooks` to enable the repository’s pre-commit checks.
 
-## Tests and architecture
 
-Run the regression suite with `npm test`, or include Node's built-in line/branch/function report with `npm run test:coverage`. The suite combines HTTP contract tests with port-free unit tests for migrations, authentication, backups, peer conflicts, media utilities, playback analysis and frontend shell contracts.
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the current module boundaries and the safe order for further extraction.
-
-Shows are stored locally in `data/master-list.sqlite`. On first startup, the app automatically imports an existing `data/gigs.json` archive into SQLite. The legacy JSON file is left untouched as a backup and both local data files are ignored by Git.
-
-### Docker deployment
-
-The included image packages Node.js, FFmpeg, SQLite support and the CPU background-removal worker. Copy the environment file, then build and run:
-
-```sh
-cp .env.example .env
-docker compose up -d --build
-docker compose ps
-```
-
-The app is bound to `127.0.0.1:3000` by default and all mutable state is mounted at `/data` from the local `./data` directory. The container runs without Linux capabilities, with a read-only application filesystem and a private writable data volume. Set `OWNER_SETUP_TOKEN` to a long random value before the first production launch and enter it when creating the owner account; it can be removed after setup. The health check calls `/api/healthz` and verifies both SQLite and media-folder write access. Back up the entire `data` directory if you also want the original media files; scheduled snapshots cover the SQLite database only.
-
-For LAN or VPN access, set both values explicitly before starting:
-
-```sh
-BIND_ADDRESS=0.0.0.0
-APP_ORIGIN=http://192.168.1.20:3000
-```
-
-For internet access, put the app behind an HTTPS reverse proxy, set `APP_ORIGIN` to the exact public `https://` origin, set `SESSION_COOKIE_SECURE=true`, and restrict access with a VPN or an additional proxy authentication layer where possible. Never publish port 3000 directly from a router.
-
-To update the app later:
-
-```sh
-docker compose up -d --build
-```
-
-### Scheduled backups
-
-The Maintenance page can enable or disable database snapshots, choose the interval in hours, set how many scheduled snapshots to retain, run one immediately, and show the most recent result. Snapshots live in `data/backups`. Defaults can be supplied on first launch with `BACKUP_ENABLED`, `BACKUP_INTERVAL_HOURS`, and `BACKUP_RETENTION_COUNT`; settings saved in the app take precedence afterward.
-
-### Artifact background removal
-
-Artifact photos can be converted into transparent cutouts while retaining the original image. Install the optional CPU worker once, then restart the app:
-
-```sh
-npm run setup:background-removal
-npm start
-```
-
-The first background-removal job downloads its selected model and can take longer than subsequent jobs. Set `REMBG_MODEL` to choose another rembg model, or `REMBG_COMMAND` if the executable lives outside the project `.venv`.
-
-## setlist.fm
-
-The app calls setlist.fm from the server, so your key is never sent to the browser. Create a free account, apply for a key, then add `SETLIST_FM_API_KEY` to `.env`. The search needs the artist, city, and date; select the correct match before saving.
-
-setlist.fm's API is free for non-commercial use and requires its API key to be sent in the `x-api-key` header. Check its terms before changing the project scope: [API docs](https://api.setlist.fm/docs/1.0/index.html) and [terms](https://www.setlist.fm/help/terms).
-
-## Automatic track detection
-
-If `AUDD_API_TOKEN` is present in `.env`, uploaded videos are sent through a background recognition job. The server extracts a 12-second audio sample, sends it to AudD, and displays the detected title and artist in the media gallery. Exact title matches are automatically associated with the show setlist; unmatched results can still be assigned manually from the edit page. The token is kept server-side.
-
-On the edit page, selecting a different setlist track—or selecting **Unassigned**—marks that media item as a manual override and preserves your choice.
-
-## Playlist exports
-
-Every saved show with a setlist has export buttons. Exports create **private** playlists and show the number of songs that could not be matched. The matching uses the setlist artist (or the credited cover artist) and song title.
-
-Copy `.env.playlists.example` values into your local `.env`, complete the credentials, and restart the server. Do not commit `.env` or `data/connections.json`; the latter holds local OAuth refresh tokens.
-
-| Service | One-time setup | What the app does |
-| --- | --- | --- |
-| Spotify | Create an app in the Spotify developer dashboard and add `http://127.0.0.1:3000/auth/spotify/callback` as a redirect URI. | Connect via OAuth, search each song, create a private playlist, and add matches. |
-| YouTube | Enable YouTube Data API v3 in Google Cloud, create Web Application OAuth credentials, and add `http://localhost:3000/auth/youtube/callback`. | Connect via OAuth, find music videos/audio, and create a private YouTube playlist. |
-| Apple Music | Apple Developer Program membership, a MusicKit identifier/key, and a signed developer token. | MusicKit asks the subscriber for permission, then creates a library playlist and adds matched catalog songs. |
-
-The OAuth connections are local to this prototype. A future hosted version should use user accounts, encrypted token storage, and a proper callback domain.
-
-## Peer collaboration
-
-Each installation has one password-protected owner account. To collaborate, each person runs their own instance and pairs it from the Account page. Do not create multiple people on one server. Peer pairing invites expire after one week and can be accepted only once.
-
-If both instances change the same shared show after their last common sync, the owner receives a conflict notification. Open **System → Conflicts** to keep the local or peer version, or merge notes, ratings, setlists and matching media assignments. Media files themselves are not copied by this merge; assignments are applied to matching uploads using their checksum, external URL or shared media ID.
-
-## Privacy and external services
-
-The archive and uploaded originals remain in the local `data` directory. Optional features send limited information to external providers:
-
-- Setlist searches send artist, city and optionally date to setlist.fm.
-- Map lookup sends venue/address text to OpenStreetMap Nominatim.
-- Album, artist and venue enrichment queries Apple, MusicBrainz, Wikipedia and, when configured, Google Custom Search.
-- YouTube discovery and playlist export send show and track search terms to Google/YouTube.
-- When AudD is enabled, track detection extracts a 12-second MP3 sample from an uploaded video and sends that sample to AudD.
-
-OAuth refresh tokens are stored unencrypted in `data/connections.json`, protected by owner-only filesystem permissions. Protect backups and the entire `data` directory as sensitive personal data.
+## Disclaimer
+This project is 100% vibe coded, so if you are allergic to synthetic code generation feel free to not use it.
 
 ## Licence
 
 Copyright © 2026 Josh Trim. The Master List is free software distributed under the [GNU General Public License version 3](LICENSE).
-
-2. Add a review screen for ambiguous song matches before each export.
-3. Add photos, ratings, support acts, and filtering by artist, venue, city, or year.

@@ -53,6 +53,7 @@ const { createMetadataCache } = require('./lib/metadata-cache');
 const { createFileServing } = require('./lib/file-serving');
 const { secureStorage } = require('./lib/storage-security');
 const { resolveAppOrigin, validateRequestOrigin, applySecurityHeaders } = require('./lib/security');
+const { createConnectionStore } = require('./lib/connection-store');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -70,6 +71,10 @@ const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
 const GEOCODES_FILE = path.join(DATA_DIR, 'geocodes.json');
 const MAX_MEDIA_SIZE = Number(process.env.MAX_MEDIA_SIZE_GB || 50) * 1024 * 1024 * 1024;
 const MAX_MEDIA_STORAGE_SIZE = Number(process.env.MAX_MEDIA_STORAGE_GB || 500) * 1024 * 1024 * 1024;
+
+if (process.env.NODE_ENV === 'production' && !process.env.CONNECTIONS_ENCRYPTION_KEY) {
+  throw new Error('CONNECTIONS_ENCRYPTION_KEY is required in production. Generate one with: openssl rand -base64 32');
+}
 
 process.umask(0o077);
 secureStorage({ fs: legacyFs, path, dataDir: DATA_DIR, mediaDir: MEDIA_DIR, backupDir: BACKUP_DIR });
@@ -135,6 +140,13 @@ const { readAll: readGigs, writeAll: writeGigs, find: findGigSync } = gigReposit
 const profileImages = createProfileImages({ fs, path, mediaDir: MEDIA_DIR, randomUUID });
 const apiUsage = createApiUsage({ database, request: fetch });
 const providerResponse = apiUsage.requestJson;
+const connectionStore = createConnectionStore({
+  fs,
+  path,
+  filePath: CONNECTIONS_FILE,
+  key: process.env.CONNECTIONS_ENCRYPTION_KEY || '',
+  previousKey: process.env.CONNECTIONS_ENCRYPTION_KEY_PREVIOUS || ''
+});
 const setlistProvider = createSetlistFmProvider({ apiKey: process.env.SETLIST_FM_API_KEY, fetch, recordUsage: apiUsage.record, normaliseSongs });
 const metadataProvider = createMetadataProvider({ fetch, googleApiKey: process.env.GOOGLE_CUSTOM_SEARCH_API_KEY, googleEngineId: process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID });
 const spotifyProvider = createSpotifyProvider({ requestJson: providerResponse });
@@ -226,17 +238,11 @@ function migrateLegacyGigs() {
 migrateLegacyGigs();
 
 async function readConnections() {
-  try {
-    return JSON.parse(await fs.readFile(CONNECTIONS_FILE, 'utf8'));
-  } catch (error) {
-    if (error.code === 'ENOENT') return {};
-    throw error;
-  }
+  return connectionStore.read();
 }
 
 async function writeConnections(connections) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(CONNECTIONS_FILE, JSON.stringify(connections, null, 2) + '\n', { mode: 0o600 });
+  await connectionStore.write(connections);
 }
 
 async function readGeocodes() {
