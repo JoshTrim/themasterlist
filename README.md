@@ -1,5 +1,9 @@
 # The Master List
 
+<p align="center">
+  <img src="docs/assets/chest-header.png" alt="The Master List pixel-art treasure chest" width="745">
+</p>
+
 A self-hosted archive for live shows, setlists, photos, videos, ratings and shared gig memories.
 
 The Master List can find setlists through setlist.fm, export them as playlists, build whole-show playback from uploaded or YouTube media, map attended venues, and sync shared shows between trusted instances. Each installation belongs to one owner; collaboration happens by pairing separate installations.
@@ -14,6 +18,58 @@ The Master List can find setlists through setlist.fm, export them as playlists, 
 - Explore artists, venues, maps, timelines and archive statistics.
 - Pair trusted self-hosted instances and resolve simultaneous edits.
 - Schedule SQLite backups and inspect archive health from the app.
+
+## Tour
+
+The captures use demonstration data. Open a section to see that part of the application in motion.
+
+<details open>
+<summary><strong>Home</strong> — unlock the archive through its pixel-art chest</summary>
+
+<p align="center"><img src="docs/assets/home-page.webp" alt="Opening The Master List archive from its home page" width="900"></p>
+</details>
+
+<details>
+<summary><strong>Shows and adding a show</strong> — browse the archive, find a setlist and record a memory</summary>
+
+<p align="center"><img src="docs/assets/add-show.webp" alt="Browsing shows and adding a show" width="900"></p>
+</details>
+
+<details>
+<summary><strong>Overview</strong> — see archive totals, favourites and listening patterns</summary>
+
+<p align="center"><img src="docs/assets/overview.webp" alt="Archive overview and statistics" width="900"></p>
+</details>
+
+<details>
+<summary><strong>Artists</strong> — explore artist history, metadata and attended shows</summary>
+
+<p align="center"><img src="docs/assets/artists.webp" alt="Artist directory and artist profile" width="900"></p>
+</details>
+
+<details>
+<summary><strong>Venues</strong> — revisit venues and their show history</summary>
+
+<p align="center"><img src="docs/assets/venues.webp" alt="Venue directory and venue profile" width="900"></p>
+</details>
+
+<details>
+<summary><strong>Map</strong> — plot attended venues around the world</summary>
+
+<p align="center"><img src="docs/assets/map.webp" alt="Map of attended venues" width="900"></p>
+</details>
+
+<details>
+<summary><strong>Timeline</strong> — follow how the archive has grown over the years</summary>
+
+<p align="center"><img src="docs/assets/timeline.webp" alt="Timeline of attended shows" width="900"></p>
+</details>
+
+<details>
+<summary><strong>System tools</strong> — activity, metadata health, backups, API limits and account settings</summary>
+
+<p align="center"><img src="docs/assets/system-pages.webp" alt="The Master List system and maintenance pages" width="900"></p>
+</details>
 
 ## Quick start with Docker
 

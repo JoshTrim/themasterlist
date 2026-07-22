@@ -4,7 +4,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
-const trackedDocs = ['README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'ARCHITECTURE.md', ...fs.readdirSync(path.join(root, 'docs')).map((name) => `docs/${name}`)];
+const guideFiles = fs.readdirSync(path.join(root, 'docs'), { withFileTypes: true })
+  .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+  .map((entry) => `docs/${entry.name}`);
+const trackedDocs = ['README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'ARCHITECTURE.md', ...guideFiles];
 
 test('relative Markdown links point to files that exist', () => {
   for (const filename of trackedDocs) {
@@ -14,6 +17,18 @@ test('relative Markdown links point to files that exist', () => {
       if (!destination || /^[a-z]+:/i.test(destination)) continue;
       const resolved = path.resolve(path.dirname(path.join(root, filename)), decodeURIComponent(destination));
       assert.equal(fs.existsSync(resolved), true, `${filename} links to missing ${destination}`);
+    }
+  }
+});
+
+test('local HTML documentation assets point to files that exist', () => {
+  for (const filename of trackedDocs) {
+    const contents = fs.readFileSync(path.join(root, filename), 'utf8');
+    for (const match of contents.matchAll(/<(?:img|a)\b[^>]+(?:src|href)="([^"]+)"/gi)) {
+      const destination = match[1].split('#')[0];
+      if (!destination || /^[a-z]+:/i.test(destination)) continue;
+      const resolved = path.resolve(path.dirname(path.join(root, filename)), decodeURIComponent(destination));
+      assert.equal(fs.existsSync(resolved), true, `${filename} embeds missing ${destination}`);
     }
   }
 });
