@@ -8,11 +8,13 @@ Requires Node.js 20 or later, FFmpeg for media processing, and the optional Pyth
 
 ```sh
 cp .env.example .env
+# Generate a key, then paste it into CONNECTIONS_ENCRYPTION_KEY in .env
+openssl rand -base64 32
 # Add your setlist.fm API key to .env (optional until you use search)
 npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The first person to open a new instance creates its single owner account. Do this before exposing the service to any shared network.
+Open [http://localhost:3000](http://localhost:3000). The first person to open a new instance creates its single owner account. Do this before exposing the service to any shared network. Keep `CONNECTIONS_ENCRYPTION_KEY` backed up separately from `data`; it is required to decrypt saved Spotify and YouTube connections.
 
 ## Tests and architecture
 
@@ -28,6 +30,8 @@ The included image packages Node.js, FFmpeg, SQLite support and the CPU backgrou
 
 ```sh
 cp .env.example .env
+# Set OWNER_SETUP_TOKEN and generate CONNECTIONS_ENCRYPTION_KEY before starting
+openssl rand -base64 32
 docker compose up -d --build
 docker compose ps
 ```
@@ -88,7 +92,11 @@ Copy `.env.playlists.example` values into your local `.env`, complete the creden
 | YouTube | Enable YouTube Data API v3 in Google Cloud, create Web Application OAuth credentials, and add `${APP_ORIGIN}/auth/youtube/callback` (for example, `http://localhost:3000/auth/youtube/callback`). | Connect via OAuth, find music videos/audio, and create a private YouTube playlist. |
 | Apple Music | Apple Developer Program membership, a MusicKit identifier/key, and a signed developer token. | MusicKit asks the subscriber for permission, then creates a library playlist and adds matched catalog songs. |
 
-OAuth access and refresh tokens are encrypted with AES-256-GCM when `CONNECTIONS_ENCRYPTION_KEY` is configured, and the setting is mandatory in production. An existing plaintext `data/connections.json` is encrypted automatically on first read. Keep the key outside `/data` and back it up separately: losing it makes existing OAuth connections unrecoverable. To rotate it, move the old value to `CONNECTIONS_ENCRYPTION_KEY_PREVIOUS`, put the new value in `CONNECTIONS_ENCRYPTION_KEY`, start the app once, then remove the previous key.
+### OAuth token encryption and migration
+
+OAuth access and refresh tokens are encrypted with AES-256-GCM when `CONNECTIONS_ENCRYPTION_KEY` is configured, and the setting is mandatory in production. An existing plaintext `data/connections.json` is encrypted automatically on the first OAuth status check after restart—no manual conversion is required.
+
+Keep the key outside `/data` and back it up separately: losing it makes existing OAuth connections unrecoverable. To rotate it, move the old value to `CONNECTIONS_ENCRYPTION_KEY_PREVIOUS`, put the new value in `CONNECTIONS_ENCRYPTION_KEY`, start the app once, confirm integrations still connect, then remove the previous key. Never commit either key.
 
 ## Peer collaboration
 
@@ -106,7 +114,7 @@ The archive and uploaded originals remain in the local `data` directory. Optiona
 - YouTube discovery and playlist export send show and track search terms to Google/YouTube.
 - When AudD is enabled, track detection extracts a 12-second MP3 sample from an uploaded video and sends that sample to AudD.
 
-OAuth credentials are encrypted in `data/connections.json` and protected by owner-only filesystem permissions. Encryption limits exposure from a copied data volume or database backup, but not from an attacker controlling the running server. Protect `.env`, encryption keys, backups and the entire `data` directory as sensitive data.
+OAuth credentials are encrypted in `data/connections.json` and protected by owner-only filesystem permissions. Encryption limits exposure from a copied data volume or connections-file backup, but not from an attacker controlling the running server. Protect `.env`, encryption keys, backups and the entire `data` directory as sensitive data.
 
 ## Licence
 
