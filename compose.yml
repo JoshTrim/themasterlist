@@ -1,5 +1,6 @@
 services:
   master-list:
+    image: ghcr.io/joshtrim/themasterlist:${MASTER_LIST_VERSION:-latest}
     build: .
     container_name: the-master-list
     restart: unless-stopped

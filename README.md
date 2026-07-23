@@ -6,6 +6,8 @@
 
 A self-hosted archive for live shows, setlists, photos, videos, ratings and shared gig memories.
 
+[![CI](https://github.com/JoshTrim/themasterlist/actions/workflows/ci.yml/badge.svg)](https://github.com/JoshTrim/themasterlist/actions/workflows/ci.yml)
+
 The Master List can find setlists through setlist.fm, export them as playlists, build whole-show playback from uploaded or YouTube media, map attended venues, and sync shared shows between trusted instances. Each installation belongs to one owner; collaboration happens by pairing separate installations.
 
 ## Features
@@ -90,10 +92,11 @@ Docker is the recommended way to run the complete stack. It includes Node.js, FF
 
 3. Open `.env` and paste the first value into `OWNER_SETUP_TOKEN` and the second into `CONNECTIONS_ENCRYPTION_KEY`.
 
-4. Start the application:
+4. Pull the published image and start the application:
 
    ```sh
-   docker compose up -d --build
+   docker compose pull
+   docker compose up -d --no-build
    docker compose ps
    ```
 
@@ -117,6 +120,7 @@ For a native Node installation, LAN access, upgrades and the first-show walkthro
 | [Architecture](ARCHITECTURE.md) | Module boundaries and testing strategy |
 | [Contributing](CONTRIBUTING.md) | Development setup, tests and pull-request expectations |
 | [Security policy](SECURITY.md) | Safe deployment and vulnerability reporting |
+| [Releasing](docs/RELEASING.md) | CI checks, version tags, GHCR images and rollback |
 
 ## Safe deployment
 
@@ -134,7 +138,7 @@ npm test
 npm start
 ```
 
-Use `npm run dev` for automatic server restarts, `npm run test:coverage` for Node's coverage report, and `npm run setup:hooks` to enable the repository’s pre-commit checks.
+Use `npm run dev` for automatic server restarts, `npm run test:coverage` for Node's coverage report, and `npm run setup:hooks` to enable the repository’s listener-free pre-commit checks. GitHub CI runs the full listener-based regression suite, dependency audit and Docker health check.
 
 
 ## Disclaimer

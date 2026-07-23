@@ -33,5 +33,5 @@ echo "pre-commit: checking JavaScript syntax"
 node --check server.js
 node --check public/app.js
 
-echo "pre-commit: running regression tests"
-npm test
+echo "pre-commit: running listener-free tests"
+npm run test:unit

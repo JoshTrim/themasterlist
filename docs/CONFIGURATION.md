@@ -9,6 +9,7 @@ Copy `.env.example` to `.env` and edit the copy. `.env` is ignored by Git and mu
 | `PORT` | `3000` | Browser-facing port for native installs and the Docker host mapping. |
 | `HOST` | `127.0.0.1` | Native server bind address. Use `0.0.0.0` only for trusted LAN/VPN access. |
 | `BIND_ADDRESS` | `127.0.0.1` | Docker host bind address. It does not change the container’s internal bind address. |
+| `MASTER_LIST_VERSION` | `latest` | Published GHCR image tag used by Compose. Pin a release tag for repeatable deployments. |
 | `APP_ORIGIN` | `http://127.0.0.1:3000` | Exact browser origin used for callbacks and cross-site request protection. No path or trailing slash. |
 | `SESSION_COOKIE_SECURE` | `false` | Set `true` when the browser always reaches the app over HTTPS. |
 | `OWNER_SETUP_TOKEN` | empty | Required for first-owner setup in production. Generate with `openssl rand -hex 32`; remove after setup. |

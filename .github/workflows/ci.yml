@@ -2,21 +2,99 @@ name: CI
 
 on:
   push:
+    branches: ['**']
   pull_request:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  tests:
+    name: Full regression tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v7
+      - name: Check out repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm audit --omit=dev
+      - name: Install dependencies
+        run: npm ci
+      - name: Run complete test suite
+        run: npm test
+
+  dependency-audit:
+    name: Production dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Audit production dependencies
+        run: npm audit --omit=dev
+
+  docker-smoke:
+    name: Docker build and health check
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Build CI image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          load: true
+          tags: the-master-list:ci
+          cache-from: type=gha,scope=master-list-docker
+          cache-to: type=gha,mode=max,scope=master-list-docker
+      - name: Start image and wait for health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker volume create master-list-ci-data
+          docker run --detach --name master-list-ci \
+            --read-only --tmpfs /tmp:size=2G,mode=1777 \
+            --security-opt no-new-privileges --cap-drop ALL \
+            --publish 127.0.0.1:3000:3000 \
+            --mount source=master-list-ci-data,target=/data \
+            --env NODE_ENV=production \
+            --env APP_ORIGIN=http://127.0.0.1:3000 \
+            --env OWNER_SETUP_TOKEN=ci-owner-setup-token \
+            --env CONNECTIONS_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
+            the-master-list:ci
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/api/healthz; then
+              exit 0
+            fi
+            if [ "$(docker inspect --format '{{.State.Running}}' master-list-ci)" != "true" ]; then
+              docker logs master-list-ci
+              exit 1
+            fi
+            sleep 2
+          done
+          docker logs master-list-ci
+          exit 1
+      - name: Show container logs after failure
+        if: failure()
+        run: docker logs master-list-ci || true
+      - name: Clean up smoke-test container
+        if: always()
+        run: |
+          docker rm --force master-list-ci 2>/dev/null || true
+          docker volume rm master-list-ci-data 2>/dev/null || true

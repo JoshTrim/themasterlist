@@ -26,11 +26,13 @@ Use test credentials and synthetic show data during development. Never commit a 
 Run before submitting:
 
 ```sh
-npm test
+npm run test:unit
 git diff --check
 ```
 
-`npm run test:coverage` provides Node’s line, branch and function report. `npm run setup:hooks` enables the same syntax and regression checks before local commits.
+`npm run test:coverage` provides Node’s line, branch and function report. `npm run setup:hooks` enables syntax checks and the listener-free suite before local commits.
+
+GitHub Actions is the authoritative clean-environment check. Every pull request runs the complete `npm test` suite—including listener-based API regressions—a production dependency audit, and a Docker build that must reach the real health endpoint. Keep all three checks green before merging.
 
 ## Security reports
 

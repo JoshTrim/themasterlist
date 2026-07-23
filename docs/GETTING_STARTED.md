@@ -36,15 +36,18 @@ API credentials are optional. You can create an account and enter shows manually
 
    Paste the values into `OWNER_SETUP_TOKEN` and `CONNECTIONS_ENCRYPTION_KEY` in `.env`. These values must be different. The encryption key must be retained for as long as you want to use saved OAuth connections.
 
-4. Build and start the container:
+4. Pull the published container and start it:
 
    ```sh
-   docker compose up -d --build
+   docker compose pull
+   docker compose up -d --no-build
    docker compose ps
    docker compose logs -f master-list
    ```
 
    Press `Ctrl-C` to stop following logs; the container continues running.
+
+   Published releases support Apple Silicon/ARM64 and AMD64 systems. To run an unreleased checkout or local code changes instead, use `docker compose up -d --build`.
 
 5. Visit [http://127.0.0.1:3000](http://127.0.0.1:3000). Create the single owner account and supply the setup token when prompted. Continue using this exact hostname so local OAuth session cookies and callbacks match.
 
@@ -138,9 +141,12 @@ Create a backup first. For Docker:
 
 ```sh
 git pull --ff-only
-docker compose up -d --build
+docker compose pull
+docker compose up -d --no-build
 docker compose ps
 ```
+
+For a deliberately pinned deployment, set `MASTER_LIST_VERSION` in `.env` to a release tag such as `v0.1.0` before pulling. Return it to `latest` only when you want to follow the newest stable release.
 
 For a native installation:
 
