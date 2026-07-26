@@ -54,6 +54,7 @@ const { createFileServing } = require('./lib/file-serving');
 const { secureStorage } = require('./lib/storage-security');
 const { resolveAppOrigin, validateRequestOrigin, applySecurityHeaders } = require('./lib/security');
 const { createConnectionStore } = require('./lib/connection-store');
+const { createInstanceTransfer, applyPendingInstanceImportSync } = require('./lib/instance-transfer');
 
 if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname, '.env'));
 
@@ -69,6 +70,7 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const PENDING_RESTORE_FILE = path.join(DATA_DIR, 'restore-pending.sqlite');
 const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
 const GEOCODES_FILE = path.join(DATA_DIR, 'geocodes.json');
+const INSTANCE_IMPORT_PENDING_DIR = path.join(DATA_DIR, 'instance-import-pending');
 const MAX_MEDIA_SIZE = Number(process.env.MAX_MEDIA_SIZE_GB || 50) * 1024 * 1024 * 1024;
 const MAX_MEDIA_STORAGE_SIZE = Number(process.env.MAX_MEDIA_STORAGE_GB || 500) * 1024 * 1024 * 1024;
 
@@ -78,6 +80,11 @@ if (process.env.NODE_ENV === 'production' && !process.env.CONNECTIONS_ENCRYPTION
 
 process.umask(0o077);
 secureStorage({ fs: legacyFs, path, dataDir: DATA_DIR, mediaDir: MEDIA_DIR, backupDir: BACKUP_DIR });
+applyPendingInstanceImportSync({
+  fs: legacyFs, path, dataDir: DATA_DIR, databaseFile: DB_FILE, mediaDir: MEDIA_DIR,
+  backupDir: BACKUP_DIR, connectionsFile: CONNECTIONS_FILE, geocodesFile: GEOCODES_FILE,
+  pendingDir: INSTANCE_IMPORT_PENDING_DIR
+});
 if (legacyFs.existsSync(PENDING_RESTORE_FILE)) {
   legacyFs.mkdirSync(BACKUP_DIR, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -174,8 +181,22 @@ const archiveHealthService = createArchiveHealthService({
   venueInfo: (key) => database.prepare('SELECT bio, description, image FROM venue_info WHERE lookup_name = ?').get(key)
 });
 const archiveIntegrityService = createArchiveIntegrityService({ database, fs, path, mediaDir: MEDIA_DIR, databaseFile: DB_FILE, profileImageFilename: profileImages.filename });
+const instanceTransfer = createInstanceTransfer({
+  database, Database, fs, legacyFs, path, crypto, dataDir: DATA_DIR, databaseFile: DB_FILE,
+  mediaDir: MEDIA_DIR, backupDir: BACKUP_DIR, connectionsFile: CONNECTIONS_FILE,
+  geocodesFile: GEOCODES_FILE, pendingDir: INSTANCE_IMPORT_PENDING_DIR,
+  maxBundleSize: MAX_MEDIA_STORAGE_SIZE + (3 * 1024 * 1024 * 1024), randomUUID,
+  appVersion: require('./package.json').version
+});
+async function exportFullInstance(response) {
+  try { await instanceTransfer.exportInstance(response); }
+  catch (error) {
+    if (!response.headersSent) throw error;
+    response.destroy(error);
+  }
+}
 const fileServing = createFileServing({ fs, legacyFs, path, publicDir: PUBLIC_DIR, mediaDir: MEDIA_DIR, database, profileImages, sendError });
-const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup, manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore });
+const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup, manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore, exportInstance: exportFullInstance, importInstance: instanceTransfer.stageImport });
 const handleSetlistRoute = createSetlistRoutes({ provider: setlistProvider, enrichAlbums: enrichGigAlbums, sendJson, sendError });
 const handleStatsRoute = createStatsRoutes({ database, requireAccount, sendJson, genreStats: archiveGenreStats, usageDay: apiUsage.day, configured, youtubeQuota: process.env.YOUTUBE_DAILY_QUOTA_UNITS, setlistConfigured: Boolean(process.env.SETLIST_FM_API_KEY && process.env.SETLIST_FM_API_KEY !== 'replace-me') });
 const handleDirectoryRoute = createDirectoryRoutes({ database, requireAccount, readBody, sendJson, sendError, fetchArtistInfo, refetchArtistInfo: metadataProvider.artistInfoFromUrl, fetchVenueInfo, cachedArtistGenres, saveArtistGenres, normaliseImagePosition, profileImages, geocoding, validCoordinates });
@@ -308,7 +329,8 @@ async function maintenanceStatus() {
     backups = (await fs.readdir(BACKUP_DIR, { withFileTypes: true })).filter((entry) => entry.isFile() && entry.name.endsWith('.sqlite')).map((entry) => entry.name).sort().reverse();
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const integrity = await archiveIntegrity();
-  return { databaseSize, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), backupSchedule: backupSettings(), integrity };
+  const transfer = await instanceTransfer.status();
+  return { databaseSize, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), instanceImportPending: transfer.pending, lastInstanceImport: transfer.lastImport, backupSchedule: backupSettings(), integrity };
 }
 
 async function receiveDatabaseRestore(request) {
@@ -486,17 +508,9 @@ async function handleApi(request, response, url) {
 
 
   if (request.method === 'GET' && url.pathname === '/api/backup') {
-    requireAccount(request);
-    const media = database.prepare('SELECT * FROM gig_media ORDER BY created_at').all();
-    const files = [];
-    for (const item of media) {
-      try { files.push({ ...item, data: (await fs.readFile(path.join(MEDIA_DIR, item.filename))).toString('base64') }); } catch { /* keep manifest entry if a file is missing */ }
-    }
-    const profileImageFiles = [...new Set([...database.prepare('SELECT image FROM artist_info').all(), ...database.prepare('SELECT image FROM venue_info').all()].map((row) => profileImages.filename(row.image)).filter(Boolean))];
-    for (const filename of profileImageFiles) {
-      try { files.push({ kind: 'profile-image', filename, data: (await fs.readFile(path.join(MEDIA_DIR, filename))).toString('base64') }); } catch { /* database backup still retains the missing image reference */ }
-    }
-    return sendJson(response, 200, { format: 'the-master-list-backup-v1', createdAt: new Date().toISOString(), database: (await fs.readFile(DB_FILE)).toString('base64'), media: files });
+    const account = requireAccount(request);
+    if (!account.isAdmin) return sendError(response, 403, 'Only the instance owner can export the full instance.');
+    return exportFullInstance(response);
   }
 
   if (await handleArchiveTransfer(request, response, url)) return;

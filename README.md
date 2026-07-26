@@ -19,7 +19,7 @@ The Master List can find setlists through setlist.fm, export them as playlists, 
 - Export setlists to Spotify, YouTube and Apple Music.
 - Explore artists, venues, maps, timelines and archive statistics.
 - Pair trusted self-hosted instances and resolve simultaneous edits.
-- Schedule SQLite backups and inspect archive health from the app.
+- Schedule SQLite backups, move a complete instance with a streamed export/import bundle, and inspect archive health from the app.
 
 ## Tour
 

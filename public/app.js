@@ -154,6 +154,10 @@ const refreshIntegrityButton = document.querySelector('#refresh-integrity');
 const restoreDatabaseInput = document.querySelector('#restore-database');
 const stageRestoreButton = document.querySelector('#stage-restore');
 const downloadDatabaseLink = document.querySelector('#download-database');
+const exportInstanceLink = document.querySelector('#export-instance');
+const importInstanceInput = document.querySelector('#import-instance');
+const stageInstanceImportButton = document.querySelector('#stage-instance-import');
+const instanceTransferStatus = document.querySelector('#instance-transfer-status');
 const activityList = document.querySelector('#activity-list');
 const activityFilters = document.querySelector('#activity-filters');
 const activityMessage = document.querySelector('#activity-message');
@@ -492,7 +496,9 @@ const maintenancePageController = maintenancePageModule.createController({
     scheduleForm: backupScheduleForm, scheduleStatus: backupScheduleStatus, backupNow: backupNowButton,
     refreshIntegrity: refreshIntegrityButton, restoreInput: restoreDatabaseInput,
     stageRestore: stageRestoreButton, downloadLink: downloadDatabaseLink,
-    exportArchive: exportArchiveButton, importArchive: importArchiveInput
+    exportArchive: exportArchiveButton, importArchive: importArchiveInput,
+    exportInstance: exportInstanceLink, importInstance: importInstanceInput,
+    stageInstanceImport: stageInstanceImportButton, transferStatus: instanceTransferStatus
   }
 });
 maintenancePageController.bind();

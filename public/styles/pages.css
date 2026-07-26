@@ -937,6 +937,10 @@ a.metadata-step:hover { border-color: #ff2d9b; background: #210b35; color: #fff0
 .restore-box { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(220px, .65fr) auto; gap: 14px; align-items: end; margin-top: 18px; padding: 16px; border: 1px solid #7422a0; background: rgba(16, 7, 25, .82); }
 .restore-box strong { color: #ffb4dd; font: 10px/1.5 "Press Start 2P", monospace; }
 .restore-box p { margin: 7px 0 0; color: #b995c8; font-size: 15px; }
+.instance-transfer-box { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(220px, .75fr) auto; gap: 14px; align-items: end; margin-top: 14px; padding: 16px; border: 1px solid #a828c7; background: rgba(16, 7, 25, .82); }
+.instance-transfer-box strong { color: #ffb4dd; font: 10px/1.5 "Press Start 2P", monospace; }
+.instance-transfer-box p { margin: 7px 0 0; color: #b995c8; font-size: 15px; }
+.instance-transfer-box:first-of-type { grid-template-columns: minmax(240px, 1fr) auto; }
 .maintenance-file-picker { display: grid; gap: 7px; color: #ff82c8; font: 8px/1.4 "Press Start 2P", monospace; text-transform: uppercase; }
 .maintenance-file-picker input[type="file"] { width: 100%; min-width: 0; color: #d6a9e2; font: 16px "VT323", monospace; }
 .maintenance-file-picker input[type="file"]::file-selector-button { min-height: 36px; margin-right: 9px; padding: 0 10px; border: 1px solid #ff2d9b; border-radius: 0; background: #321044; color: #ffb4dd; cursor: pointer; font: 8px "Press Start 2P", monospace; box-shadow: 3px 3px 0 #100419; }
@@ -986,6 +990,8 @@ a.metadata-step:hover { border-color: #ff2d9b; background: #210b35; color: #fff0
   .maintenance-panel-heading > div:last-child { display: grid; grid-template-columns: 1fr; }
   .restore-box { grid-template-columns: 1fr; align-items: stretch; }
   .restore-box .button { width: 100%; }
+  .instance-transfer-box, .instance-transfer-box:first-of-type { grid-template-columns: 1fr; align-items: stretch; }
+  .instance-transfer-box .button { width: 100%; }
   .integrity-issue { grid-template-columns: 1fr; gap: 7px; }
   .activity-entry { grid-template-columns: 7px minmax(0, 1fr); align-items: start; }
   .activity-entry-actions { grid-column: 2; flex-wrap: wrap; }

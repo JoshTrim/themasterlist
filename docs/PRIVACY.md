@@ -29,4 +29,4 @@ Pair only with trusted operators and exchange invitations through a private chan
 
 ## Backups and exports
 
-SQLite backups contain account password hashes, peer identity keys and archive data. Portable JSON exports contain show information. Media backups can contain personal photos and videos. Store all of them as sensitive personal data and securely dispose of copies that are no longer needed.
+SQLite backups contain account password hashes, peer identity keys and archive data. Full-instance bundles also contain media and may contain encrypted OAuth connections. Portable JSON exports contain show information. Media backups can contain personal photos and videos. Store all of them as sensitive personal data and securely dispose of copies that are no longer needed. A full-instance bundle is checksummed but is not itself encrypted.

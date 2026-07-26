@@ -16,7 +16,9 @@ function elementsFixture() {
     summary: { innerHTML: '' }, message: { textContent: '', classList: classList() }, integrityList: { innerHTML: '' }, cleanup: button(),
     scheduleForm, scheduleStatus: { textContent: '', classList: classList() }, backupNow: button(), refreshIntegrity: button(),
     restoreInput: { files: [] }, stageRestore: button(), downloadLink: { addEventListener() {} },
-    exportArchive: button(), importArchive: { files: [], value: '', addEventListener() {} }
+    exportArchive: button(), importArchive: { files: [], value: '', addEventListener() {} },
+    exportInstance: { addEventListener() {} }, importInstance: { files: [], value: '', addEventListener() {} },
+    stageInstanceImport: button(), transferStatus: { textContent: '', classList: classList() }
   };
 }
 
@@ -29,6 +31,7 @@ describe('maintenance page', () => {
     const markup = maintenance.statusMarkup(status, { escapeHtml, formatBytes });
     assert.match(markup, />2026-07-19</);
     assert.doesNotMatch(markup, /the-master-list-/);
+    assert.match(maintenance.statusMarkup({ ...status, instanceImportPending: { stagedAt: 'now' } }, { escapeHtml, formatBytes }), /Full instance import staged/);
   });
 
   test('serializes the backup schedule without unrelated form data', () => {
@@ -120,5 +123,25 @@ describe('maintenance page', () => {
     assert.equal(elements.message.textContent, 'Imported 2 shows. Reloading…');
     assert.equal(elements.importArchive.value, '');
     assert.equal(reloaded, true);
+  });
+
+  test('uploads a full instance bundle with progress and reports restart requirement', async () => {
+    const elements = elementsFixture();
+    const file = { name: 'archive.tml-instance', size: 1000 };
+    elements.importInstance.files = [file]; elements.importInstance.value = 'archive.tml-instance';
+    class XhrStub {
+      constructor() { this.upload = {}; this.status = 202; this.responseText = JSON.stringify({ bytes: 1000 }); }
+      open(method, url) { this.method = method; this.url = url; }
+      setRequestHeader(name, value) { this.header = [name, value]; }
+      send(body) { this.body = body; this.upload.onprogress({ lengthComputable: true, loaded: 500, total: 1000 }); this.onload(); }
+    }
+    const controller = maintenance.createController({
+      page: 'maintenance', escapeHtml, formatBytes, confirmAction: () => true, elements,
+      XMLHttpRequestClass: XhrStub, fetchJson: async () => status
+    });
+    await controller.stageFullInstanceImport();
+    assert.equal(elements.transferStatus.textContent, 'Full instance import staged (1000 bytes). Restart the server to apply it.');
+    assert.equal(elements.importInstance.value, '');
+    assert.equal(elements.stageInstanceImport.disabled, false);
   });
 });

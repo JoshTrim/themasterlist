@@ -16,6 +16,8 @@ The configured key does not match `data/connections.json`. Restore the original 
 
 If the key is permanently lost, preserve a backup if needed, remove the unusable connection file, and reconnect Spotify and YouTube.
 
+If OAuth connections cannot be decrypted after a full-instance import, set the destination's `CONNECTIONS_ENCRYPTION_KEY` to the source instance's value and restart. The transfer bundle does not contain `.env` or the key itself.
+
 ## OAuth reports `redirect_uri_mismatch`
 
 The provider callback must exactly match the configured value, including scheme, host, port and path. The default local origin and both callbacks use `127.0.0.1`. Spotify does not permit `localhost`; do not switch hostnames midway through authorization. Deployed instances should use the exact HTTPS origin configured in `APP_ORIGIN`.

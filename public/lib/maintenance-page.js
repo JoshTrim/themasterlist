@@ -12,15 +12,17 @@
 
   function statusMarkup(data, { escapeHtml, formatBytes }) {
     const backup = data.latestBackup ? escapeHtml(data.latestBackup.replace(/^the-master-list-|^pre-restore-/, '').replace(/\.sqlite$/, '')) : '—';
-    return `<article><strong>${formatBytes(data.databaseSize)}</strong><span>Database size</span></article><article><strong>${data.backupCount}</strong><span>Saved database backups</span></article><article><strong>${backup}</strong><span>Latest backup</span></article><article class="${data.restorePending ? 'has-warning' : ''}"><strong>${data.restorePending ? '!' : '✓'}</strong><span>${data.restorePending ? 'Restore staged — restart required' : 'No restore pending'}</span></article>`;
+    const pending = data.instanceImportPending || data.restorePending;
+    const pendingLabel = data.instanceImportPending ? 'Full instance import staged — restart required' : data.restorePending ? 'Database restore staged — restart required' : 'No restore pending';
+    return `<article><strong>${formatBytes(data.databaseSize)}</strong><span>Database size</span></article><article><strong>${data.backupCount}</strong><span>Saved database backups</span></article><article><strong>${backup}</strong><span>Latest backup</span></article><article class="${pending ? 'has-warning' : ''}"><strong>${pending ? '!' : '✓'}</strong><span>${pendingLabel}</span></article>`;
   }
 
   function backupSchedulePayload(form) {
     return { enabled: form.elements.enabled.checked, intervalHours: form.elements.intervalHours.value, retentionCount: form.elements.retentionCount.value };
   }
 
-  function createController({ page, fetchJson, escapeHtml, formatBytes, confirmAction, setTimeoutFn = globalThis.setTimeout, document, BlobClass = globalThis.Blob, URLApi = globalThis.URL, now = () => new Date(), reload = () => globalThis.location.reload(), elements }) {
-    const { summary, message, integrityList, cleanup, scheduleForm, scheduleStatus, backupNow, refreshIntegrity, restoreInput, stageRestore, downloadLink, exportArchive, importArchive } = elements;
+  function createController({ page, fetchJson, escapeHtml, formatBytes, confirmAction, setTimeoutFn = globalThis.setTimeout, document, BlobClass = globalThis.Blob, URLApi = globalThis.URL, XMLHttpRequestClass = globalThis.XMLHttpRequest, now = () => new Date(), reload = () => globalThis.location.reload(), elements }) {
+    const { summary, message, integrityList, cleanup, scheduleForm, scheduleStatus, backupNow, refreshIntegrity, restoreInput, stageRestore, downloadLink, exportArchive, importArchive, exportInstance, importInstance, stageInstanceImport, transferStatus } = elements;
 
     function renderIntegrity(data) {
       if (!integrityList) return;
@@ -135,6 +137,41 @@
       finally { importArchive.value = ''; }
     }
 
+    function uploadInstanceBundle(file) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequestClass();
+        xhr.open('POST', '/api/maintenance/instance-import');
+        xhr.setRequestHeader('Content-Type', 'application/vnd.the-master-list.instance');
+        xhr.upload.onprogress = (event) => {
+          if (!event.lengthComputable) { transferStatus.textContent = `Uploading ${file.name}…`; return; }
+          transferStatus.textContent = `Uploading ${file.name}… ${Math.round((event.loaded / event.total) * 100)}%`;
+        };
+        xhr.onload = () => {
+          let payload = {};
+          try { payload = JSON.parse(xhr.responseText || '{}'); } catch { /* handled below */ }
+          if (xhr.status >= 200 && xhr.status < 300) resolve(payload);
+          else reject(new Error(payload.error || `Import failed with HTTP ${xhr.status}.`));
+        };
+        xhr.onerror = () => reject(new Error('The instance upload was interrupted. Check the connection and try again.'));
+        xhr.send(file);
+      });
+    }
+
+    async function stageFullInstanceImport() {
+      const file = importInstance?.files?.[0];
+      if (!file) { transferStatus.textContent = 'Choose a full instance bundle first.'; transferStatus.classList.add('error'); return; }
+      if (!confirmAction('Stage this full instance import? On restart it will replace the database, media and local instance identity.')) return;
+      stageInstanceImport.disabled = true; transferStatus.classList.remove('error');
+      transferStatus.textContent = `Starting ${file.name}…`;
+      try {
+        const result = await uploadInstanceBundle(file);
+        transferStatus.textContent = `Full instance import staged (${formatBytes(result.bytes)}). Restart the server to apply it.`;
+        importInstance.value = '';
+        await render();
+      } catch (error) { transferStatus.textContent = error.message; transferStatus.classList.add('error'); }
+      finally { stageInstanceImport.disabled = false; }
+    }
+
     function bind() {
       scheduleForm?.addEventListener('submit', (event) => { event.preventDefault(); saveSchedule(); });
       backupNow?.addEventListener('click', createBackup);
@@ -144,9 +181,11 @@
       cleanup?.addEventListener('click', cleanupOrphans);
       exportArchive?.addEventListener('click', exportShowsArchive);
       importArchive?.addEventListener('change', importShowsArchive);
+      exportInstance?.addEventListener('click', () => { transferStatus.textContent = 'Preparing a streamed full instance bundle…'; transferStatus.classList.remove('error'); });
+      stageInstanceImport?.addEventListener('click', stageFullInstanceImport);
     }
 
-    return { render, renderStatus, renderIntegrity, saveSchedule, createBackup, checkIntegrity, stageDatabaseRestore, cleanupOrphans, exportShowsArchive, importShowsArchive, bind };
+    return { render, renderStatus, renderIntegrity, saveSchedule, createBackup, checkIntegrity, stageDatabaseRestore, cleanupOrphans, exportShowsArchive, importShowsArchive, stageFullInstanceImport, bind };
   }
 
   return { integrityMarkup, statusMarkup, backupSchedulePayload, createController };
