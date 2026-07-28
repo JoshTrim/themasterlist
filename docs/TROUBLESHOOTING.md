@@ -48,6 +48,24 @@ docker compose exec master-list printenv APP_ORIGIN
 
 Use the printed URL on both the phone and Mac. A session created at `127.0.0.1` is separate, so sign in again at the LAN URL. Do not disable the origin check; it protects authenticated browser actions from cross-site requests.
 
+The rejection response and container log now state the expected and received origins. With a reverse proxy, `APP_ORIGIN` must use the final browser scheme and hostname—not the upstream Docker address. For example:
+
+```env
+APP_ORIGIN=https://masterlist.home.example
+SESSION_COOKIE_SECURE=true
+```
+
+Test the origin independently of account credentials; a `401 Incorrect name or password` means the origin check passed, while `403` means it did not:
+
+```sh
+curl -i -X POST https://masterlist.home.example/api/auth/login \
+  -H 'Origin: https://masterlist.home.example' \
+  -H 'Content-Type: application/json' \
+  --data '{"name":"diagnostic","password":"incorrect"}'
+```
+
+Do not configure Caddy with a custom `header_up Origin`; its default forwarding is correct.
+
 ## `better-sqlite3` was compiled for another Node version
 
 Switch to the repository’s Node version and reinstall native dependencies:

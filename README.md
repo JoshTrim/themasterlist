@@ -121,6 +121,7 @@ For a native Node installation, LAN access, upgrades and the first-show walkthro
 | [Contributing](CONTRIBUTING.md) | Development setup, tests and pull-request expectations |
 | [Security policy](SECURITY.md) | Safe deployment and vulnerability reporting |
 | [Releasing](docs/RELEASING.md) | CI checks, version tags, GHCR images and rollback |
+| [Changelog](CHANGELOG.md) | Release highlights and deployment notes |
 
 ## Safe deployment
 

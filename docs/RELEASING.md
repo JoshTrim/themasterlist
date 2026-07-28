@@ -41,6 +41,15 @@ Pre-release versions containing a hyphen do not replace `latest`.
 
 After the first publication, open the package settings on GitHub and make `ghcr.io/joshtrim/themasterlist` public. Confirm it remains linked to this repository so the workflow's `GITHUB_TOKEN` retains package access.
 
+Verify the release without relying on a local build:
+
+```sh
+docker pull ghcr.io/joshtrim/themasterlist:v0.1.0
+docker buildx imagetools inspect ghcr.io/joshtrim/themasterlist:v0.1.0
+```
+
+The manifest must list both `linux/amd64` and `linux/arm64`. An anonymous `docker pull` must work after package visibility is public, and `/api/healthz` should report the tagged application version.
+
 ## Install or upgrade
 
 Compose defaults to the published `latest` image:

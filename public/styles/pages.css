@@ -907,7 +907,8 @@ a.metadata-step:hover { border-color: #ff2d9b; background: #210b35; color: #fff0
 .maintenance-page, .activity-page, .conflicts-page { padding: 34px 0 70px; }
 .maintenance-page > .section-heading h1, .activity-page > .section-heading h1, .conflicts-page > .section-heading h1 { margin: 0; color: #fff0fa; font: clamp(28px, 5vw, 52px)/1.2 "Press Start 2P", monospace; letter-spacing: -.06em; text-shadow: 4px 4px 0 #53136d; }
 .maintenance-page .lede, .activity-page .lede, .conflicts-page .lede { max-width: 820px; margin-top: 16px; color: #d6a9e2; font-size: 20px; }
-.maintenance-summary, .integrity-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 26px 0 20px; }
+.maintenance-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 26px 0 20px; }
+.integrity-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 26px 0 20px; }
 .maintenance-summary article, .integrity-summary article { min-width: 0; padding: 16px; border: 1px solid #5e2a78; background: linear-gradient(135deg, rgba(41, 15, 64, .9), rgba(13, 7, 24, .94)); }
 .maintenance-summary strong, .integrity-summary strong { display: block; min-width: 0; overflow: hidden; color: #ff82c8; font: 25px/1.1 "VT323", monospace; text-overflow: ellipsis; white-space: nowrap; }
 .maintenance-summary span, .integrity-summary span { display: block; margin-top: 6px; color: #d6a9e2; font-size: 14px; }

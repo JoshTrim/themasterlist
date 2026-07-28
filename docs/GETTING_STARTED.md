@@ -135,6 +135,35 @@ Compose's detached mode (`-d`) keeps the app running after Terminal closes, and 
 
 If the phone still cannot connect, allow Docker through the macOS firewall and confirm the Wi-Fi network permits devices to communicate with one another. Guest networks commonly block this traffic. Do not use `0.0.0.0` as a browser URL, and do not expose port 3000 directly to the internet.
 
+## Reverse proxy and HTTPS
+
+A local Caddy proxy gives the archive a stable hostname and HTTPS without exposing the Node container directly. For Caddy running on the same host, a minimal configuration is:
+
+```caddyfile
+masterlist.home.example {
+    reverse_proxy 127.0.0.1:5016
+}
+```
+
+Match the Docker configuration to that final browser URL:
+
+```env
+BIND_ADDRESS=127.0.0.1
+PORT=5016
+APP_ORIGIN=https://masterlist.home.example
+SESSION_COOKIE_SECURE=true
+```
+
+Recreate the container and verify the values actually received by the application:
+
+```sh
+docker compose up -d --force-recreate
+docker compose exec master-list printenv APP_ORIGIN SESSION_COOKIE_SECURE
+curl https://masterlist.home.example/api/healthz
+```
+
+Use the proxy hostname consistently; an old tab using the raw IP is a different browser origin and session. See [Configuration](CONFIGURATION.md#caddy-reverse-proxy) for proxy and remote-Caddy considerations.
+
 ## Updating
 
 Create a backup first. For Docker:
@@ -147,6 +176,16 @@ docker compose ps
 ```
 
 For a deliberately pinned deployment, set `MASTER_LIST_VERSION` in `.env` to a release tag such as `v0.1.0` before pulling. Return it to `latest` only when you want to follow the newest stable release.
+
+If you intentionally run an unreleased source checkout rather than a published image, update it with:
+
+```sh
+git pull --ff-only
+docker compose build --pull master-list
+docker compose up -d --force-recreate --no-build master-list
+```
+
+Do not run `docker compose pull` for an unreleased commit. Confirm the deployed version from **System → Maintenance** or `/api/healthz` after either update method.
 
 For a native installation:
 

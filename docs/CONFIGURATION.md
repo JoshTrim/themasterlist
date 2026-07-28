@@ -19,6 +19,29 @@ Copy `.env.example` to `.env` and edit the copy. `.env` is ignored by Git and mu
 
 `APP_ORIGIN` must be the address actually shown in the browser. When a reverse proxy terminates TLS, use its public `https://` origin and enable secure cookies.
 
+The Maintenance page shows the origin and cookie mode received by the running process. `/api/healthz` reports the running application version. When a browser mutation is rejected, the server logs only the method, path, expected origin, received origin and `Sec-Fetch-Site` classification; request bodies, cookies and credentials are never included in that diagnostic.
+
+## Caddy reverse proxy
+
+For Caddy on the same host as a Docker deployment, keep the application port bound to loopback and proxy to that host port:
+
+```caddyfile
+masterlist.home.example {
+    reverse_proxy 127.0.0.1:5016
+}
+```
+
+Configure the app using the final URL shown in the browser:
+
+```env
+BIND_ADDRESS=127.0.0.1
+PORT=5016
+APP_ORIGIN=https://masterlist.home.example
+SESSION_COOKIE_SECURE=true
+```
+
+Caddy preserves the browser `Origin` header by default; do not add a `header_up Origin` override. If Caddy runs on another machine, bind the application to a trusted LAN or VPN address and restrict that port at the firewall. The hostname must resolve on every client, and clients must trust the certificate issuer used by Caddy.
+
 ## Providers and integrations
 
 | Variable | Required for |

@@ -52,7 +52,7 @@ const { createProfileImages } = require('./lib/profile-images');
 const { createMetadataCache } = require('./lib/metadata-cache');
 const { createFileServing } = require('./lib/file-serving');
 const { secureStorage } = require('./lib/storage-security');
-const { resolveAppOrigin, validateRequestOrigin, applySecurityHeaders } = require('./lib/security');
+const { resolveAppOrigin, configuredOrigin, requestOriginDiagnostic, applySecurityHeaders } = require('./lib/security');
 const { createConnectionStore } = require('./lib/connection-store');
 const { createInstanceTransfer, applyPendingInstanceImportSync } = require('./lib/instance-transfer');
 
@@ -60,6 +60,7 @@ if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
+const APP_VERSION = require('./package.json').version;
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = process.env.MASTER_LIST_DATA_DIR ? path.resolve(process.env.MASTER_LIST_DATA_DIR) : path.join(ROOT, 'data');
@@ -130,6 +131,10 @@ ensureBackupSettings();
 
 const authService = createAuth({ database });
 const { currentAccount, accountsConfigured, requireAccount } = authService;
+const configuredBrowserOrigin = configuredOrigin(process.env);
+if (configuredBrowserOrigin && configuredBrowserOrigin.startsWith('https://') !== authService.sessionCookieSecure()) {
+  console.warn(`[security] SESSION_COOKIE_SECURE=${authService.sessionCookieSecure()} conflicts with APP_ORIGIN=${configuredBrowserOrigin}. Use secure cookies for HTTPS and standard cookies for HTTP.`);
+}
 const handleAuthApi = createAuthRoutes({
   database,
   auth: authService,
@@ -186,7 +191,7 @@ const instanceTransfer = createInstanceTransfer({
   mediaDir: MEDIA_DIR, backupDir: BACKUP_DIR, connectionsFile: CONNECTIONS_FILE,
   geocodesFile: GEOCODES_FILE, pendingDir: INSTANCE_IMPORT_PENDING_DIR,
   maxBundleSize: MAX_MEDIA_STORAGE_SIZE + (3 * 1024 * 1024 * 1024), randomUUID,
-  appVersion: require('./package.json').version
+  appVersion: APP_VERSION
 });
 async function exportFullInstance(response) {
   try { await instanceTransfer.exportInstance(response); }
@@ -330,7 +335,10 @@ async function maintenanceStatus() {
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const integrity = await archiveIntegrity();
   const transfer = await instanceTransfer.status();
-  return { databaseSize, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), instanceImportPending: transfer.pending, lastInstanceImport: transfer.lastImport, backupSchedule: backupSettings(), integrity };
+  const trustedOrigin = configuredOrigin(process.env) || 'Derived from each development request';
+  const secureCookies = authService.sessionCookieSecure();
+  const originUsesHttps = trustedOrigin.startsWith('https://');
+  return { appVersion: APP_VERSION, appOrigin: trustedOrigin, secureCookies, originCookieMismatch: trustedOrigin.startsWith('http') && originUsesHttps !== secureCookies, databaseSize, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), instanceImportPending: transfer.pending, lastInstanceImport: transfer.lastImport, backupSchedule: backupSettings(), integrity };
 }
 
 async function receiveDatabaseRestore(request) {
@@ -410,7 +418,7 @@ async function handleApi(request, response, url) {
   if (request.method === 'GET' && url.pathname === '/api/healthz') {
     const quickCheck = database.prepare('PRAGMA quick_check').pluck().get();
     const mediaWritable = await fs.access(MEDIA_DIR, legacyFs.constants.W_OK).then(() => true).catch(() => false);
-    return sendJson(response, quickCheck === 'ok' && mediaWritable ? 200 : 503, { ok: quickCheck === 'ok' && mediaWritable, database: quickCheck, mediaWritable });
+    return sendJson(response, quickCheck === 'ok' && mediaWritable ? 200 : 503, { ok: quickCheck === 'ok' && mediaWritable, version: APP_VERSION, database: quickCheck, mediaWritable });
   }
 
   if (await handleAuthApi(request, response, url)) return;
@@ -640,7 +648,16 @@ const server = http.createServer(async (request, response) => {
     const origin = appOrigin(request);
     applySecurityHeaders(response, { secure: origin.startsWith('https://') });
     const url = new URL(request.url, `http://${request.headers.host}`);
-    if (!validateRequestOrigin(request, url.pathname, origin)) return sendError(response, 403, 'Cross-site request rejected.');
+    const originDiagnostic = requestOriginDiagnostic(request, url.pathname, origin);
+    if (!originDiagnostic.valid) {
+      console.warn('[security] rejected cross-site request', {
+        method: request.method, path: url.pathname, expectedOrigin: origin,
+        receivedOrigin: originDiagnostic.receivedOrigin, secFetchSite: originDiagnostic.secFetchSite || null,
+        reason: originDiagnostic.reason
+      });
+      const received = originDiagnostic.receivedOrigin ? ` The browser sent ${originDiagnostic.receivedOrigin}.` : '';
+      return sendError(response, 403, `Cross-site request rejected. This instance accepts changes from ${origin}.${received} Open that exact address and try again.`);
+    }
     if (url.pathname.startsWith('/api/')) await handleApi(request, response, url);
     else if (url.pathname.startsWith('/auth/')) await handleAuth(request, response, url);
     else await fileServing.serveStatic(request, response, url.pathname);

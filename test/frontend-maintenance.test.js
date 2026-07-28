@@ -23,7 +23,7 @@ function elementsFixture() {
 }
 
 const integrity = { healthy: false, summary: { records: 2, diskFiles: 3, diskBytes: 100 }, counts: { orphan: 1 }, issues: [{ type: 'orphan', title: '<Orphan>', detail: 'Unused', href: '/maintenance' }] };
-const status = { databaseSize: 200, backupCount: 2, latestBackup: 'the-master-list-2026-07-19.sqlite', restorePending: false, backupSchedule: { enabled: true, intervalHours: 24, retentionCount: 7, lastBackupAt: null, lastStatus: 'ok' }, integrity };
+const status = { appVersion: '0.1.0', appOrigin: 'https://archive.example', secureCookies: true, originCookieMismatch: false, databaseSize: 200, backupCount: 2, latestBackup: 'the-master-list-2026-07-19.sqlite', restorePending: false, backupSchedule: { enabled: true, intervalHours: 24, retentionCount: 7, lastBackupAt: null, lastStatus: 'ok' }, integrity };
 
 describe('maintenance page', () => {
   test('renders escaped integrity details and normalized backup names', () => {
@@ -31,6 +31,8 @@ describe('maintenance page', () => {
     const markup = maintenance.statusMarkup(status, { escapeHtml, formatBytes });
     assert.match(markup, />2026-07-19</);
     assert.doesNotMatch(markup, /the-master-list-/);
+    assert.match(markup, /v0\.1\.0/);
+    assert.match(markup, /https:\/\/archive\.example/);
     assert.match(maintenance.statusMarkup({ ...status, instanceImportPending: { stagedAt: 'now' } }, { escapeHtml, formatBytes }), /Full instance import staged/);
   });
 

@@ -11,6 +11,8 @@ const ci = read('.github/workflows/ci.yml');
 const release = read('.github/workflows/release.yml');
 const hook = read('.githooks/pre-commit');
 const compose = read('compose.yml');
+const packageJson = JSON.parse(read('package.json'));
+const changelog = read('CHANGELOG.md');
 
 test('CI owns full regressions, dependency auditing and a real container health check', () => {
   assert.match(ci, /workflow_call:/);
@@ -27,8 +29,10 @@ test('release tags publish pinned multi-architecture GHCR images only after CI',
   assert.match(release, /needs: verify/);
   assert.match(release, /packages: write/);
   assert.match(release, /linux\/amd64,linux\/arm64/);
+  assert.match(release, /type=raw,value=latest/);
   assert.match(release, /gh release create/);
   assert.doesNotMatch(release, /uses: [^\n]+@v\d/);
+  assert.match(changelog, new RegExp(`## ${packageJson.version.replaceAll('.', '\\.')}\\b`));
 });
 
 test('local commits stay listener-free and Compose knows the published image', () => {

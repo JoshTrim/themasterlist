@@ -14,7 +14,8 @@
     const backup = data.latestBackup ? escapeHtml(data.latestBackup.replace(/^the-master-list-|^pre-restore-/, '').replace(/\.sqlite$/, '')) : '—';
     const pending = data.instanceImportPending || data.restorePending;
     const pendingLabel = data.instanceImportPending ? 'Full instance import staged — restart required' : data.restorePending ? 'Database restore staged — restart required' : 'No restore pending';
-    return `<article><strong>${formatBytes(data.databaseSize)}</strong><span>Database size</span></article><article><strong>${data.backupCount}</strong><span>Saved database backups</span></article><article><strong>${backup}</strong><span>Latest backup</span></article><article class="${pending ? 'has-warning' : ''}"><strong>${pending ? '!' : '✓'}</strong><span>${pendingLabel}</span></article>`;
+    const origin = escapeHtml(data.appOrigin || '—');
+    return `<article><strong>v${escapeHtml(data.appVersion || '—')}</strong><span>Running version</span></article><article class="${data.originCookieMismatch ? 'has-warning' : ''}"><strong title="${origin}">${origin}</strong><span>Trusted browser origin · ${data.secureCookies ? 'secure cookies' : 'standard cookies'}</span></article><article><strong>${formatBytes(data.databaseSize)}</strong><span>Database size</span></article><article><strong>${data.backupCount}</strong><span>Saved database backups</span></article><article><strong>${backup}</strong><span>Latest backup</span></article><article class="${pending ? 'has-warning' : ''}"><strong>${pending ? '!' : '✓'}</strong><span>${pendingLabel}</span></article>`;
   }
 
   function backupSchedulePayload(form) {

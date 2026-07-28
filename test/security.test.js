@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { configuredOrigin, resolveAppOrigin, validateRequestOrigin, securityHeaders } = require('../lib/security');
+const { configuredOrigin, resolveAppOrigin, validateRequestOrigin, requestOriginDiagnostic, securityHeaders } = require('../lib/security');
 
 test('deployment origins are explicit in production and safely bounded in development', () => {
   assert.equal(configuredOrigin({ APP_ORIGIN: 'https://archive.example' }), 'https://archive.example');
@@ -16,6 +16,10 @@ test('browser mutations reject cross-site origins while signed peer envelopes re
   assert.equal(validateRequestOrigin(request('POST', { origin: 'https://evil.example' }), '/api/gigs', 'https://archive.example'), false);
   assert.equal(validateRequestOrigin(request('POST', { 'sec-fetch-site': 'cross-site' }), '/api/gigs', 'https://archive.example'), false);
   assert.equal(validateRequestOrigin(request('POST', { origin: 'https://peer.example' }), '/api/sync/exchange', 'https://archive.example'), true);
+  assert.deepEqual(requestOriginDiagnostic(request('POST', { origin: 'https://wrong.example', 'sec-fetch-site': 'same-site' }), '/api/gigs', 'https://archive.example'), {
+    valid: false, trustedOrigin: 'https://archive.example', receivedOrigin: 'https://wrong.example', secFetchSite: 'same-site', reason: 'origin does not match APP_ORIGIN'
+  });
+  assert.equal(requestOriginDiagnostic(request('POST', { origin: 'not a url' }), '/api/gigs', 'https://archive.example').receivedOrigin, 'invalid origin');
 });
 
 test('security headers constrain framing, sniffing, scripts and transport', () => {

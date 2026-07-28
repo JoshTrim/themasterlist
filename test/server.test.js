@@ -200,6 +200,7 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     const health = await api('/api/healthz', { cookie: '' });
     assert.equal(health.response.status, 200);
     assert.equal(health.body.ok, true);
+    assert.equal(health.body.version, '0.1.0');
     assert.equal(health.body.database, 'ok');
   });
 
