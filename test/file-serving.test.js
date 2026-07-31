@@ -9,7 +9,7 @@ const path = require('node:path');
 const { Writable } = require('node:stream');
 const Database = require('better-sqlite3');
 const { migrateSchema } = require('../lib/schema');
-const { byteRange, containedPath, createFileServing } = require('../lib/file-serving');
+const { CONTENT_TYPES, byteRange, containedPath, createFileServing } = require('../lib/file-serving');
 
 class Response extends Writable {
   constructor() { super(); this.chunks = []; }
@@ -34,6 +34,10 @@ test('range parsing supports bounded, open and suffix byte ranges', () => {
 test('path containment rejects sibling-prefix and traversal paths', () => {
   assert.equal(containedPath(path, '/tmp/public', 'app.js'), '/tmp/public/app.js');
   assert.equal(containedPath(path, '/tmp/public', '../publicity/secret'), null);
+});
+
+test('serves install manifests with the browser manifest media type', () => {
+  assert.match(CONTENT_TYPES['.webmanifest'], /^application\/manifest\+json/);
 });
 
 test('static serving returns assets, SPA fallback and 404 responses', async (context) => {

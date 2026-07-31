@@ -931,6 +931,26 @@ a.metadata-step:hover { border-color: #ff2d9b; background: #210b35; color: #fff0
   .genre-stat-legend { grid-template-columns: 1fr; }
 }
 
+/* Keep standalone installs clear of notches, rounded corners and home indicators. */
+@supports (padding: env(safe-area-inset-top)) {
+  .site-header {
+    padding-top: max(20px, env(safe-area-inset-top));
+    padding-right: max(24px, 5vw, env(safe-area-inset-right));
+    padding-left: max(24px, 5vw, env(safe-area-inset-left));
+  }
+  main {
+    padding-right: max(24px, 5vw, env(safe-area-inset-right));
+    padding-bottom: max(80px, env(safe-area-inset-bottom));
+    padding-left: max(24px, 5vw, env(safe-area-inset-left));
+  }
+  @media (max-width: 400px) {
+    body[data-page="shows"] main {
+      padding-right: max(16px, env(safe-area-inset-right));
+      padding-left: max(16px, env(safe-area-inset-left));
+    }
+  }
+}
+
 /* Maintenance and peer activity */
 .nav-count { display: inline-grid; min-width: 16px; height: 16px; margin-left: 3px; padding: 0 3px; place-items: center; border: 1px solid #ff2d9b; background: #4a105e; color: #fff0fa; font: 10px/1 "VT323", monospace; box-shadow: 0 0 8px rgba(255, 45, 155, .45); }
 .nav-count[hidden] { display: none; }

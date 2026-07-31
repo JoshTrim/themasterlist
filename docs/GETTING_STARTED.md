@@ -164,6 +164,16 @@ curl https://masterlist.home.example/api/healthz
 
 Use the proxy hostname consistently; an old tab using the raw IP is a different browser origin and session. See [Configuration](CONFIGURATION.md#caddy-reverse-proxy) for proxy and remote-Caddy considerations.
 
+## Install on a phone or desktop
+
+The Master List can be installed as a standalone web app. Installation requires HTTPS, except when opening the app as `http://localhost` or `http://127.0.0.1` on the same device. A raw LAN address such as `http://192.168.1.20:3000` can be used in a browser but cannot register the installable app worker; use the HTTPS reverse-proxy setup above for phone installation.
+
+- **Android with Chrome:** open the configured `APP_ORIGIN`, sign in, then choose **Install app** or **Add to Home screen** from the browser menu.
+- **iPhone or iPad with Safari:** open the configured `APP_ORIGIN`, use **Share → Add to Home Screen**, then launch it from the new icon.
+- **Desktop Chrome or Edge:** open the configured `APP_ORIGIN` and use the install icon in the address bar or the browser’s **Install The Master List** menu item.
+
+The installed app uses the neon chest icon, launches without ordinary browser chrome and adopts the site’s dark-purple launch and status-bar colours. It still connects to the self-hosted instance at `APP_ORIGIN`; this initial installable version does not make shows or media available offline.
+
 ## Updating
 
 Create a backup first. For Docker:
