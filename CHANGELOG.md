@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 — 2026-07-31
+
+### Fixed
+
+- Release regression tests now verify the health endpoint against the package version instead of a hard-coded release number.
+
 ## 0.1.1 — 2026-07-31
 
 ### Fixed

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { mkdtempSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
+const { version: packageVersion } = require('../package.json');
 
 const testDataDir = mkdtempSync(path.join(tmpdir(), 'master-list-test-'));
 process.env.MASTER_LIST_DATA_DIR = testDataDir;
@@ -200,7 +201,7 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     const health = await api('/api/healthz', { cookie: '' });
     assert.equal(health.response.status, 200);
     assert.equal(health.body.ok, true);
-    assert.equal(health.body.version, '0.1.0');
+    assert.equal(health.body.version, packageVersion);
     assert.equal(health.body.database, 'ok');
   });
 
