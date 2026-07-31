@@ -46,9 +46,9 @@ Use **System → Maintenance → Full instance transfer** when moving the archiv
 1. On the source instance, choose **Download full instance**. Keep the resulting `.tml-instance` file private.
 2. Configure the destination's `.env`. To retain encrypted Spotify and YouTube connections, copy the source `CONNECTIONS_ENCRYPTION_KEY` through a secure channel.
 3. Start the destination, complete initial owner setup if required, and open **System → Maintenance**.
-4. Choose the bundle and select **Stage full import**. The browser shows upload progress and the server verifies every file checksum plus the SQLite integrity check.
+4. Choose the bundle and select **Stage full import**. The browser shows upload progress and the server verifies every file checksum, SQLite integrity, and the number of shows and media records before staging it.
 5. Restart the destination. The imported account, shows, setlists, media, metadata, geocodes, peer identity and encrypted OAuth connections replace its current data.
-6. Sign in with the account credentials from the source instance.
+6. Sign in with the account credentials from the source instance. The destination browser's old session belongs to the replaced identity and is no longer valid.
 
 The transfer is streamed on export and uploaded in retryable 4 MB chunks on import, so it can handle large media libraries without putting the entire bundle in application or browser memory. If the connection briefly drops, the importer resumes from the last offset accepted by the server. It includes the live database, `data/media`, `connections.json` when present, and `geocodes.json` when present. It deliberately excludes `.env`, encryption keys, scheduled-backup files, temporary jobs and downloaded model caches.
 

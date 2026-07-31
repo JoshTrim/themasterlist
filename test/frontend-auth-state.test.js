@@ -16,12 +16,13 @@ describe('frontend authentication state', () => {
 
   test('applies signed-in visibility and account name', () => {
     const state = resolveAuthState({ account: { id: 'owner', name: 'Archive Owner', isAdmin: true } }, 'shows');
-    const elements = { navSignIn: {}, authPanel: {}, profileBar: {}, inviteButton: {}, accountName: {} };
+    const elements = { navSignIn: {}, authPanel: {}, profileBar: {}, inviteButton: {}, logoutButton: {}, accountName: {} };
     applyAuthState(state, elements);
     assert.equal(elements.navSignIn.hidden, true);
     assert.equal(elements.authPanel.hidden, true);
     assert.equal(elements.profileBar.hidden, false);
     assert.equal(elements.inviteButton.hidden, false);
+    assert.equal(elements.logoutButton.hidden, false);
     assert.equal(elements.accountName.value, 'Archive Owner');
   });
 });

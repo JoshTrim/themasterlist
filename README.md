@@ -100,7 +100,7 @@ Docker is the recommended way to run the complete stack. It includes Node.js, FF
    docker compose ps
    ```
 
-5. Open [http://127.0.0.1:3000](http://127.0.0.1:3000), create the owner account, and enter `OWNER_SETUP_TOKEN` when prompted. After the account exists, the setup token can be removed from `.env`; keep the encryption key permanently.
+5. Open [http://127.0.0.1:3000](http://127.0.0.1:3000), create the owner account, and enter `OWNER_SETUP_TOKEN` when prompted. Keep that token somewhere private to enable emergency password recovery, or remove it from `.env` after setup to disable browser-based recovery. Keep the encryption key permanently.
 
 Application state lives in `./data`. Do not commit or publicly share `.env`, `data`, backups, pairing invitations or the encryption key.
 

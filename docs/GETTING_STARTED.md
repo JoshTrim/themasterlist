@@ -51,7 +51,7 @@ API credentials are optional. You can create an account and enter shows manually
 
 5. Visit [http://127.0.0.1:3000](http://127.0.0.1:3000). Create the single owner account and supply the setup token when prompted. Continue using this exact hostname so local OAuth session cookies and callbacks match.
 
-6. Remove `OWNER_SETUP_TOKEN` from `.env` after setup. Do not remove `CONNECTIONS_ENCRYPTION_KEY`.
+6. Keep `OWNER_SETUP_TOKEN` somewhere private if you want emergency password recovery from the login page. Removing it from `.env` after setup disables that recovery route. Do not remove `CONNECTIONS_ENCRYPTION_KEY`.
 
 Stop or restart the instance with:
 

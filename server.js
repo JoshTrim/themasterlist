@@ -140,7 +140,8 @@ const handleAuthApi = createAuthRoutes({
   auth: authService,
   appOrigin,
   setupToken: process.env.OWNER_SETUP_TOKEN || '',
-  requireSetupToken: process.env.NODE_ENV === 'production'
+  requireSetupToken: process.env.NODE_ENV === 'production',
+  lastImport: async () => (await instanceTransfer.status()).lastImport
 });
 const backupService = createBackupService({ database, fs, path, backupDir: BACKUP_DIR, getSetting: appSetting, setSetting: setAppSetting });
 const { settings: backupSettings, prune: pruneScheduledBackups, create: createScheduledBackup, runCheck: runScheduledBackupCheck } = backupService;

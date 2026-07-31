@@ -15,7 +15,11 @@
     const pending = data.instanceImportPending || data.restorePending;
     const pendingLabel = data.instanceImportPending ? 'Full instance import staged — restart required' : data.restorePending ? 'Database restore staged — restart required' : 'No restore pending';
     const origin = escapeHtml(data.appOrigin || '—');
-    return `<article><strong>v${escapeHtml(data.appVersion || '—')}</strong><span>Running version</span></article><article class="${data.originCookieMismatch ? 'has-warning' : ''}"><strong title="${origin}">${origin}</strong><span>Trusted browser origin · ${data.secureCookies ? 'secure cookies' : 'standard cookies'}</span></article><article><strong>${formatBytes(data.databaseSize)}</strong><span>Database size</span></article><article><strong>${data.backupCount}</strong><span>Saved database backups</span></article><article><strong>${backup}</strong><span>Latest backup</span></article><article class="${pending ? 'has-warning' : ''}"><strong>${pending ? '!' : '✓'}</strong><span>${pendingLabel}</span></article>`;
+    const imported = data.lastInstanceImport?.summary;
+    const importedCard = data.lastInstanceImport
+      ? `<article class="is-healthy"><strong>${imported ? `${imported.gigs || 0} / ${imported.media || 0}` : '✓'}</strong><span>Last full import${imported ? ' · shows / media' : ''}</span></article>`
+      : '';
+    return `<article><strong>v${escapeHtml(data.appVersion || '—')}</strong><span>Running version</span></article><article class="${data.originCookieMismatch ? 'has-warning' : ''}"><strong title="${origin}">${origin}</strong><span>Trusted browser origin · ${data.secureCookies ? 'secure cookies' : 'standard cookies'}</span></article><article><strong>${formatBytes(data.databaseSize)}</strong><span>Database size</span></article><article><strong>${data.backupCount}</strong><span>Saved database backups</span></article><article><strong>${backup}</strong><span>Latest backup</span></article><article class="${pending ? 'has-warning' : ''}"><strong>${pending ? '!' : '✓'}</strong><span>${pendingLabel}</span></article>${importedCard}`;
   }
 
   function backupSchedulePayload(form) {
@@ -200,12 +204,13 @@
     async function stageFullInstanceImport() {
       const file = importInstance?.files?.[0];
       if (!file) { transferStatus.textContent = 'Choose a full instance bundle first.'; transferStatus.classList.add('error'); return; }
-      if (!confirmAction('Stage this full instance import? On restart it will replace the database, media and local instance identity.')) return;
+      if (!confirmAction("Stage this full instance import? On restart it will replace the database, media, local identity and owner account. You will sign in using the source instance's credentials.")) return;
       stageInstanceImport.disabled = true; transferStatus.classList.remove('error');
       transferStatus.textContent = `Starting ${file.name}…`;
       try {
         const result = await uploadInstanceBundle(file);
-        transferStatus.textContent = `Full instance import staged (${formatBytes(result.bytes)}). Restart the server to apply it.`;
+        const imported = result.summary ? ` Verified ${result.summary.gigs || 0} shows and ${result.summary.media || 0} media records.` : '';
+        transferStatus.textContent = `Full instance import staged (${formatBytes(result.bytes)}).${imported} Restart the server to apply it, then sign in with the source account.`;
         importInstance.value = '';
         await render();
       } catch (error) { transferStatus.textContent = error.message; transferStatus.classList.add('error'); }

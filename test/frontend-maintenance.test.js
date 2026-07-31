@@ -151,7 +151,7 @@ describe('maintenance page', () => {
     assert.equal(requests.length, 3);
     assert.equal(requests[1].headers['X-Upload-Offset'], '400');
     assert.equal(requests[2].url, '/api/maintenance/instance-import/chunk');
-    assert.equal(elements.transferStatus.textContent, 'Full instance import staged (1000 bytes). Restart the server to apply it.');
+    assert.equal(elements.transferStatus.textContent, 'Full instance import staged (1000 bytes). Restart the server to apply it, then sign in with the source account.');
     assert.equal(elements.importInstance.value, '');
     assert.equal(elements.stageInstanceImport.disabled, false);
   });

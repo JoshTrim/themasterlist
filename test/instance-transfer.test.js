@@ -66,6 +66,7 @@ test('full instance bundle streams, stages, applies, and preserves rollback data
   const targetTransfer = service(target, sourceDb);
   const staged = await targetTransfer.stageImport(Readable.from([bundle.data]));
   assert.equal(staged.staged, true);
+  assert.deepEqual(staged.summary, { gigs: 1, media: 0, mediaFiles: 1 });
   assert.equal((await targetTransfer.status()).pending.format, 'the-master-list-instance-v1');
 
   const applied = applyPendingInstanceImportSync({
@@ -75,6 +76,7 @@ test('full instance bundle streams, stages, applies, and preserves rollback data
     now: () => new Date('2026-07-26T01:02:03Z'), logger: { log() {} }
   });
   assert.equal(applied.sourceCreatedAt !== null, true);
+  assert.deepEqual(applied.summary, { gigs: 1, media: 0, mediaFiles: 1 });
   const installed = new Database(path.join(target, 'master-list.sqlite'), { readonly: true });
   assert.equal(installed.prepare('SELECT artist FROM gigs').get().artist, 'source');
   installed.close();

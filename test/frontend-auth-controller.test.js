@@ -9,9 +9,12 @@ function fixture(search = '') {
   const elements = {
     panel: { hidden: true }, profileBar: { hidden: false }, setupForm: form(), loginForm: form(), registerForm: form(),
     message: { textContent: '', classList: classList() }, logoutButton: { addEventListener() {} },
-    accountForm: form(), accountMessage: { textContent: '', classList: classList() }
+    recoveryPanel: { hidden: true }, recoveryForm: form(), recoveryMessage: { textContent: '', classList: classList() },
+    accountForm: form(), accountMessage: { textContent: '', classList: classList() },
+    passwordForm: form(), passwordMessage: { textContent: '', classList: classList() },
+    logoutAllButton: { addEventListener() {} }, logoutAllMessage: { textContent: '', classList: classList() }
   };
-  const window = { location: { search, replaced: '', replace(value) { this.replaced = value; } } };
+  const window = { confirm: () => true, location: { search, replaced: '', replace(value) { this.replaced = value; } } };
   return { elements, window };
 }
 
@@ -50,14 +53,13 @@ describe('frontend authentication controller', () => {
     assert.equal(view.window.location.replaced, '');
   });
 
-  test('logs out and returns to the configured sign-in state', async () => {
+  test('logs out the current session and redirects to sign in', async () => {
     const view = fixture();
     let loggedOut = false;
     const controller = auth.createController({ window: view.window, FormDataClass: FormDataStub, elements: view.elements, onSignedIn() {}, onLoggedOut: () => { loggedOut = true; }, onAccountUpdated() {}, fetchJson: async () => ({}) });
     await controller.logout();
     assert.equal(loggedOut, true);
-    assert.equal(view.elements.loginForm.hidden, false);
-    assert.match(view.elements.message.textContent, /Sign in/);
+    assert.equal(view.window.location.replaced, '/login');
   });
 
   test('updates account details and clears password fields after success', async () => {
@@ -69,6 +71,32 @@ describe('frontend authentication controller', () => {
     assert.equal(updated.name, 'Updated Owner');
     assert.equal(view.elements.accountForm.resetCalled, true);
     assert.equal(view.elements.accountForm.elements.name.value, 'Updated Owner');
-    assert.equal(view.elements.accountMessage.textContent, 'Account updated.');
+    assert.equal(view.elements.accountMessage.textContent, 'Display name updated.');
+  });
+
+  test('validates and changes the password', async () => {
+    const view = fixture();
+    view.elements.passwordForm.entries = [['currentPassword', 'old'], ['newPassword', 'replacement-password'], ['confirmPassword', 'different']];
+    const requests = [];
+    const controller = auth.createController({ window: view.window, FormDataClass: FormDataStub, elements: view.elements, onSignedIn() {}, onLoggedOut() {}, onAccountUpdated() {}, fetchJson: async (...args) => { requests.push(args); return { id: 'owner', name: 'Owner' }; } });
+    await controller.updatePassword();
+    assert.equal(requests.length, 0);
+    assert.match(view.elements.passwordMessage.textContent, /do not match/);
+    view.elements.passwordForm.entries[2][1] = 'replacement-password';
+    await controller.updatePassword();
+    assert.equal(requests[0][0], '/api/auth/account');
+    assert.equal(JSON.parse(requests[0][1].body).confirmPassword, undefined);
+    assert.match(view.elements.passwordMessage.textContent, /Other sessions were signed out/);
+  });
+
+  test('signs out all sessions from account settings', async () => {
+    const view = fixture();
+    let loggedOut = false;
+    const requests = [];
+    const controller = auth.createController({ window: view.window, FormDataClass: FormDataStub, elements: view.elements, onSignedIn() {}, onLoggedOut: () => { loggedOut = true; }, onAccountUpdated() {}, fetchJson: async (url) => { requests.push(url); return {}; } });
+    await controller.logoutAll();
+    assert.deepEqual(requests, ['/api/auth/logout-all']);
+    assert.equal(loggedOut, true);
+    assert.equal(view.window.location.replaced, '/login');
   });
 });

@@ -133,6 +133,13 @@ const loginForm = document.querySelector('#login-form');
 const registerForm = document.querySelector('#register-form');
 const accountForm = document.querySelector('#account-form');
 const accountMessage = document.querySelector('#account-message');
+const passwordForm = document.querySelector('#password-form');
+const passwordMessage = document.querySelector('#password-message');
+const logoutAllButton = document.querySelector('#logout-all');
+const logoutAllMessage = document.querySelector('#logout-all-message');
+const recoveryPanel = document.querySelector('#account-recovery');
+const recoveryForm = document.querySelector('#recovery-form');
+const recoveryMessage = document.querySelector('#recovery-message');
 const instanceId = document.querySelector('#instance-id');
 const instancePublicKey = document.querySelector('#instance-public-key');
 const peerForm = document.querySelector('#peer-form');
@@ -642,7 +649,11 @@ function refreshCollaboration() { return sharedShowsController.refresh(); }
 
 const authController = authControllerModule.createController({
   window, fetchJson,
-  elements: { panel: authPanel, profileBar, setupForm, loginForm, registerForm, message: authMessage, logoutButton, accountForm, accountMessage },
+  elements: {
+    panel: authPanel, profileBar, setupForm, loginForm, registerForm, message: authMessage,
+    logoutButton, recoveryPanel, recoveryForm, recoveryMessage, accountForm, accountMessage,
+    passwordForm, passwordMessage, logoutAllButton, logoutAllMessage
+  },
   onSignedIn: (signedIn) => { account = signedIn; activeProfileId = account.id; },
   onLoggedOut: () => { account = null; activeProfileId = ''; },
   onAccountUpdated: (updated) => { account = updated; }
@@ -736,7 +747,7 @@ const pageControllers = pageControllersModule.createRegistry({
 });
 const appBootstrap = appBootstrapModule.createBootstrap({
   window, page, fetchJson, runtime: pageRuntime, authStateModule: window.MasterListAuthState,
-  authElements: { navSignIn, authPanel, profileBar, inviteButton, accountName: accountForm?.elements.name },
+  authElements: { navSignIn, authPanel, profileBar, inviteButton, logoutButton, accountName: accountForm?.elements.name },
   showAuth, onAccount: (nextAccount) => { account = nextAccount; },
   onAuthenticated: (signedIn) => { activeProfileId = signedIn.id; },
   onData: (data) => { ({ gigs, integrations, profiles, sharedShows, peers } = data); },

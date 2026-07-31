@@ -20,6 +20,7 @@
     if (elements.authPanel) elements.authPanel.hidden = !state.showAuthPanel;
     if (elements.profileBar) elements.profileBar.hidden = !state.showProfileBar;
     if (elements.inviteButton) elements.inviteButton.hidden = !state.showAdminActions;
+    if (elements.logoutButton) elements.logoutButton.hidden = !state.authenticated;
     if (elements.accountName && state.account) elements.accountName.value = state.account.name;
   }
 

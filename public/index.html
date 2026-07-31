@@ -39,7 +39,10 @@
         <div class="site-nav-group"><span>Explore</span><div><a href="/overview">Overview</a><a href="/artists">Artists</a><a href="/venues">Venues</a><a href="/timeline">Timeline</a><a href="/map">Map</a></div></div>
         <div class="site-nav-group"><span>System</span><div><a href="/activity">Activity <b class="nav-count" id="nav-activity-count" hidden></b></a><a href="/conflicts">Conflicts <b class="nav-count" id="nav-conflict-count" hidden></b></a><a href="/health">Metadata</a><a href="/maintenance">Maintenance</a><a href="/api-limits">API limits</a><a href="/account">Account</a><a id="nav-sign-in" href="/login" hidden>Sign in</a></div></div>
       </nav>
-      <span class="record-count" id="record-count">0 shows</span>
+      <div class="site-header-actions">
+        <span class="record-count" id="record-count">0 shows</span>
+        <button class="header-logout" id="logout" type="button" hidden>Sign out</button>
+      </div>
     </header>
 
     <main>
@@ -242,16 +245,37 @@
         <div class="auth-panel" id="auth-panel">
           <p class="shared-message" id="auth-message"></p>
           <form id="setup-form" hidden><label>Your name <input name="name" required maxlength="80" /></label><label>Choose a password <input name="password" type="password" required minlength="10" /></label><label id="setup-token-field" hidden>Setup token <input name="setupToken" type="password" autocomplete="one-time-code" /><small>Set with OWNER_SETUP_TOKEN on the server.</small></label><button class="button" type="submit">Create owner account</button></form>
-          <form id="login-form" hidden><label>Name <input name="name" required /></label><label>Password <input name="password" type="password" required /></label><button class="button" type="submit">Sign in</button></form>
+          <form id="login-form" hidden><label>Name <input name="name" required autocomplete="username" /></label><label>Password <input name="password" type="password" required autocomplete="current-password" /></label><button class="button" type="submit">Sign in</button></form>
+          <details class="account-recovery" id="account-recovery" hidden><summary>Forgot your password?</summary><form id="recovery-form"><label>Owner recovery token<input name="setupToken" type="password" required autocomplete="one-time-code" /></label><label>New password<input name="newPassword" type="password" required minlength="10" autocomplete="new-password" /></label><label>Confirm new password<input name="confirmPassword" type="password" required minlength="10" autocomplete="new-password" /></label><button class="button button-secondary" type="submit">Reset owner password</button><p class="form-message" id="recovery-message" role="status"></p></form><small>Uses <code>OWNER_SETUP_TOKEN</code> from the server environment and signs out every existing session.</small></details>
         </div>
         <div class="profile-bar" id="profile-bar" hidden>
           <label>Signed in as <select id="profile-select" disabled><option value="">Loading…</option></select></label>
-          <button class="text-button" id="logout" type="button">Sign out</button>
         </div>
         <p class="shared-message" id="shared-message">Pair separate Master List instances to collaborate on shared shows.</p>
         <div class="shared-list" id="shared-list"></div>
       </section>
-      <section class="account-page" id="account-page" aria-labelledby="account-heading"><div class="section-heading"><p class="eyebrow">Profile settings</p><h1 id="account-heading">Account</h1></div><form id="account-form"><label>Display name<input name="name" required maxlength="80" /></label><label>Current password<input name="currentPassword" type="password" required /></label><label>New password<input name="newPassword" type="password" minlength="10" required /></label><button class="button" type="submit">Update account</button><p class="form-message" id="account-message" role="status"></p></form><section class="instance-settings" aria-labelledby="instance-heading"><div class="section-heading"><p class="eyebrow">Collaboration foundation</p><h2 id="instance-heading">This instance</h2></div><p class="instance-description">Pair another Master List instance, test the connection, then sync shared-show ratings, notes, favourites and media manifests.</p><dl class="instance-details"><div><dt>Instance ID</dt><dd id="instance-id">Loading…</dd></div><div><dt>Public key</dt><dd><code id="instance-public-key">Loading…</code></dd></div></dl><div class="peer-invite-tools"><button class="button button-secondary" id="create-peer-invite" type="button">Create pairing invite</button><p class="form-message" id="peer-invite-message" role="status"></p><label>Import a peer invite<input id="peer-invite-token" placeholder="Paste the invite token or URL" /></label><button class="button button-secondary" id="import-peer-invite" type="button">Accept pairing invite</button></div><details class="peer-manual"><summary>Enter peer details manually</summary><form id="peer-form" class="peer-form"><label>Peer name<input name="name" required maxlength="100" placeholder="A friend’s archive" /></label><label>Peer ID<input name="peerId" required placeholder="UUID from the other instance" /></label><label>Peer URL<input name="baseUrl" type="url" placeholder="https://friend.example" /></label><label>Peer public key<textarea name="publicKey" required rows="3" placeholder="Paste the peer public key"></textarea></label><button class="button button-secondary" type="submit">Add paired instance</button><p class="form-message" id="peer-message" role="status"></p></form></details><div id="peer-list" class="peer-list"></div></section></section>
+      <section class="account-page" id="account-page" aria-labelledby="account-heading">
+        <div class="section-heading"><p class="eyebrow">Profile settings</p><h1 id="account-heading">Account</h1><p class="lede">Manage the single owner account for this archive.</p></div>
+        <div class="account-settings-grid">
+          <form class="account-settings-card" id="account-form">
+            <div><p class="eyebrow">Identity</p><h2>Display name</h2><p>Used throughout this instance and when collaborating with peers.</p></div>
+            <label>Display name<input name="name" required maxlength="80" autocomplete="name" /></label>
+            <label>Current password<input name="currentPassword" type="password" required autocomplete="current-password" /></label>
+            <button class="button" type="submit">Save display name</button>
+            <p class="form-message" id="account-message" role="status"></p>
+          </form>
+          <form class="account-settings-card" id="password-form">
+            <div><p class="eyebrow">Credentials</p><h2>Change password</h2><p>Changing it signs out every other browser and keeps this one signed in.</p></div>
+            <label>Current password<input name="currentPassword" type="password" required autocomplete="current-password" /></label>
+            <label>New password<input name="newPassword" type="password" minlength="10" required autocomplete="new-password" /></label>
+            <label>Confirm new password<input name="confirmPassword" type="password" minlength="10" required autocomplete="new-password" /></label>
+            <button class="button" type="submit">Change password</button>
+            <p class="form-message" id="password-message" role="status"></p>
+          </form>
+        </div>
+        <section class="account-security-card" aria-labelledby="account-security-heading"><div><p class="eyebrow">Session security</p><h2 id="account-security-heading">Sign out everywhere</h2><p>Ends every active session, including this browser. You will need to sign in again.</p></div><button class="button button-danger" id="logout-all" type="button">Sign out all sessions</button><p class="form-message" id="logout-all-message" role="status"></p></section>
+        <section class="instance-settings" aria-labelledby="instance-heading"><div class="section-heading"><p class="eyebrow">Collaboration foundation</p><h2 id="instance-heading">This instance</h2></div><p class="instance-description">Pair another Master List instance, test the connection, then sync shared-show ratings, notes, favourites and media manifests.</p><dl class="instance-details"><div><dt>Instance ID</dt><dd id="instance-id">Loading…</dd></div><div><dt>Public key</dt><dd><code id="instance-public-key">Loading…</code></dd></div></dl><div class="peer-invite-tools"><button class="button button-secondary" id="create-peer-invite" type="button">Create pairing invite</button><p class="form-message" id="peer-invite-message" role="status"></p><label>Import a peer invite<input id="peer-invite-token" placeholder="Paste the invite token or URL" /></label><button class="button button-secondary" id="import-peer-invite" type="button">Accept pairing invite</button></div><details class="peer-manual"><summary>Enter peer details manually</summary><form id="peer-form" class="peer-form"><label>Peer name<input name="name" required maxlength="100" placeholder="A friend’s archive" /></label><label>Peer ID<input name="peerId" required placeholder="UUID from the other instance" /></label><label>Peer URL<input name="baseUrl" type="url" placeholder="https://friend.example" /></label><label>Peer public key<textarea name="publicKey" required rows="3" placeholder="Paste the peer public key"></textarea></label><button class="button button-secondary" type="submit">Add paired instance</button><p class="form-message" id="peer-message" role="status"></p></form></details><div id="peer-list" class="peer-list"></div></section>
+      </section>
 
       <section class="map-section" id="map-page" aria-labelledby="map-heading">
         <div class="section-heading map-heading">

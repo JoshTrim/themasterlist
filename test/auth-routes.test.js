@@ -86,6 +86,37 @@ describe('authentication routes without a network listener', () => {
     assert.equal(newLogin.status, 200);
   });
 
+  test('changes the display name without rotating the password or current session', async () => {
+    const setup = response();
+    await handle(request('POST', { name: 'Owner', password: 'owner-password' }), setup, url('/api/auth/setup'));
+    const cookie = setup.headers['Set-Cookie'][0].split(';')[0];
+    const changed = response();
+    await handle(request('PATCH', { name: 'Archive Owner', currentPassword: 'owner-password' }, cookie), changed, url('/api/auth/account'));
+    assert.equal(changed.status, 200);
+    assert.equal(changed.payload.name, 'Archive Owner');
+    assert.equal(changed.headers['Set-Cookie'], undefined);
+    assert.equal(auth.currentAccount(request('GET', null, cookie)).name, 'Archive Owner');
+    const login = response();
+    await handle(request('POST', { name: 'Archive Owner', password: 'owner-password' }), login, url('/api/auth/login'));
+    assert.equal(login.status, 200);
+  });
+
+  test('recovers the owner password with the configured setup token', async () => {
+    handle = createAuthRoutes({
+      database, auth, now: () => new Date('2026-07-18T00:00:00Z'),
+      setupToken: 'long-random-recovery-token'
+    });
+    const setup = response();
+    await handle(request('POST', { name: 'Owner', password: 'owner-password', setupToken: 'long-random-recovery-token' }), setup, url('/api/auth/setup'));
+    const recovered = response();
+    await handle(request('POST', { setupToken: 'long-random-recovery-token', newPassword: 'recovered-password' }), recovered, url('/api/auth/recover'));
+    assert.equal(recovered.status, 200);
+    assert.ok(recovered.headers['Set-Cookie']);
+    const oldLogin = response();
+    await handle(request('POST', { name: 'Owner', password: 'owner-password' }), oldLogin, url('/api/auth/login'));
+    assert.equal(oldLogin.status, 401);
+  });
+
   test('rate limits repeated sign-in failures and sends a retry interval', async () => {
     const setup = response();
     await handle(request('POST', { name: 'Owner', password: 'owner-password' }), setup, url('/api/auth/setup'));
@@ -131,5 +162,19 @@ describe('authentication routes without a network listener', () => {
     assert.equal(logout.status, 200);
     assert.equal(auth.currentAccount(request('GET', null, cookie)), null);
     assert.equal(await handle(request('GET'), response(), url('/api/gigs')), false);
+  });
+
+  test('signs out all owner sessions', async () => {
+    const setup = response();
+    await handle(request('POST', { name: 'Owner', password: 'owner-password' }), setup, url('/api/auth/setup'));
+    const firstCookie = setup.headers['Set-Cookie'][0].split(';')[0];
+    const secondLogin = response();
+    await handle(request('POST', { name: 'Owner', password: 'owner-password' }), secondLogin, url('/api/auth/login'));
+    const secondCookie = secondLogin.headers['Set-Cookie'][0].split(';')[0];
+    const logout = response();
+    await handle(request('POST', {}, firstCookie), logout, url('/api/auth/logout-all'));
+    assert.equal(logout.status, 200);
+    assert.equal(auth.currentAccount(request('GET', null, firstCookie)), null);
+    assert.equal(auth.currentAccount(request('GET', null, secondCookie)), null);
   });
 });

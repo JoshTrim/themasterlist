@@ -12,7 +12,7 @@ Copy `.env.example` to `.env` and edit the copy. `.env` is ignored by Git and mu
 | `MASTER_LIST_VERSION` | `latest` | Published GHCR image tag used by Compose. Pin a release tag for repeatable deployments. |
 | `APP_ORIGIN` | `http://127.0.0.1:3000` | Exact browser origin used for callbacks and cross-site request protection. No path or trailing slash. |
 | `SESSION_COOKIE_SECURE` | `false` | Set `true` when the browser always reaches the app over HTTPS. |
-| `OWNER_SETUP_TOKEN` | empty | Required for first-owner setup in production. Generate with `openssl rand -hex 32`; remove after setup. |
+| `OWNER_SETUP_TOKEN` | empty | Required for first-owner setup in production and enables emergency owner-password recovery. Generate with `openssl rand -hex 32`; store it securely, or remove it after setup to disable browser recovery. |
 | `CONNECTIONS_ENCRYPTION_KEY` | empty | AES-256-GCM key for OAuth tokens; required in production. Generate with `openssl rand -base64 32`. |
 | `CONNECTIONS_ENCRYPTION_KEY_PREVIOUS` | empty | Previous OAuth key used once during rotation. Remove after successful migration. |
 | `INSTANCE_NAME` | `The Master List instance` | Friendly name advertised to paired instances. |
