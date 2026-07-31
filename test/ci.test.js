@@ -23,12 +23,20 @@ test('CI owns full regressions, dependency auditing and a real container health 
   assert.match(ci, /--read-only/);
 });
 
-test('release tags publish pinned multi-architecture GHCR images only after CI', () => {
+test('release tags publish pinned parallel multi-architecture GHCR images only after CI', () => {
   assert.match(release, /tags:\s*\n\s*- 'v\*\.\*\.\*'/);
   assert.match(release, /uses: \.\/\.github\/workflows\/ci\.yml/);
-  assert.match(release, /needs: verify/);
+  assert.match(release, /platform: linux\/amd64[\s\S]+runner: ubuntu-24\.04/);
+  assert.match(release, /platform: linux\/arm64[\s\S]+runner: ubuntu-24\.04-arm/);
+  assert.match(release, /runs-on: \$\{\{ matrix\.runner \}\}/);
+  assert.match(release, /needs: build/);
   assert.match(release, /packages: write/);
-  assert.match(release, /linux\/amd64,linux\/arm64/);
+  assert.match(release, /push-by-digest=true/);
+  assert.match(release, /actions\/upload-artifact@[a-f0-9]{40}/);
+  assert.match(release, /actions\/download-artifact@[a-f0-9]{40}/);
+  assert.match(release, /docker buildx imagetools create/);
+  assert.match(release, /Verify published architectures/);
+  assert.doesNotMatch(release, /setup-qemu-action/);
   assert.match(release, /type=raw,value=latest/);
   assert.match(release, /gh release create/);
   assert.doesNotMatch(release, /uses: [^\n]+@v\d/);

@@ -2,6 +2,8 @@
 
 The release workflow publishes versioned Linux AMD64 and ARM64 images to GitHub Container Registry (GHCR), then creates a GitHub release with generated notes. It runs only for semantic version tags such as `v0.1.0` and cannot publish until the reusable CI workflow passes.
 
+After CI and tag validation, the two container architectures build concurrently on native GitHub-hosted runners: AMD64 uses `ubuntu-24.04` and ARM64 uses `ubuntu-24.04-arm`. Each job pushes an immutable image digest with an architecture-specific cache scope. A final job downloads those digests, assembles the tagged multi-architecture manifest, verifies that both platforms are present and only then creates the GitHub release. This avoids the substantially slower QEMU-emulated ARM build used by the original single-runner workflow.
+
 ## Continuous integration
 
 Pull requests and branch pushes run three independent checks:
