@@ -22,7 +22,7 @@
     return { enabled: form.elements.enabled.checked, intervalHours: form.elements.intervalHours.value, retentionCount: form.elements.retentionCount.value };
   }
 
-  function createController({ page, fetchJson, escapeHtml, formatBytes, confirmAction, setTimeoutFn = globalThis.setTimeout, document, BlobClass = globalThis.Blob, URLApi = globalThis.URL, XMLHttpRequestClass = globalThis.XMLHttpRequest, now = () => new Date(), reload = () => globalThis.location.reload(), elements }) {
+  function createController({ page, fetchJson, escapeHtml, formatBytes, confirmAction, setTimeoutFn = globalThis.setTimeout, document, BlobClass = globalThis.Blob, URLApi = globalThis.URL, XMLHttpRequestClass = globalThis.XMLHttpRequest, createUploadId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`, instanceChunkSize = 4 * 1024 * 1024, now = () => new Date(), reload = () => globalThis.location.reload(), elements }) {
     const { summary, message, integrityList, cleanup, scheduleForm, scheduleStatus, backupNow, refreshIntegrity, restoreInput, stageRestore, downloadLink, exportArchive, importArchive, exportInstance, importInstance, stageInstanceImport, transferStatus } = elements;
 
     function renderIntegrity(data) {
@@ -138,24 +138,63 @@
       finally { importArchive.value = ''; }
     }
 
-    function uploadInstanceBundle(file) {
+    function uploadInstanceChunk(file, uploadId, offset) {
       return new Promise((resolve, reject) => {
+        const end = Math.min(offset + instanceChunkSize, file.size);
+        const chunk = file.slice(offset, end);
         const xhr = new XMLHttpRequestClass();
-        xhr.open('POST', '/api/maintenance/instance-import');
-        xhr.setRequestHeader('Content-Type', 'application/vnd.the-master-list.instance');
+        xhr.open('POST', '/api/maintenance/instance-import/chunk');
+        xhr.timeout = 10 * 60 * 1000;
+        xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+        xhr.setRequestHeader('X-Upload-Id', uploadId);
+        xhr.setRequestHeader('X-Upload-Offset', String(offset));
+        xhr.setRequestHeader('X-Upload-Total', String(file.size));
         xhr.upload.onprogress = (event) => {
           if (!event.lengthComputable) { transferStatus.textContent = `Uploading ${file.name}…`; return; }
-          transferStatus.textContent = `Uploading ${file.name}… ${Math.round((event.loaded / event.total) * 100)}%`;
+          const uploaded = Math.min(file.size, offset + event.loaded);
+          const percent = Math.round((uploaded / file.size) * 100);
+          transferStatus.textContent = percent === 100 ? `Validating ${file.name}…` : `Uploading ${file.name}… ${percent}%`;
         };
         xhr.onload = () => {
           let payload = {};
           try { payload = JSON.parse(xhr.responseText || '{}'); } catch { /* handled below */ }
-          if (xhr.status >= 200 && xhr.status < 300) resolve(payload);
-          else reject(new Error(payload.error || `Import failed with HTTP ${xhr.status}.`));
+          resolve({ status: xhr.status, payload });
         };
-        xhr.onerror = () => reject(new Error('The instance upload was interrupted. Check the connection and try again.'));
-        xhr.send(file);
+        xhr.onerror = () => reject(new Error('The instance upload was interrupted.'));
+        xhr.ontimeout = () => reject(new Error('The instance upload chunk timed out.'));
+        xhr.send(chunk);
       });
+    }
+
+    async function uploadInstanceBundle(file) {
+      const uploadId = createUploadId().replaceAll(/[^A-Za-z0-9_-]/g, '').slice(0, 128).padEnd(8, '0');
+      let offset = 0;
+      let attempts = 0;
+      while (offset < file.size) {
+        try {
+          const { status, payload } = await uploadInstanceChunk(file, uploadId, offset);
+          if (status === 409 && Number.isSafeInteger(payload.offset)) {
+            offset = payload.offset;
+            attempts = 0;
+            continue;
+          }
+          if (status < 200 || status >= 300) {
+            const error = new Error(payload.error || `Import failed with HTTP ${status}.`);
+            error.retryable = status >= 500;
+            throw error;
+          }
+          if (!Number.isSafeInteger(payload.offset) || payload.offset <= offset) throw new Error('The server did not accept the instance upload chunk.');
+          offset = payload.offset;
+          attempts = 0;
+          if (payload.complete) return payload;
+        } catch (error) {
+          attempts += 1;
+          if (error.retryable === false || attempts > 4) throw new Error(`${error.message} Check the connection and try again.`);
+          transferStatus.textContent = `Connection interrupted. Retrying ${file.name} from ${Math.round((offset / file.size) * 100)}%…`;
+          await new Promise((resolve) => setTimeoutFn(resolve, Math.min(1000 * (2 ** (attempts - 1)), 8000)));
+        }
+      }
+      throw new Error('The instance upload completed without a validation result.');
     }
 
     async function stageFullInstanceImport() {
@@ -186,7 +225,7 @@
       stageInstanceImport?.addEventListener('click', stageFullInstanceImport);
     }
 
-    return { render, renderStatus, renderIntegrity, saveSchedule, createBackup, checkIntegrity, stageDatabaseRestore, cleanupOrphans, exportShowsArchive, importShowsArchive, stageFullInstanceImport, bind };
+    return { render, renderStatus, renderIntegrity, saveSchedule, createBackup, checkIntegrity, stageDatabaseRestore, cleanupOrphans, exportShowsArchive, importShowsArchive, uploadInstanceBundle, stageFullInstanceImport, bind };
   }
 
   return { integrityMarkup, statusMarkup, backupSchedulePayload, createController };

@@ -97,3 +97,28 @@ test('corrupt instance bundles are rejected without staging them', async (t) => 
   await assert.rejects(transfer.stageImport(Readable.from([bundle])), /checksum|unexpected|invalid/i);
   assert.equal(fs.existsSync(path.join(root, 'instance-import-pending')), false);
 });
+
+test('full instance bundles can be uploaded and resumed in chunks', async (t) => {
+  const source = await fsp.mkdtemp(path.join(os.tmpdir(), 'master-list-chunk-source-'));
+  const target = await fsp.mkdtemp(path.join(os.tmpdir(), 'master-list-chunk-target-'));
+  t.after(async () => { await fsp.rm(source, { recursive: true, force: true }); await fsp.rm(target, { recursive: true, force: true }); });
+  await fsp.mkdir(path.join(source, 'media'), { recursive: true });
+  await fsp.writeFile(path.join(source, 'media', 'clip.mp4'), Buffer.alloc(32 * 1024, 7));
+  const sourceDb = createDatabase(path.join(source, 'master-list.sqlite'), 'chunk-source');
+  t.after(() => sourceDb.close());
+  const bundle = (await exportedBundle(service(source, sourceDb))).data;
+  const transfer = service(target, sourceDb);
+  const uploadId = 'chunk-test-upload';
+  let offset = 0;
+  let result;
+  while (offset < bundle.length) {
+    const chunk = bundle.subarray(offset, Math.min(offset + 4096, bundle.length));
+    const request = Readable.from([chunk]);
+    request.headers = { 'x-upload-id': uploadId, 'x-upload-total': String(bundle.length), 'x-upload-offset': String(offset) };
+    result = await transfer.receiveImportChunk(request);
+    offset = result.offset;
+  }
+  assert.equal(result.complete, true);
+  assert.equal(result.staged, true);
+  assert.equal((await transfer.status()).pending.format, 'the-master-list-instance-v1');
+});

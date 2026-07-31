@@ -129,21 +129,57 @@ describe('maintenance page', () => {
 
   test('uploads a full instance bundle with progress and reports restart requirement', async () => {
     const elements = elementsFixture();
-    const file = { name: 'archive.tml-instance', size: 1000 };
+    const file = { name: 'archive.tml-instance', size: 1000, slice: (start, end) => ({ start, end, size: end - start }) };
     elements.importInstance.files = [file]; elements.importInstance.value = 'archive.tml-instance';
+    const requests = [];
     class XhrStub {
-      constructor() { this.upload = {}; this.status = 202; this.responseText = JSON.stringify({ bytes: 1000 }); }
+      constructor() { this.upload = {}; this.headers = {}; }
       open(method, url) { this.method = method; this.url = url; }
-      setRequestHeader(name, value) { this.header = [name, value]; }
-      send(body) { this.body = body; this.upload.onprogress({ lengthComputable: true, loaded: 500, total: 1000 }); this.onload(); }
+      setRequestHeader(name, value) { this.headers[name] = value; }
+      send(body) {
+        this.body = body; requests.push(this);
+        this.status = body.end === file.size ? 202 : 200;
+        this.responseText = JSON.stringify({ complete: body.end === file.size, offset: body.end, bytes: file.size });
+        this.upload.onprogress({ lengthComputable: true, loaded: body.size, total: body.size }); this.onload();
+      }
     }
     const controller = maintenance.createController({
       page: 'maintenance', escapeHtml, formatBytes, confirmAction: () => true, elements,
-      XMLHttpRequestClass: XhrStub, fetchJson: async () => status
+      XMLHttpRequestClass: XhrStub, fetchJson: async () => status, instanceChunkSize: 400, createUploadId: () => 'test-upload-id'
     });
     await controller.stageFullInstanceImport();
+    assert.equal(requests.length, 3);
+    assert.equal(requests[1].headers['X-Upload-Offset'], '400');
+    assert.equal(requests[2].url, '/api/maintenance/instance-import/chunk');
     assert.equal(elements.transferStatus.textContent, 'Full instance import staged (1000 bytes). Restart the server to apply it.');
     assert.equal(elements.importInstance.value, '');
     assert.equal(elements.stageInstanceImport.disabled, false);
+  });
+
+  test('retries an interrupted instance chunk and resumes from the server offset', async () => {
+    const elements = elementsFixture();
+    const file = { name: 'large.tml-instance', size: 800, slice: (start, end) => ({ start, end, size: end - start }) };
+    let requestCount = 0;
+    class XhrStub {
+      constructor() { this.upload = {}; this.headers = {}; }
+      open() {}
+      setRequestHeader(name, value) { this.headers[name] = value; }
+      send(body) {
+        requestCount += 1;
+        if (requestCount === 1) { this.onerror(); return; }
+        this.status = body.end === file.size ? 202 : 200;
+        this.responseText = JSON.stringify({ complete: body.end === file.size, offset: body.end, bytes: file.size });
+        this.upload.onprogress({ lengthComputable: true, loaded: body.size, total: body.size });
+        this.onload();
+      }
+    }
+    const controller = maintenance.createController({
+      page: 'maintenance', escapeHtml, formatBytes, confirmAction: () => true, elements,
+      XMLHttpRequestClass: XhrStub, fetchJson: async () => status, instanceChunkSize: 400,
+      createUploadId: () => 'retry-upload-id', setTimeoutFn: (callback) => callback()
+    });
+    const result = await controller.uploadInstanceBundle(file);
+    assert.equal(result.complete, true);
+    assert.equal(requestCount, 3);
   });
 });

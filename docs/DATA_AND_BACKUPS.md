@@ -50,7 +50,7 @@ Use **System → Maintenance → Full instance transfer** when moving the archiv
 5. Restart the destination. The imported account, shows, setlists, media, metadata, geocodes, peer identity and encrypted OAuth connections replace its current data.
 6. Sign in with the account credentials from the source instance.
 
-The transfer is streamed on export and import, so it can handle large media libraries without putting the entire bundle in application or browser memory. It includes the live database, `data/media`, `connections.json` when present, and `geocodes.json` when present. It deliberately excludes `.env`, encryption keys, scheduled-backup files, temporary jobs and downloaded model caches.
+The transfer is streamed on export and uploaded in retryable 4 MB chunks on import, so it can handle large media libraries without putting the entire bundle in application or browser memory. If the connection briefly drops, the importer resumes from the last offset accepted by the server. It includes the live database, `data/media`, `connections.json` when present, and `geocodes.json` when present. It deliberately excludes `.env`, encryption keys, scheduled-backup files, temporary jobs and downloaded model caches.
 
 Before applying an import, the destination moves its existing database, media and connection data to a timestamped `data/backups/pre-instance-import-*` directory. Keep that rollback copy until the imported archive has been checked.
 

@@ -2,16 +2,17 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createMaintenanceRoutes } = require('../lib/routes/maintenance');
 
-function harness({ account = { isAdmin: true }, body = {}, importError = null } = {}) {
-  const replies = []; const values = []; let pruned = null; let exported = false; let imported = false;
+function harness({ account = { isAdmin: true }, body = {}, importError = null, chunkResult = { complete: false, offset: 4 } } = {}) {
+  const replies = []; const values = []; let pruned = null; let exported = false; let imported = false; let chunked = false;
   const handle = createMaintenanceRoutes({
     requireAccount: () => account, readBody: async () => body,
     sendJson: (_response, status, payload, headers) => replies.push({ status, payload, headers }), sendError: (_response, status, error) => replies.push({ status, error }),
     status: async () => ({ ok: true }), settings: () => ({ enabled: true }), setSetting: (...args) => values.push(args), pruneBackups: async (count) => { pruned = count; },
     createBackup: async () => ({ created: true }), manifest: async () => ({ format: 'manifest' }), integrity: async () => ({ healthy: true }), restore: async () => ({ staged: true }),
-    exportInstance: async () => { exported = true; }, importInstance: async () => { imported = true; if (importError) throw importError; return { staged: true, restartRequired: true }; }
+    exportInstance: async () => { exported = true; }, importInstance: async () => { imported = true; if (importError) throw importError; return { staged: true, restartRequired: true }; },
+    importInstanceChunk: async () => { chunked = true; if (importError) throw importError; return chunkResult; }
   });
-  return { handle, replies, values, pruned: () => pruned, exported: () => exported, imported: () => imported };
+  return { handle, replies, values, pruned: () => pruned, exported: () => exported, imported: () => imported, chunked: () => chunked };
 }
 
 test('maintenance routes expose status and clamp backup settings', async () => {
@@ -39,6 +40,17 @@ test('maintenance routes stream exports and stage validated instance imports for
   await state.handle({ method: 'POST', headers: { 'content-type': 'application/vnd.the-master-list.instance' } }, {}, new URL('http://x/api/maintenance/instance-import'));
   assert.equal(state.imported(), true);
   assert.equal(state.replies.at(-1).status, 202);
+});
+
+test('maintenance routes accept resumable instance chunks and report offsets', async () => {
+  const state = harness({ chunkResult: { complete: false, offset: 4194304 } });
+  await state.handle({ method: 'POST', headers: { 'content-type': 'application/octet-stream' } }, {}, new URL('http://x/api/maintenance/instance-import/chunk'));
+  assert.equal(state.chunked(), true);
+  assert.deepEqual(state.replies.at(-1), { status: 200, payload: { complete: false, offset: 4194304 }, headers: undefined });
+
+  const conflict = harness({ chunkResult: { conflict: true, complete: false, offset: 12 } });
+  await conflict.handle({ method: 'POST', headers: { 'content-type': 'application/octet-stream' } }, {}, new URL('http://x/api/maintenance/instance-import/chunk'));
+  assert.equal(conflict.replies.at(-1).status, 409);
 });
 
 test('full instance transfer enforces ownership, content type, and upload status errors', async () => {
