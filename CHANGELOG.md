@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1 — 2026-07-31
+
+### Fixed
+
+- Full-instance imports now upload in resumable 4 MB chunks instead of one long request.
+- Interrupted imports retry automatically and reconcile progress with the last byte accepted by the server.
+- Import progress distinguishes uploading from server-side validation.
+
 ## 0.1.0 — 2026-07-28
 
 The first packaged release of The Master List.
