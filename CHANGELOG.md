@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Load show-card artist artwork from one cacheable manifest and keep immutable local profile photos in the browser cache.
+- Keep the show archive available if its optional artwork manifest fails, and cache public external artist and venue artwork on profile and directory pages.
 
 ### Added
 

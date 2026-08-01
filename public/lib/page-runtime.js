@@ -13,6 +13,7 @@
   });
 
   const defaults = Object.freeze({ gigs: [], integrations: {}, profiles: [], sharedShows: [], peers: [], artistImages: [] });
+  const optionalDatasets = new Set(['artistImages']);
   const pageRequirements = Object.freeze({
     overview: ['gigs', 'sharedShows'],
     artists: ['gigs', 'sharedShows'],
@@ -41,7 +42,13 @@
   async function loadPageData(page, { authenticated = true, fetchJson }) {
     const data = { gigs: [], integrations: {}, profiles: [], sharedShows: [], peers: [], artistImages: [] };
     const required = requirementsFor(page, authenticated);
-    const values = await Promise.all(required.map((key) => fetchJson(endpoints[key])));
+    const values = await Promise.all(required.map(async (key) => {
+      try { return await fetchJson(endpoints[key]); }
+      catch (error) {
+        if (optionalDatasets.has(key)) return defaults[key];
+        throw error;
+      }
+    }));
     required.forEach((key, index) => { data[key] = values[index]; });
     return data;
   }
@@ -83,5 +90,5 @@
     return window.L;
   }
 
-  return { endpoints, defaults, pageRequirements, requirementsFor, loadPageData, runController, loadScript, loadLeaflet };
+  return { endpoints, defaults, optionalDatasets, pageRequirements, requirementsFor, loadPageData, runController, loadScript, loadLeaflet };
 }));

@@ -49,6 +49,19 @@ describe('route-aware frontend runtime', () => {
     assert.deepEqual(data.sharedShows, []);
   });
 
+  test('keeps the show archive usable when the optional artwork manifest fails', async () => {
+    const data = await loadPageData('shows', {
+      fetchJson: async (url) => {
+        if (url === '/api/directory/artist-images') throw new Error('Artwork unavailable');
+        if (url === '/api/gigs') return [{ id: 'gig-1' }];
+        if (url === '/api/shared/shows') return [];
+        return {};
+      }
+    });
+    assert.deepEqual(data.gigs, [{ id: 'gig-1' }]);
+    assert.deepEqual(data.artistImages, []);
+  });
+
   test('includes collaboration data only where it is used', () => {
     assert.deepEqual(requirementsFor('add'), ['gigs', 'sharedShows', 'peers']);
     assert.deepEqual(requirementsFor('shows'), ['gigs', 'integrations', 'sharedShows', 'artistImages']);

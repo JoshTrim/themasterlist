@@ -47,6 +47,14 @@ describe('artist and venue directory page', () => {
     assert.match(venueMarkup, /Last visited/);
   });
 
+  test('prioritizes above-the-fold directory artwork', () => {
+    const artist = { name: 'Poppy', shows: 1, venues: new Set(['one']), averageRating: 5, favourites: 0, latestDate: '2026-01-01', description: '', image: '/artist.jpg', imagePosition: 'center', missingMetadata: [] };
+    const eager = directoryPage.artistCardMarkup(artist, { escapeHtml, formatGigDate, initials, eager: true });
+    const lazy = directoryPage.artistCardMarkup(artist, { escapeHtml, formatGigDate, initials });
+    assert.match(eager, /loading="eager" fetchpriority="high"/);
+    assert.match(lazy, /loading="lazy"/);
+  });
+
   test('renders and filters the artist directory through its controller', async () => {
     const artists = controlSet();
     const venues = controlSet();

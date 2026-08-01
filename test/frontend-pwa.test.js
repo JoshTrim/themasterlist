@@ -52,7 +52,7 @@ describe('installable web app', () => {
     const registration = {};
     const navigator = { serviceWorker: { register: async (...args) => { calls.push(args); return registration; } } };
     assert.equal(await registerServiceWorker({ navigator, location: { protocol: 'https:', hostname: 'music.example' } }), registration);
-    assert.deepEqual(calls, [['/service-worker.js', { scope: '/' }]]);
+    assert.deepEqual(calls, [['/service-worker.js?v=2', { scope: '/' }]]);
     assert.equal(await registerServiceWorker({ navigator, location: { protocol: 'http:', hostname: '192.168.1.9' } }), null);
     assert.equal(await registerServiceWorker({ navigator: {}, location: { protocol: 'https:', hostname: 'music.example' } }), null);
     assert.equal(await registerServiceWorker({
@@ -61,9 +61,13 @@ describe('installable web app', () => {
     }), null);
   });
 
-  test('keeps private API and media traffic out of implicit worker caches', () => {
+  test('caches only cross-origin public artwork on archive and profile pages', () => {
     const worker = fs.readFileSync(path.join(publicRoot, 'service-worker.js'), 'utf8');
-    assert.doesNotMatch(worker, /caches\.open|cache\.put|respondWith/);
+    assert.match(worker, /request\.destination === 'image'/);
+    assert.match(worker, /url\.origin !== self\.location\.origin/);
+    assert.match(worker, /ARTWORK_PATHS\.has\(pathname\)/);
+    assert.match(worker, /caches\.open\(ARTWORK_CACHE\)/);
+    assert.doesNotMatch(worker, /api\/media|profile-images/);
     assert.match(worker, /self\.skipWaiting/);
     assert.match(worker, /self\.clients\.claim/);
   });
