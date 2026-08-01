@@ -56,6 +56,14 @@ describe('frontend shell contracts', () => {
     assert.match(html, /Updates apply database migrations automatically/);
   });
 
+  test('maintenance keeps infrequent tools in labelled disclosure panels', () => {
+    assert.match(html, /class="maintenance-quick-actions"/);
+    assert.match(html, /<details class="maintenance-disclosure"/);
+    assert.match(html, /Backup settings & restore/);
+    assert.match(html, /Full instance transfer/);
+    assert.match(html, /Deployment details/);
+  });
+
   test('keeps application behavior behind modules instead of rebuilding it in the composition root', () => {
     assert.doesNotMatch(app, /\.addEventListener\s*\(/);
     assert.doesNotMatch(app, /document\.createElement\s*\(/);

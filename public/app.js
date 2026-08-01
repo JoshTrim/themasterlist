@@ -160,6 +160,8 @@ const maintenanceSummary = document.querySelector('#maintenance-summary');
 const maintenanceMessage = document.querySelector('#maintenance-message');
 const updateStatus = document.querySelector('#update-status');
 const checkUpdatesButton = document.querySelector('#check-updates');
+const maintenanceDeployment = document.querySelector('#maintenance-deployment');
+const integrityDisclosure = document.querySelector('#integrity-disclosure');
 const integrityList = document.querySelector('#integrity-list');
 const refreshIntegrityButton = document.querySelector('#refresh-integrity');
 const restoreDatabaseInput = document.querySelector('#restore-database');
@@ -504,7 +506,7 @@ const maintenancePageController = maintenancePageModule.createController({
   BlobClass: Blob, URLApi: URL, reload: () => window.location.reload(),
   elements: {
     summary: maintenanceSummary, message: maintenanceMessage, integrityList, cleanup: cleanupMediaButton,
-    updateStatus, checkUpdates: checkUpdatesButton,
+    updateStatus, checkUpdates: checkUpdatesButton, deployment: maintenanceDeployment, integrityDisclosure,
     scheduleForm: backupScheduleForm, scheduleStatus: backupScheduleStatus, backupNow: backupNowButton,
     refreshIntegrity: refreshIntegrityButton, restoreInput: restoreDatabaseInput,
     stageRestore: stageRestoreButton, downloadLink: downloadDatabaseLink,

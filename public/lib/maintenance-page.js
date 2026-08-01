@@ -11,15 +11,18 @@
   }
 
   function statusMarkup(data, { escapeHtml, formatBytes }) {
-    const backup = data.latestBackup ? escapeHtml(data.latestBackup.replace(/^the-master-list-|^pre-restore-/, '').replace(/\.sqlite$/, '')) : '—';
     const pending = data.instanceImportPending || data.restorePending;
     const pendingLabel = data.instanceImportPending ? 'Full instance import staged — restart required' : data.restorePending ? 'Database restore staged — restart required' : 'No restore pending';
+    const healthy = data.integrity?.healthy !== false && data.mediaWritable !== false;
+    return `<article><strong>v${escapeHtml(data.appVersion || '—')}</strong><span>Running version</span></article><article><strong>${formatBytes(data.databaseSize)}</strong><span>Database size</span></article><article><strong>${Number(data.backupCount || 0)}</strong><span>Saved backups</span></article><article class="${pending || !healthy ? 'has-warning' : 'is-healthy'}"><strong>${pending || !healthy ? '!' : '✓'}</strong><span>${pending ? pendingLabel : healthy ? 'Archive healthy' : 'Archive needs attention'}</span></article>`;
+  }
+
+  function deploymentMarkup(data, { escapeHtml }) {
     const origin = escapeHtml(data.appOrigin || '—');
+    const backup = data.latestBackup ? escapeHtml(data.latestBackup.replace(/^the-master-list-|^pre-restore-/, '').replace(/\.sqlite$/, '')) : 'None yet';
     const imported = data.lastInstanceImport?.summary;
-    const importedCard = data.lastInstanceImport
-      ? `<article class="is-healthy"><strong>${imported ? `${imported.gigs || 0} / ${imported.media || 0}` : '✓'}</strong><span>Last full import${imported ? ' · shows / media' : ''}</span></article>`
-      : '';
-    return `<article><strong>v${escapeHtml(data.appVersion || '—')}</strong><span>Running version</span></article><article class="${data.originCookieMismatch ? 'has-warning' : ''}"><strong title="${origin}">${origin}</strong><span>Trusted browser origin · ${data.secureCookies ? 'secure cookies' : 'standard cookies'}</span></article><article><strong>${formatBytes(data.databaseSize)}</strong><span>Database size</span></article><article><strong>${data.backupCount}</strong><span>Saved database backups</span></article><article><strong>${backup}</strong><span>Latest backup</span></article><article class="${pending ? 'has-warning' : ''}"><strong>${pending ? '!' : '✓'}</strong><span>${pendingLabel}</span></article>${importedCard}`;
+    const importValue = data.lastInstanceImport ? imported ? `${imported.gigs || 0} shows · ${imported.media || 0} media` : 'Completed' : 'Never';
+    return `<div class="${data.originCookieMismatch ? 'has-warning' : ''}"><dt>Trusted browser origin</dt><dd title="${origin}">${origin}</dd></div><div><dt>Session cookies</dt><dd>${data.secureCookies ? 'Secure · HTTPS' : 'Standard · HTTP'}</dd></div><div><dt>Media storage</dt><dd>${data.mediaWritable === false ? 'Not writable' : 'Writable'}</dd></div><div><dt>Latest backup</dt><dd>${backup}</dd></div><div><dt>Last full import</dt><dd>${escapeHtml(importValue)}</dd></div>`;
   }
 
   function backupSchedulePayload(form) {
@@ -47,7 +50,7 @@
   }
 
   function createController({ page, fetchJson, escapeHtml, formatBytes, confirmAction, setTimeoutFn = globalThis.setTimeout, document, BlobClass = globalThis.Blob, URLApi = globalThis.URL, XMLHttpRequestClass = globalThis.XMLHttpRequest, createUploadId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`, instanceChunkSize = 4 * 1024 * 1024, now = () => new Date(), reload = () => globalThis.location.reload(), elements }) {
-    const { summary, message, updateStatus, checkUpdates, integrityList, cleanup, scheduleForm, scheduleStatus, backupNow, refreshIntegrity, restoreInput, stageRestore, downloadLink, exportArchive, importArchive, exportInstance, importInstance, stageInstanceImport, transferStatus } = elements;
+    const { summary, message, updateStatus, checkUpdates, deployment, integrityDisclosure, integrityList, cleanup, scheduleForm, scheduleStatus, backupNow, refreshIntegrity, restoreInput, stageRestore, downloadLink, exportArchive, importArchive, exportInstance, importInstance, stageInstanceImport, transferStatus } = elements;
     let maintenanceData = {};
 
     function renderIntegrity(data) {
@@ -60,6 +63,7 @@
       maintenanceData = data;
       if (!summary) return;
       summary.innerHTML = statusMarkup(data, { escapeHtml, formatBytes });
+      if (deployment) deployment.innerHTML = deploymentMarkup(data, { escapeHtml });
       if (scheduleForm && data.backupSchedule) {
         scheduleForm.elements.enabled.checked = Boolean(data.backupSchedule.enabled);
         scheduleForm.elements.intervalHours.value = data.backupSchedule.intervalHours;
@@ -112,6 +116,7 @@
     }
 
     async function checkIntegrity() {
+      if (integrityDisclosure) integrityDisclosure.open = true;
       refreshIntegrity.disabled = true;
       refreshIntegrity.textContent = 'Checking…';
       message.textContent = 'Scanning database and media files…';
@@ -266,5 +271,5 @@
     return { render, renderStatus, renderIntegrity, checkForUpdates, saveSchedule, createBackup, checkIntegrity, stageDatabaseRestore, cleanupOrphans, exportShowsArchive, importShowsArchive, uploadInstanceBundle, stageFullInstanceImport, bind };
   }
 
-  return { integrityMarkup, statusMarkup, updateStatusMarkup, updateErrorMarkup, backupSchedulePayload, createController };
+  return { integrityMarkup, statusMarkup, deploymentMarkup, updateStatusMarkup, updateErrorMarkup, backupSchedulePayload, createController };
 }));

@@ -964,13 +964,19 @@ a.metadata-step:hover { border-color: #ff2d9b; background: #210b35; color: #fff0
 .maintenance-summary span, .integrity-summary span { display: block; margin-top: 6px; color: #d6a9e2; font-size: 14px; }
 .maintenance-summary .has-warning { border-color: #ff496c; box-shadow: 0 0 14px rgba(255, 73, 108, .2); }
 .maintenance-summary .has-warning strong { color: #ff8ca2; }
+.maintenance-summary .is-healthy { border-color: #3aa46a; box-shadow: 0 0 14px rgba(74, 255, 154, .1); }
+.maintenance-summary .is-healthy strong { color: #7fffb2; }
 .integrity-summary .is-healthy { border-color: #3aa46a; box-shadow: 0 0 14px rgba(74, 255, 154, .16); }
 .integrity-summary .is-healthy strong { color: #7fffb2; }
+.maintenance-quick-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin-bottom: 8px; padding: 11px; border: 1px solid #5e2a78; background: rgba(13, 7, 24, .78); }
+.maintenance-quick-actions .button { width: 100%; min-width: 0; justify-content: center; }
+.maintenance-global-message { min-height: 20px; margin: 4px 0 0; }
 .maintenance-panel { margin-top: 20px; padding: 20px; border: 1px solid #5e2a78; background: linear-gradient(145deg, rgba(35, 13, 53, .82), rgba(12, 7, 22, .94)); box-shadow: inset 0 0 22px rgba(197, 45, 255, .06); }
 .maintenance-panel-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; padding-bottom: 15px; border-bottom: 1px solid #54216e; }
 .maintenance-panel-heading h2 { margin: 5px 0 0; color: #fff0fa; font: 14px/1.5 "Press Start 2P", monospace; }
 .maintenance-panel-heading p:not(.eyebrow) { margin: 8px 0 0; color: #cda8d8; font-size: 16px; }
 .maintenance-panel-heading > div:last-child { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.update-panel .maintenance-panel-heading > div:last-child { display: block; }
 .maintenance-security-note { margin: 16px 0 0; padding: 11px 13px; border-left: 3px solid #ffd166; background: rgba(70, 42, 10, .28); color: #e8cfa3; font-size: 15px; }
 .update-status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
 .update-status-grid article { min-width: 0; padding: 14px; border: 1px solid #5e2a78; background: rgba(13, 7, 24, .76); }
@@ -988,6 +994,29 @@ a.metadata-step:hover { border-color: #ff2d9b; background: #210b35; color: #fff0
 .update-commands { margin-top: 16px; border: 1px solid #54216e; background: #090410; }
 .update-commands > span { display: block; padding: 9px 12px; border-bottom: 1px solid #54216e; color: #ff82c8; font: 8px/1.4 "Press Start 2P", monospace; text-transform: uppercase; }
 .update-commands pre { overflow-x: auto; margin: 0; padding: 14px; color: #d9c6ff; font: 17px/1.5 "VT323", monospace; }
+.update-commands-disclosure { margin-top: 12px; }
+.update-commands-disclosure > summary { width: fit-content; cursor: pointer; color: #ff82c8; font: 8px/1.5 "Press Start 2P", monospace; list-style: none; }
+.update-commands-disclosure > summary::-webkit-details-marker { display: none; }
+.update-commands-disclosure > summary::before { display: inline-block; margin-right: 8px; content: "+"; }
+.update-commands-disclosure[open] > summary::before { content: "−"; }
+.maintenance-disclosures { display: grid; gap: 10px; margin-top: 16px; }
+.maintenance-disclosure { border: 1px solid #5e2a78; background: linear-gradient(145deg, rgba(31, 12, 47, .78), rgba(10, 5, 19, .94)); }
+.maintenance-disclosure > summary { position: relative; display: flex; align-items: center; min-height: 70px; box-sizing: border-box; padding: 15px 58px 15px 18px; cursor: pointer; list-style: none; }
+.maintenance-disclosure > summary::-webkit-details-marker { display: none; }
+.maintenance-disclosure > summary::after { position: absolute; right: 20px; color: #ff82c8; content: "+"; font: 22px/1 "Press Start 2P", monospace; text-shadow: 0 0 8px rgba(255, 45, 155, .65); }
+.maintenance-disclosure[open] > summary::after { content: "−"; }
+.maintenance-disclosure > summary:hover, .maintenance-disclosure > summary:focus-visible { background: rgba(80, 20, 103, .28); outline: 0; }
+.maintenance-disclosure > summary strong, .maintenance-disclosure > summary small { display: block; }
+.maintenance-disclosure > summary strong { color: #fff0fa; font: 10px/1.5 "Press Start 2P", monospace; }
+.maintenance-disclosure > summary small { margin-top: 6px; color: #b995c8; font-size: 15px; }
+.maintenance-disclosure-body { padding: 0 18px 18px; border-top: 1px solid #54216e; }
+.maintenance-inline-actions { display: flex; justify-content: flex-end; padding-top: 16px; }
+.maintenance-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; margin: 0; padding-top: 8px; }
+.maintenance-facts > div { min-width: 0; padding: 13px 0; border-bottom: 1px solid rgba(84, 33, 110, .7); }
+.maintenance-facts dt { color: #a987b5; font: 7px/1.4 "Press Start 2P", monospace; text-transform: uppercase; }
+.maintenance-facts dd { overflow: hidden; margin: 5px 0 0; color: #fff0fa; font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }
+.maintenance-facts .has-warning dd { color: #ffd166; }
+.maintenance-privacy-note { margin: 16px 0 0; color: #b995c8; font-size: 15px; }
 .maintenance-actions { display: flex; flex-wrap: wrap; gap: 9px; margin: 18px 0; }
 .backup-schedule { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 18px 0 22px; padding: 16px; border: 1px solid #7422a0; background: rgba(16, 7, 25, .82); }
 .backup-schedule > label:not(.pixel-checkbox) { display: grid; gap: 6px; color: #ff82c8; font: 8px/1.4 "Press Start 2P", monospace; text-transform: uppercase; }
@@ -1053,6 +1082,7 @@ a.metadata-step:hover { border-color: #ff2d9b; background: #210b35; color: #fff0
 .conflict-card > footer .form-message { margin: 0; }
 @media (max-width: 760px) {
   .maintenance-summary, .integrity-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .maintenance-quick-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .update-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .update-result { align-items: flex-start; flex-direction: column; }
   .maintenance-panel-heading, .activity-heading { align-items: stretch; flex-direction: column; }
@@ -1072,4 +1102,10 @@ a.metadata-step:hover { border-color: #ff2d9b; background: #210b35; color: #fff0
   .conflict-comparison { grid-template-columns: 1fr; }
   .conflict-choice select { width: 100%; }
   .conflict-card > footer { align-items: stretch; flex-direction: column; }
+  .maintenance-facts { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 430px) {
+  .maintenance-disclosure > summary { padding-left: 14px; }
+  .maintenance-disclosure-body { padding: 0 14px 14px; }
 }

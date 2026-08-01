@@ -14,7 +14,7 @@ function elementsFixture() {
   };
   return {
     summary: { innerHTML: '' }, message: { textContent: '', classList: classList() }, integrityList: { innerHTML: '' }, cleanup: button(),
-    updateStatus: { innerHTML: '' }, checkUpdates: button(),
+    updateStatus: { innerHTML: '' }, checkUpdates: button(), deployment: { innerHTML: '' }, integrityDisclosure: { open: false },
     scheduleForm, scheduleStatus: { textContent: '', classList: classList() }, backupNow: button(), refreshIntegrity: button(),
     restoreInput: { files: [] }, stageRestore: button(), downloadLink: { addEventListener() {} },
     exportArchive: button(), importArchive: { files: [], value: '', addEventListener() {} },
@@ -28,13 +28,16 @@ const status = { appVersion: '0.2.0', appOrigin: 'https://archive.example', secu
 const update = { installedVersion: '0.2.0', latestVersion: '0.3.0', updateAvailable: true, checkedAt: '2026-08-01T00:00:00Z' };
 
 describe('maintenance page', () => {
-  test('renders escaped integrity details and normalized backup names', () => {
+  test('renders compact archive status and detailed deployment facts', () => {
     assert.match(maintenance.integrityMarkup(integrity, { escapeHtml, formatBytes }), /&lt;Orphan&gt;/);
     const markup = maintenance.statusMarkup(status, { escapeHtml, formatBytes });
-    assert.match(markup, />2026-07-19</);
-    assert.doesNotMatch(markup, /the-master-list-/);
     assert.match(markup, /v0\.2\.0/);
-    assert.match(markup, /https:\/\/archive\.example/);
+    assert.match(markup, /Archive needs attention/);
+    assert.doesNotMatch(markup, /https:\/\/archive\.example/);
+    const deployment = maintenance.deploymentMarkup(status, { escapeHtml });
+    assert.match(deployment, /https:\/\/archive\.example/);
+    assert.match(deployment, />2026-07-19</);
+    assert.doesNotMatch(deployment, /the-master-list-/);
     assert.match(maintenance.statusMarkup({ ...status, instanceImportPending: { stagedAt: 'now' } }, { escapeHtml, formatBytes }), /Full instance import staged/);
   });
 
@@ -65,6 +68,15 @@ describe('maintenance page', () => {
     assert.equal(elements.cleanup.disabled, false);
     assert.match(elements.integrityList.innerHTML, /Orphan/);
     assert.match(elements.updateStatus.innerHTML, /Update available/);
+    assert.match(elements.deployment.innerHTML, /archive\.example/);
+  });
+
+  test('opens the integrity disclosure when a fresh check runs', async () => {
+    const elements = elementsFixture();
+    const controller = maintenance.createController({ page: 'maintenance', fetchJson: async () => integrity, escapeHtml, formatBytes, confirmAction: () => true, elements });
+    await controller.checkIntegrity();
+    assert.equal(elements.integrityDisclosure.open, true);
+    assert.equal(elements.refreshIntegrity.disabled, false);
   });
 
   test('saves schedule settings and restores the submit button', async () => {
