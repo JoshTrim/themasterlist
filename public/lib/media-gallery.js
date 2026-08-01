@@ -8,10 +8,39 @@
       container.replaceChildren();
       if (!media.length) { afterRender(container, media); return; }
           const redraw = () => renderMediaGallery(container, media, { editable, songs, allowCover, onDelete, afterRender });
-          mediaSelection.prune(media);
-          const selectedCount = mediaSelection.selected(media).length;
-          container.innerHTML = `${editable && selectedCount ? `<div class="media-bulk-actions"><span>${selectedCount} selected</span><button type="button" class="media-bulk-delete">Remove selected</button><button type="button" class="media-bulk-clear">Clear</button></div>` : ''}${media.map((item, index) => `<figure class="media-item${item.isCover ? ' is-cover' : ''}${item.useBackgroundRemoved ? ' is-cutout' : ''}${mediaSelection.has(item.id) ? ' is-selected' : ''}" data-media-id="${item.id}">${editable ? `<button type="button" class="media-delete-corner" aria-label="${mediaSelection.has(item.id) ? 'Deselect media' : 'Select media for removal'}" title="${mediaSelection.has(item.id) ? 'Deselect media' : 'Select media for removal'}" aria-pressed="${mediaSelection.has(item.id)}">×</button>` : ''}${item.mimeType === 'video/youtube' ? `<iframe src="${youtubeEmbedUrl(item.url)}" title="${escapeHtml(item.caption || 'YouTube video')}" loading="lazy" allowfullscreen></iframe>` : item.mimeType.startsWith('video/') ? `<video src="${item.url}" controls preload="${isMobileUpload ? 'none' : 'metadata'}"></video>` : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" style="transform:rotate(${item.rotation || 0}deg)" /></button>`}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${item.backgroundStatus === 'running' ? '<small class="media-background-status">Removing background…</small>' : item.backgroundStatus === 'error' ? `<small class="media-background-status media-detection-error">${escapeHtml(item.backgroundError || 'Background removal failed')}</small>` : item.useBackgroundRemoved ? '<small class="media-background-status">Transparent cutout</small>' : ''}${mediaRecognitionMarkup(item, songs)}${editable ? `<div class="media-actions"><button type="button" class="media-menu-toggle" aria-expanded="false">⋮ Options</button><div class="media-action-menu" hidden>${songs.length && item.category !== 'artifact' ? `<label class="media-song-label">Setlist track${item.recognitionOverride ? ' · manual override' : ''}<select class="media-song-select"><option value="">Unassigned</option>${songs.map((song, songIndex) => `<option value="${songIndex}" ${item.songIndex === songIndex ? 'selected' : ''}>${songIndex + 1}. ${escapeHtml(song.title)}</option>`).join('')}</select></label>` : ''}<button class="media-caption" type="button">Caption</button>${allowCover && item.category !== 'artifact' ? `<button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button>` : ''}${item.category === 'artifact' && item.mimeType.startsWith('image/') ? `${item.backgroundFilename ? `<button type="button" class="media-background-toggle">${item.useBackgroundRemoved ? 'Use original photo' : 'Use transparent cutout'}</button>` : ''}<button type="button" class="media-background-remove" ${item.backgroundStatus === 'running' ? 'disabled' : ''}>${item.backgroundFilename ? 'Recreate cutout' : item.backgroundStatus === 'error' ? 'Retry background removal' : 'Remove background'}</button>` : ''}${item.mimeType.startsWith('video/') && item.mimeType !== 'video/youtube' ? '<button type="button" class="media-trim">Trim video</button><button type="button" class="media-rotate media-rotate-cw">↻ Clockwise</button><button type="button" class="media-rotate media-rotate-ccw">↺ Counter-clockwise</button>' : ''}<button type="button" class="media-up" ${index === 0 ? 'disabled' : ''}>↑ Move earlier</button><button type="button" class="media-down" ${index === media.length - 1 ? 'disabled' : ''}>↓ Move later</button></div></div>` : ''}</figure>`).join('')}`;
-      container.querySelectorAll('.media-open').forEach((button, index) => button.addEventListener('click', () => openMediaLightbox(media[index])));
+          const localMedia = media.filter((item) => !item.remote);
+          mediaSelection.prune(localMedia);
+          const selectedCount = mediaSelection.selected(localMedia).length;
+          const itemMarkup = (item) => {
+            const mimeType = String(item.mimeType || '');
+            const localIndex = localMedia.indexOf(item);
+            const canEdit = editable && !item.remote;
+            const source = mimeType === 'video/youtube'
+              ? `<iframe src="${youtubeEmbedUrl(item.url)}" title="${escapeHtml(item.caption || 'YouTube video')}" loading="lazy" allowfullscreen></iframe>`
+              : mimeType.startsWith('video/')
+                ? `<video src="${item.url}" controls preload="${isMobileUpload ? 'none' : 'metadata'}"></video>`
+                : `<button class="media-open" type="button"><img src="${item.url}" alt="${escapeHtml(item.caption || 'Photo from the show')}" loading="lazy" style="transform:rotate(${item.rotation || 0}deg)" /></button>`;
+            const remoteState = item.remote ? `<small class="peer-media-source${item.remoteAvailable ? '' : ' is-offline'}">${item.remoteAvailable ? 'Available' : 'Currently offline'} from ${escapeHtml(item.peerName || 'peer')}</small>${item.copyUrl ? '<button type="button" class="peer-media-copy">Save local copy</button>' : ''}` : '';
+            const detection = item.remote ? '' : mediaRecognitionMarkup(item, songs);
+            const background = item.backgroundStatus === 'running' ? '<small class="media-background-status">Removing background…</small>' : item.backgroundStatus === 'error' ? `<small class="media-background-status media-detection-error">${escapeHtml(item.backgroundError || 'Background removal failed')}</small>` : item.useBackgroundRemoved ? '<small class="media-background-status">Transparent cutout</small>' : '';
+            const menu = canEdit ? `<div class="media-actions"><button type="button" class="media-menu-toggle" aria-expanded="false">⋮ Options</button><div class="media-action-menu" hidden>${songs.length && item.category !== 'artifact' ? `<label class="media-song-label">Setlist track${item.recognitionOverride ? ' · manual override' : ''}<select class="media-song-select"><option value="">Unassigned</option>${songs.map((song, songIndex) => `<option value="${songIndex}" ${item.songIndex === songIndex ? 'selected' : ''}>${songIndex + 1}. ${escapeHtml(song.title)}</option>`).join('')}</select></label>` : ''}<button class="media-caption" type="button">Caption</button>${allowCover && item.category !== 'artifact' ? `<button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button>` : ''}${item.category === 'artifact' && mimeType.startsWith('image/') ? `${item.backgroundFilename ? `<button type="button" class="media-background-toggle">${item.useBackgroundRemoved ? 'Use original photo' : 'Use transparent cutout'}</button>` : ''}<button type="button" class="media-background-remove" ${item.backgroundStatus === 'running' ? 'disabled' : ''}>${item.backgroundFilename ? 'Recreate cutout' : item.backgroundStatus === 'error' ? 'Retry background removal' : 'Remove background'}</button>` : ''}${mimeType.startsWith('video/') && mimeType !== 'video/youtube' ? '<button type="button" class="media-trim">Trim video</button><button type="button" class="media-rotate media-rotate-cw">↻ Clockwise</button><button type="button" class="media-rotate media-rotate-ccw">↺ Counter-clockwise</button>' : ''}<button type="button" class="media-up" ${localIndex <= 0 ? 'disabled' : ''}>↑ Move earlier</button><button type="button" class="media-down" ${localIndex === localMedia.length - 1 ? 'disabled' : ''}>↓ Move later</button></div></div>` : '';
+            return `<figure class="media-item${item.remote ? ' is-remote' : ''}${item.isCover ? ' is-cover' : ''}${item.useBackgroundRemoved ? ' is-cutout' : ''}${mediaSelection.has(item.id) ? ' is-selected' : ''}" data-media-id="${item.id}">${canEdit ? `<button type="button" class="media-delete-corner" aria-label="${mediaSelection.has(item.id) ? 'Deselect media' : 'Select media for removal'}" title="${mediaSelection.has(item.id) ? 'Deselect media' : 'Select media for removal'}" aria-pressed="${mediaSelection.has(item.id)}">×</button>` : ''}${source}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${remoteState}${background}${detection}${menu}</figure>`;
+          };
+          container.innerHTML = `${editable && selectedCount ? `<div class="media-bulk-actions"><span>${selectedCount} selected</span><button type="button" class="media-bulk-delete">Remove selected</button><button type="button" class="media-bulk-clear">Clear</button></div>` : ''}${media.map(itemMarkup).join('')}`;
+      container.querySelectorAll('.media-open').forEach((button) => button.addEventListener('click', () => {
+        const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
+        if (item) openMediaLightbox(item);
+      }));
+      container.querySelectorAll('.peer-media-copy').forEach((button) => button.addEventListener('click', async () => {
+        const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
+        if (!item?.copyUrl) return;
+        button.disabled = true; button.textContent = 'Queueing…';
+        try {
+          const result = await fetchJson(item.copyUrl, { method: 'POST' });
+          if (result.duplicate) button.textContent = 'Already saved';
+          else { updateJob(result.id, result); button.textContent = 'Copy queued'; }
+        } catch (error) { button.disabled = false; button.textContent = error.message; }
+      }));
       if (editable) {
         container.querySelectorAll('.media-delete-corner').forEach((button) => button.addEventListener('click', async () => {
           const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
@@ -21,7 +50,7 @@
         }));
         container.querySelector('.media-bulk-clear')?.addEventListener('click', () => { mediaSelection.clear(); redraw(); });
         container.querySelector('.media-bulk-delete')?.addEventListener('click', async (event) => {
-          const selected = mediaSelection.selected(media);
+          const selected = mediaSelection.selected(localMedia);
           if (!selected.length || !confirm(`Remove ${selected.length} selected media item${selected.length === 1 ? '' : 's'}?`)) return;
           event.currentTarget.disabled = true;
           try {
@@ -107,10 +136,11 @@
         }));
         container.querySelectorAll('.media-up, .media-down').forEach((button) => button.addEventListener('click', async () => {
           const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
-          const index = media.indexOf(item); const nextIndex = button.classList.contains('media-up') ? index - 1 : index + 1;
-          if (nextIndex < 0 || nextIndex >= media.length) return;
-          [media[index], media[nextIndex]] = [media[nextIndex], media[index]];
-          await Promise.all(media.map((entry, order) => fetchJson(`/api/media/${entry.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sortOrder: order }) })));
+          const index = localMedia.indexOf(item); const nextIndex = button.classList.contains('media-up') ? index - 1 : index + 1;
+          if (nextIndex < 0 || nextIndex >= localMedia.length) return;
+          [localMedia[index], localMedia[nextIndex]] = [localMedia[nextIndex], localMedia[index]];
+          media.splice(0, localMedia.length, ...localMedia);
+          await Promise.all(localMedia.map((entry, order) => fetchJson(`/api/media/${entry.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sortOrder: order }) })));
           redraw();
         }));
       }

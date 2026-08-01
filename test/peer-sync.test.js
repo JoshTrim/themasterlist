@@ -97,6 +97,24 @@ test('peer retry delay grows exponentially and caps at one hour', () => {
   alpha.database.close();
 });
 
+test('remote contribution manifests expose local authenticated stream and copy URLs', () => {
+  const alpha = instance('Alpha'); const beta = instance('Beta'); addPeer(alpha, beta);
+  alpha.database.prepare("INSERT INTO gigs (id, shared_id, artist, venue, city, date, notes, songs, attendees, created_at) VALUES ('gig', 'shared', 'A', 'V', 'C', '2026', '', '[]', '[]', 'now')").run();
+  alpha.database.prepare("INSERT INTO shared_shows (id, source_gig_id, artist, venue, city, date, songs, created_at) VALUES ('shared', 'gig', 'A', 'V', 'C', '2026', '[]', 'now')").run();
+  alpha.database.prepare(`INSERT INTO shared_gig_contributions
+    (shared_gig_id, instance_id, participant_name, media_manifest, updated_at) VALUES ('shared', ?, 'Beta', ?, 'now')`).run(
+    beta.identity.row().instanceId,
+    JSON.stringify([{ id: 'clip', filename: 'clip.mp4', mimeType: 'video/mp4', size: 10 }, { id: 'youtube', mimeType: 'video/youtube', externalUrl: 'https://youtu.be/example' }])
+  );
+  const contribution = syncService(alpha).contributionRows('shared')[0];
+  assert.equal(contribution.media[0].remote, true);
+  assert.match(contribution.media[0].url, new RegExp(`/api/peer-media/${beta.identity.row().instanceId}/shared/clip`));
+  assert.match(contribution.media[0].copyUrl, /\/copy$/);
+  assert.equal(contribution.media[1].url, 'https://youtu.be/example');
+  assert.equal(contribution.media[1].copyUrl, null);
+  alpha.database.close(); beta.database.close();
+});
+
 test('overlapping requests share one in-flight exchange per peer', async () => {
   const alpha = instance('Alpha'); const beta = instance('Beta'); const peer = addPeer(alpha, beta);
   let release; let attempts = 0;

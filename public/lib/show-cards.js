@@ -136,8 +136,9 @@
       setupSetlist(card.querySelector('.setlist'), gig);
       setupExports(exports, gig);
     }
-    setupMedia(card, model.media, { songs: gig.songs || [] });
-    setupArtifacts(card, gig);
+    const peerMedia = peerContributions.flatMap((entry) => entry.media || []);
+    setupMedia(card, [...model.media, ...peerMedia.filter((item) => item.category !== 'artifact')], { songs: gig.songs || [] });
+    setupArtifacts(card, { ...gig, media: [...(gig.media || []), ...peerMedia] });
     card.querySelector('.delete-gig').addEventListener('click', async () => {
       if (!confirm(`Remove ${gig.artist} at ${gig.venue}?`)) return;
       try { await deleteGig(gig.id); onDelete(gig); } catch (error) { onError(error); }
@@ -146,7 +147,7 @@
   }
 
   function createRemoteCard(options) {
-    const { template, show, formatGigDate, escapeHtml, setupArtistVisual, setupSetlist } = options;
+    const { template, show, formatGigDate, escapeHtml, setupArtistVisual, setupSetlist, renderMediaGallery } = options;
     const card = template.content.cloneNode(true);
     const model = remoteCardModel(show);
     const article = card.querySelector('.gig-card');
@@ -173,8 +174,7 @@
     section.hidden = model.mediaTotal === 0;
     section.querySelector('summary span').textContent = mediaSectionState('Peer media', Array(model.mediaTotal).fill(null)).label;
     const contributions = card.querySelector('.media-gallery');
-    contributions.className = 'remote-contributions local-shared-attendees';
-    contributions.innerHTML = (show.contributions || []).map((entry) => `<div><strong>${escapeHtml(entry.participantName || 'Peer')}</strong><span>${entry.media?.length || 0} media · synced ${escapeHtml(new Date(entry.updatedAt).toLocaleString())}</span>${entry.performanceNotes || entry.venueNotes ? `<small>${escapeHtml(entry.performanceNotes || entry.venueNotes)}</small>` : ''}</div>`).join('');
+    if (model.mediaTotal && renderMediaGallery) renderMediaGallery(contributions, (show.contributions || []).flatMap((entry) => entry.media || []), { editable: false, songs: show.songs || [] });
     return card;
   }
 

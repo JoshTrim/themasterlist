@@ -55,6 +55,15 @@ describe('show detail page controller', () => {
     assert.equal(showDetail.heroMedia([{ mimeType: 'video/mp4', url: '/video' }]), null);
   });
 
+  test('adds peer media to the local show while keeping artifacts separate', () => {
+    const gig = { ...gigFixture(), sharedId: 'shared' };
+    const remote = { id: 'peer-video', category: 'show', remote: true };
+    const artifact = { id: 'peer-shirt', category: 'artifact', remote: true };
+    assert.deepEqual(showDetail.remoteMediaForGig(gig, [{ id: gig.sharedId, sourceGigId: gig.id, contributions: [
+      { localGigId: gig.id, media: [{ id: 'local-manifest' }] }, { localGigId: null, media: [remote, artifact] }
+    ] }]), [remote, artifact]);
+  });
+
   test('builds an escaped downloadable memory-card SVG', () => {
     const svg = showDetail.memoryCardSvg({ ...gigFixture(), artist: 'Poppy & Friends', venue: '<Hall>' }, { formatDate: () => '20 Jan 2026', attendeeNames: () => ['Archive Owner', 'Sam'] });
     assert.match(svg, /Poppy &amp; Friends/);

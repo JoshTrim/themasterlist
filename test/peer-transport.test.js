@@ -77,3 +77,26 @@ test('pair confirmation wraps the invite and correlates the signed response', as
   assert.equal(requestBody.envelope.payload.type, 'pair');
   alpha.database.close(); beta.database.close();
 });
+
+test('peer media transport signs range requests and verifies response metadata', async () => {
+  const { alpha, beta, peer } = pairFixture();
+  let requestBody; let requestHeaders;
+  const client = transport(alpha.identity, async (url, options) => {
+    requestBody = JSON.parse(options.body); requestHeaders = options.headers;
+    const envelope = beta.identity.signEnvelope({
+      type: 'peer-media-response', requestNonce: requestBody.payload.nonce,
+      mediaId: 'video', mimeType: 'video/mp4', size: 4
+    });
+    return new Response(Buffer.from('data'), {
+      status: 206,
+      headers: { 'Content-Type': 'video/mp4', 'Content-Range': 'bytes 0-3/4', 'X-Master-List-Peer-Envelope': Buffer.from(JSON.stringify(envelope)).toString('base64url') }
+    });
+  }, { retries: 0 });
+  const result = await client.fetchMedia(peer, { type: 'peer-media', sharedGigId: 'show', mediaId: 'video' }, { range: 'bytes=0-3' });
+  assert.equal(requestHeaders.Range, 'bytes=0-3');
+  assert.equal(requestBody.payload.type, 'peer-media');
+  assert.equal(result.response.status, 206);
+  assert.equal(result.metadata.mediaId, 'video');
+  assert.equal(Buffer.from(await result.response.arrayBuffer()).toString(), 'data');
+  alpha.database.close(); beta.database.close();
+});

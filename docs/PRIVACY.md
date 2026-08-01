@@ -23,7 +23,7 @@ Encryption protects copied storage when the key is kept separately. It does not 
 
 ## Peer collaboration
 
-Pairing shares show snapshots and contributions with the selected peer instance. These can include event details, notes, ratings, favourites and media manifests. Original local media files are not automatically transferred by peer synchronization.
+Pairing shares show snapshots and contributions with the selected peer instance. These can include event details, notes, ratings, favourites and media manifests. Original local media files are not copied automatically, but a paired attendee can stream files attached to a mutually shared show and may explicitly save a checksum-verified copy on their own instance. Removing an attendee from the show revokes new peer-media requests; it does not erase copies previously saved by that attendee.
 
 Pair only with trusted operators and exchange invitations through a private channel. Invitations contain connection material and must not be posted publicly.
 

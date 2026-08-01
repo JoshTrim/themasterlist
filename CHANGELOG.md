@@ -8,6 +8,7 @@
 - Maintenance tools are grouped into compact quick actions and expandable backup, transfer, integrity and deployment sections.
 - Maintenance now reports media usage by type, the largest files and shows, configurable capacity warnings, storage locations, and safe playback-copy cleanup and regeneration controls.
 - Peer synchronization now runs server-side, persists failures and retry schedules, retries unreachable instances with bounded backoff, deduplicates overlapping exchanges, and exposes recovery details on each peer card.
+- Shared-show photos and videos can now stream securely from their owner instance with byte-range playback; owners can queue a checksum-verified local copy when they want to retain one.
 
 ## 0.2.0 — 2026-08-01
 

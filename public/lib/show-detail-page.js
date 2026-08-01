@@ -15,6 +15,11 @@
     return images.find((item) => item.isCover) || images[0] || null;
   }
 
+  function remoteMediaForGig(gig, sharedShows = []) {
+    const shared = sharedShows.find((show) => show.id === gig.sharedId || show.sourceGigId === gig.id);
+    return (shared?.contributions || []).filter((entry) => entry.localGigId !== gig.id).flatMap((entry) => entry.media || []);
+  }
+
   function xml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[character]));
   }
@@ -31,7 +36,7 @@
 
   function createController({
     page, window, document, navigatorApi = window?.navigator, URLSearchParamsClass = URLSearchParams, setTimeoutFn = globalThis.setTimeout,
-    showId, getGigs, fetchJson, escapeHtml, formatDate, attendeeNames,
+    showId, getGigs, getSharedShows = () => [], fetchJson, escapeHtml, formatDate, attendeeNames,
     hasMissingAlbums, renderTrackList, renderAlbumStats, renderMediaGallery, startPlayback, elements
   }) {
     const {
@@ -86,7 +91,7 @@
       albumMessage.textContent = '';
       if (gig.songs?.length) fetchJson(`/api/gigs/${encodeURIComponent(gig.id)}/album-stats`).then((data) => { gig.songs = data.songs; renderSetlist(); }).catch(() => {});
       editLink.href = `/edit?id=${encodeURIComponent(gig.id)}`;
-      const media = partitionMedia(gig.media);
+      const media = partitionMedia([...(gig.media || []), ...remoteMediaForGig(gig, getSharedShows())]);
       renderHero(media);
       noMedia.hidden = Boolean(media.general.length);
       noArtifacts.hidden = Boolean(media.artifacts.length);
@@ -155,5 +160,5 @@
     return { render, renderSetlist, refreshAlbums, shareMemory, downloadMemoryCard, bind, getGig: () => gig };
   }
 
-  return { partitionMedia, heroMedia, memoryCardSvg, createController };
+  return { partitionMedia, heroMedia, remoteMediaForGig, memoryCardSvg, createController };
 }));

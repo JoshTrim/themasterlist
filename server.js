@@ -32,6 +32,7 @@ const { createPeerTransport } = require('./lib/peer-transport');
 const { createPeerSync } = require('./lib/peer-sync');
 const { createPeerSyncScheduler } = require('./lib/peer-sync-scheduler');
 const { createPeerRoutes } = require('./lib/routes/peers');
+const { createPeerMediaRoutes } = require('./lib/routes/peer-media');
 const { createSetlistFmProvider } = require('./lib/providers/setlist-fm');
 const { createMetadataProvider } = require('./lib/providers/metadata');
 const { createSpotifyProvider } = require('./lib/providers/spotify');
@@ -272,6 +273,18 @@ const sharedShows = createSharedShows({
 });
 const handleShowRoute = createShowRoutes({ database, readGigs, readBody, sendJson, sendError, validateGig, normaliseRating, normaliseAttendees: sharedShows.normaliseAttendees, randomUUID });
 const handleArchiveTransfer = createArchiveTransferRoutes({ database, requireAccount, readBody, readGigs, sendJson, sendError, validateGig, normaliseAttendees: sharedShows.normaliseAttendees, randomUUID });
+const handlePeerMedia = createPeerMediaRoutes({
+  database, identity: peerIdentity, transport: peerTransport, requireAccount, readBody, sendJson, sendError,
+  streamFile: fileServing.stream, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs,
+  randomUUID, createHash, mediaExtension, validMediaSignature, mediaRows,
+  maxStorageSize: MAX_MEDIA_STORAGE_SIZE,
+  onImported: (media) => {
+    if (!String(media.mimeType || '').startsWith('video/')) return;
+    if (process.env.AUDD_API_TOKEN) database.prepare("UPDATE gig_media SET recognition_status = 'queued' WHERE id = ?").run(media.id);
+    mediaEncoding.start(media.id, media.gigId, media.filename, media.caption);
+    if (process.env.AUDD_API_TOKEN) setImmediate(() => mediaRecognition.recognize(media.gigId, media.id, path.join(MEDIA_DIR, media.filename), media.caption));
+  }
+});
 const handlePeerRoute = createPeerRoutes({
   database, identity: peerIdentity, transport: peerTransport, sync: peerSync,
   requireAccount, readBody, sendJson, sendError, appOrigin,
@@ -455,6 +468,8 @@ async function handleApi(request, response, url) {
   }
 
   if (await handleAuthApi(request, response, url)) return;
+
+  if (await handlePeerMedia(request, response, url)) return;
 
   if (await handlePeerRoute(request, response, url)) return;
 

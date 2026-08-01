@@ -78,7 +78,7 @@
     }
 
     function createRemoteCard(show) {
-      return cardsModule.createRemoteCard({ template, show, formatGigDate: formatDate, escapeHtml, setupArtistVisual, setupSetlist });
+      return cardsModule.createRemoteCard({ template, show, formatGigDate: formatDate, escapeHtml, setupArtistVisual, setupSetlist, renderMediaGallery });
     }
 
     function render() {

@@ -14,7 +14,7 @@ function button() {
   };
 }
 
-function fixture(gig) {
+function fixture(gig, sharedShows = []) {
   const playButton = button();
   const stage = {
     innerHTML: '', children: [],
@@ -45,7 +45,7 @@ function fixture(gig) {
     window: { setTimeout: () => 1, clearTimeout() {} },
     navigatorApi: {},
     storage: { getItem: (key) => storageValues.get(key) || null, setItem: (key, value) => storageValues.set(key, value), removeItem: (key) => storageValues.delete(key) },
-    getGigs: () => [gig], showId: gig.id,
+    getGigs: () => [gig], getSharedShows: () => sharedShows, showId: gig.id,
     escapeHtml: String, formatPlaybackTime: String,
     loadYouTubeApi: async () => ({}), youtubeEmbedUrl: String,
     playbackCore, playbackMedia,
@@ -106,5 +106,14 @@ describe('whole-set playback controller', () => {
     assert.equal(state.queue[0].sourceIndex, 1);
     assert.equal(state.queue[0].media.id, 'backup');
     assert.match(view.elements.status.textContent, /backup 1/);
+  });
+
+  test('includes assigned video sources streamed from a peer contribution', () => {
+    const gig = { id: 'g1', sharedId: 'shared', songs: [{ title: 'Opening' }], media: [] };
+    const remote = { id: 'remote', mimeType: 'video/mp4', url: '/api/peer-media/peer/shared/remote', remote: true, songIndex: 0 };
+    const view = fixture(gig, [{ id: 'shared', sourceGigId: 'g1', contributions: [{ localGigId: null, media: [remote] }] }]);
+    view.controller.start();
+    assert.equal(view.controller.getState().queue[0].media.id, 'remote');
+    assert.match(view.elements.status.textContent, /1 of 1/);
   });
 });

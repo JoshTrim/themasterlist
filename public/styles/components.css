@@ -69,6 +69,12 @@ body[data-page="add"] .media-upload input[type="file"]:focus-visible { outline: 
 .media-item img, .media-item video, .media-lightbox img, .media-lightbox video { transform-origin: center; }
 .media-open { display: block; width: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; }
 .media-item figcaption { padding: 6px 8px; color: #efd7f6; font-size: 13px; line-height: 1.2; }
+.media-item.is-remote { border-color: #3d8f91; box-shadow: 0 0 12px rgba(83, 239, 214, .18); }
+.peer-media-source { display: block; padding: 0 8px 7px; color: #77f9d4; font-size: 12px; line-height: 1.2; }
+.peer-media-source.is-offline { color: #c89abf; }
+.peer-media-copy { width: calc(100% - 16px); margin: 0 8px 8px; padding: 6px 8px; border: 1px solid #3d8f91; background: #102326; color: #77f9d4; cursor: pointer; font: 13px "VT323", monospace; }
+.peer-media-copy:hover:not(:disabled) { border-color: #77f9d4; background: #173538; }
+.peer-media-copy:disabled { opacity: .7; cursor: wait; }
 .media-detection { display: block; padding: 0 8px 7px; color: #ff9bd2; font-size: 12px; line-height: 1.2; }
 .media-detection-error { color: #ff8a8a; }
 .media-detection-manual { color: #f4b6ff; }

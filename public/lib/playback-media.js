@@ -19,7 +19,7 @@
 
   function sourcePresentation(entry) {
     const media = entry?.media;
-    const kind = media?.mimeType === 'video/youtube' ? 'YouTube' : media ? 'Your upload' : 'No source';
+    const kind = media?.mimeType === 'video/youtube' ? 'YouTube' : media?.remote ? `From ${media.peerName || 'peer'}` : media ? 'Your upload' : 'No source';
     const sourceIndex = Number(entry?.sourceIndex || 0);
     return {
       kind: sourceIndex ? `${kind} · Backup ${sourceIndex}` : kind,

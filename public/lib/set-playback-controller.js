@@ -30,7 +30,7 @@
   }
 
   function createController({
-    document, window, navigatorApi, storage, getGigs, showId, escapeHtml, formatPlaybackTime,
+    document, window, navigatorApi, storage, getGigs, getSharedShows = () => [], showId, escapeHtml, formatPlaybackTime,
     loadYouTubeApi, youtubeEmbedUrl, playbackCore, playbackMedia, timelineControllerModule,
     theatreControllerModule, theatreUi, mediaQuery, now = () => Date.now(),
     setTimeoutFn = globalThis.setTimeout, clearTimeoutFn = globalThis.clearTimeout,
@@ -64,6 +64,13 @@
     const setTimelineMedia = mediaQuery;
     let setTimelineZoom = setTimelineMedia.matches ? 3 : 5;
     const playbackResumeKey = (gigId) => `master-list:playback:${gigId}`;
+    function playbackGig() {
+      const gig = getGigs().find((entry) => entry.id === showId);
+      if (!gig) return null;
+      const shared = getSharedShows().find((show) => show.id === gig.sharedId || show.sourceGigId === gig.id);
+      const remoteMedia = (shared?.contributions || []).filter((entry) => entry.localGigId !== gig.id).flatMap((entry) => entry.media || []);
+      return remoteMedia.length ? { ...gig, media: [...(gig.media || []), ...remoteMedia] } : gig;
+    }
     function updateSetTheatreMeta(gig, entry) {
       const source = playbackMedia.sourcePresentation(entry);
       setPlayerSourceKind.textContent = source.kind;
@@ -146,7 +153,7 @@
     function clearPlaybackResume(gig) { try { storage.removeItem(playbackResumeKey(gig.id)); } catch {} }
     const playbackTimelineController = timelineControllerModule.createController({
       core: playbackCore, escapeHtml, formatPlaybackTime,
-      getGig: () => getGigs().find((entry) => entry.id === showId), getQueue: () => setQueue,
+      getGig: playbackGig, getQueue: () => setQueue,
       getIndex: () => setQueueIndex, setIndex: (index) => { setQueueIndex = index; },
       getZoom: () => setTimelineZoom, setZoom: (zoom) => { setTimelineZoom = zoom; },
       entryTitle: setQueueEntryTitle, bounds: playbackBounds, timeAt: playbackTimeAt,
@@ -238,7 +245,7 @@
     }
     function moveToPlayableTrack(direction = 1, continuous = false) {
       clearSetSourceLoadTimer();
-      const gig = getGigs().find((entry) => entry.id === showId);
+      const gig = playbackGig();
       const expected = setQueueIndex + direction;
       const index = nextPlayableSetIndex(expected, direction);
       if (index < 0) { if (direction > 0 && gig) finishSetPlayback(gig); return; }
@@ -271,7 +278,7 @@
       if (setTrackAdvancePending) return;
       setTrackAdvancePending = true;
       const next = nextIndex >= 0 ? setQueue[nextIndex] : null;
-      const gig = getGigs().find((entry) => entry.id === showId);
+      const gig = playbackGig();
       if (next && gig && next.media?.id === setQueue[setQueueIndex]?.media?.id) { continueSameSetSource(gig, nextIndex); return; }
       const nextVideo = setPlayerStage.querySelector('video.set-player-preload');
       if (!next || !nextVideo || next.media?.mimeType === 'video/youtube') { moveToPlayableTrack(1); return; }
@@ -310,7 +317,7 @@
       });
     }
     function playSetTrack() {
-      const gig = getGigs().find((entry) => entry.id === showId);
+      const gig = playbackGig();
       const entry = setQueue[setQueueIndex];
       stopYoutubeTimelinePolling();
       clearSetSourceLoadTimer();
@@ -381,7 +388,7 @@
     }
 
     playWholeSet?.addEventListener('click', () => {
-      const gig = getGigs().find((entry) => entry.id === showId);
+      const gig = playbackGig();
       setQueue = buildSetPlaybackQueue(gig);
       if (!setQueue.some((entry) => entry.media)) { setPlayer.hidden = false; setPlayerStatus.textContent = 'Assign media to setlist tracks first.'; return; }
       const resume = readPlaybackResume(gig);
@@ -394,7 +401,7 @@
     setPlayerNext?.addEventListener('click', () => moveToPlayableTrack(1));
     setPlayerPrev.addEventListener('click', () => moveToPlayableTrack(-1));
     setPlayerRestart.addEventListener('click', () => {
-      const gig = getGigs().find((entry) => entry.id === showId);
+      const gig = playbackGig();
       if (!gig) return;
       clearPlaybackResume(gig);
       setQueue.forEach((entry) => activateSetSource(entry, 0));

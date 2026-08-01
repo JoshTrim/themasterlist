@@ -16,6 +16,7 @@ test('browser mutations reject cross-site origins while signed peer envelopes re
   assert.equal(validateRequestOrigin(request('POST', { origin: 'https://evil.example' }), '/api/gigs', 'https://archive.example'), false);
   assert.equal(validateRequestOrigin(request('POST', { 'sec-fetch-site': 'cross-site' }), '/api/gigs', 'https://archive.example'), false);
   assert.equal(validateRequestOrigin(request('POST', { origin: 'https://peer.example' }), '/api/sync/exchange', 'https://archive.example'), true);
+  assert.equal(validateRequestOrigin(request('POST', { origin: 'https://peer.example' }), '/api/sync/media', 'https://archive.example'), true);
   assert.deepEqual(requestOriginDiagnostic(request('POST', { origin: 'https://wrong.example', 'sec-fetch-site': 'same-site' }), '/api/gigs', 'https://archive.example'), {
     valid: false, trustedOrigin: 'https://archive.example', receivedOrigin: 'https://wrong.example', secFetchSite: 'same-site', reason: 'origin does not match APP_ORIGIN'
   });

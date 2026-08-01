@@ -610,7 +610,7 @@ function setupArchiveSetlist(setlist, gig, options = {}) { return setlistPresent
 
 const showDetailPageController = showDetailPageModule.createController({
   page, window, document, navigatorApi: navigator, URLSearchParamsClass: URLSearchParams, setTimeoutFn: setTimeout,
-  showId: showDetailId, getGigs: () => gigs, fetchJson, escapeHtml, formatDate: formatGigDate, attendeeNames,
+  showId: showDetailId, getGigs: () => gigs, getSharedShows: () => sharedShows, fetchJson, escapeHtml, formatDate: formatGigDate, attendeeNames,
   hasMissingAlbums: setlistPresentationModule.hasMissingAlbums, renderTrackList, renderAlbumStats, renderMediaGallery,
   startPlayback: () => playWholeSet?.click(),
   elements: {
@@ -627,7 +627,7 @@ const showDetailPageController = showDetailPageModule.createController({
 showDetailPageController.bind();
 
 const setPlaybackController = setPlaybackControllerModule.createController({
-  document, window, navigatorApi: navigator, storage: localStorage, getGigs: () => gigs, showId: showDetailId,
+  document, window, navigatorApi: navigator, storage: localStorage, getGigs: () => gigs, getSharedShows: () => sharedShows, showId: showDetailId,
   escapeHtml, formatPlaybackTime, loadYouTubeApi, youtubeEmbedUrl, playbackCore, playbackMedia,
   timelineControllerModule: playbackTimelineControllerModule, theatreControllerModule, theatreUi,
   mediaQuery: matchMedia('(max-width: 640px)'),

@@ -52,6 +52,8 @@ describe('route-aware frontend runtime', () => {
   test('includes collaboration data only where it is used', () => {
     assert.deepEqual(requirementsFor('add'), ['gigs', 'sharedShows', 'peers']);
     assert.deepEqual(requirementsFor('shows'), ['gigs', 'integrations', 'sharedShows']);
+    assert.deepEqual(requirementsFor('show'), ['gigs', 'integrations', 'sharedShows']);
+    assert.deepEqual(requirementsFor('playback'), ['gigs', 'integrations', 'sharedShows']);
     assert.deepEqual(requirementsFor('account'), ['gigs', 'profiles', 'sharedShows', 'peers']);
   });
 
