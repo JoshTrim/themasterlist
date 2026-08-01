@@ -112,10 +112,12 @@ Check `MAX_MEDIA_SIZE_GB`, `MAX_MEDIA_STORAGE_GB`, available disk space and serv
 
 ## Run diagnostics
 
-Use **System → Maintenance** for SQLite integrity and media-manifest checks. From the repository, run:
+Use **System → Maintenance** for SQLite integrity and media-manifest checks. Select **Download diagnostics** to save a support report containing application/runtime versions, enabled-feature flags, storage totals and sanitized recent error codes. The report deliberately excludes API credentials, OAuth tokens, configuration values, local paths and personal show records.
+
+From the repository, run:
 
 ```sh
 npm test
 ```
 
-When requesting help, include the relevant error and application version, but remove API keys, OAuth tokens, pairing invitations, passwords, personal show data and local filesystem paths.
+Attach the diagnostics report when opening an issue. If you also include logs or screenshots, remove API keys, OAuth tokens, pairing invitations, passwords, personal show data and local filesystem paths first.

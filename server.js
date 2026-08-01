@@ -40,6 +40,7 @@ const { createGeocodingService, validCoordinates } = require('./lib/geocoding');
 const { createArchiveHealthService } = require('./lib/archive-health');
 const { createArchiveIntegrityService } = require('./lib/archive-integrity');
 const { createMaintenanceRoutes } = require('./lib/routes/maintenance');
+const { createDiagnosticLog, createDiagnostics } = require('./lib/diagnostics');
 const { createShowRoutes } = require('./lib/routes/shows');
 const { createSetlistRoutes } = require('./lib/routes/setlists');
 const { createStatsRoutes } = require('./lib/routes/stats');
@@ -61,6 +62,7 @@ if (process.env.MASTER_LIST_SKIP_ENV !== 'true') loadEnvFile(path.join(__dirname
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
 const APP_VERSION = require('./package.json').version;
+const diagnosticLog = createDiagnosticLog();
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = process.env.MASTER_LIST_DATA_DIR ? path.resolve(process.env.MASTER_LIST_DATA_DIR) : path.join(ROOT, 'data');
@@ -202,7 +204,8 @@ async function exportFullInstance(response) {
   }
 }
 const fileServing = createFileServing({ fs, legacyFs, path, publicDir: PUBLIC_DIR, mediaDir: MEDIA_DIR, database, profileImages, sendError });
-const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup, manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore, exportInstance: exportFullInstance, importInstance: instanceTransfer.stageImport, importInstanceChunk: instanceTransfer.receiveImportChunk });
+const diagnosticReport = createDiagnostics({ database, status: maintenanceStatus, recentErrors: diagnosticLog, appVersion: APP_VERSION });
+const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, diagnostics: diagnosticReport, settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup, manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore, exportInstance: exportFullInstance, importInstance: instanceTransfer.stageImport, importInstanceChunk: instanceTransfer.receiveImportChunk });
 const handleSetlistRoute = createSetlistRoutes({ provider: setlistProvider, enrichAlbums: enrichGigAlbums, sendJson, sendError });
 const handleStatsRoute = createStatsRoutes({ database, requireAccount, sendJson, genreStats: archiveGenreStats, usageDay: apiUsage.day, configured, youtubeQuota: process.env.YOUTUBE_DAILY_QUOTA_UNITS, setlistConfigured: Boolean(process.env.SETLIST_FM_API_KEY && process.env.SETLIST_FM_API_KEY !== 'replace-me') });
 const handleDirectoryRoute = createDirectoryRoutes({ database, requireAccount, readBody, sendJson, sendError, fetchArtistInfo, refetchArtistInfo: metadataProvider.artistInfoFromUrl, fetchVenueInfo, cachedArtistGenres, saveArtistGenres, normaliseImagePosition, profileImages, geocoding, validCoordinates });
@@ -330,6 +333,7 @@ async function mediaManifest() {
 
 async function maintenanceStatus() {
   const databaseSize = await fs.stat(DB_FILE).then((stat) => stat.size).catch(() => 0);
+  const mediaWritable = await fs.access(MEDIA_DIR, legacyFs.constants.W_OK).then(() => true).catch(() => false);
   let backups = [];
   try {
     backups = (await fs.readdir(BACKUP_DIR, { withFileTypes: true })).filter((entry) => entry.isFile() && entry.name.endsWith('.sqlite')).map((entry) => entry.name).sort().reverse();
@@ -339,7 +343,7 @@ async function maintenanceStatus() {
   const trustedOrigin = configuredOrigin(process.env) || 'Derived from each development request';
   const secureCookies = authService.sessionCookieSecure();
   const originUsesHttps = trustedOrigin.startsWith('https://');
-  return { appVersion: APP_VERSION, appOrigin: trustedOrigin, secureCookies, originCookieMismatch: trustedOrigin.startsWith('http') && originUsesHttps !== secureCookies, databaseSize, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), instanceImportPending: transfer.pending, lastInstanceImport: transfer.lastImport, backupSchedule: backupSettings(), integrity };
+  return { appVersion: APP_VERSION, appOrigin: trustedOrigin, secureCookies, originCookieMismatch: trustedOrigin.startsWith('http') && originUsesHttps !== secureCookies, databaseSize, mediaWritable, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), instanceImportPending: transfer.pending, lastInstanceImport: transfer.lastImport, backupSchedule: backupSettings(), integrity };
 }
 
 async function receiveDatabaseRestore(request) {
@@ -663,6 +667,7 @@ const server = http.createServer(async (request, response) => {
     else if (url.pathname.startsWith('/auth/')) await handleAuth(request, response, url);
     else await fileServing.serveStatic(request, response, url.pathname);
   } catch (error) {
+    diagnosticLog.record('request', error);
     if (!error.status || error.status >= 500) console.error(error);
     if (error instanceof OAuthError) return sendJson(response, error.status || 400, { error: error.message, code: error.code });
     const status = error.status || 500;

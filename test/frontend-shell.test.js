@@ -45,6 +45,11 @@ describe('frontend shell contracts', () => {
     assert.match(bootstrap, /fetchJson\('\/api\/stats'\)/);
   });
 
+  test('maintenance offers a privacy-safe diagnostics download', () => {
+    assert.match(html, /href="\/api\/maintenance\/diagnostics"/);
+    assert.match(html, /Personal show data, local paths, secrets and configuration values are excluded/);
+  });
+
   test('keeps application behavior behind modules instead of rebuilding it in the composition root', () => {
     assert.doesNotMatch(app, /\.addEventListener\s*\(/);
     assert.doesNotMatch(app, /document\.createElement\s*\(/);

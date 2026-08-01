@@ -14,13 +14,21 @@ const compose = read('compose.yml');
 const packageJson = JSON.parse(read('package.json'));
 const changelog = read('CHANGELOG.md');
 
-test('CI owns full regressions, dependency auditing and a real container health check', () => {
+test('CI owns full regressions, dependency auditing and a two-instance Docker smoke test', () => {
   assert.match(ci, /workflow_call:/);
   assert.match(ci, /run: npm test/);
   assert.match(ci, /npm audit --omit=dev/);
   assert.match(ci, /docker\/build-push-action@[a-f0-9]{40}/);
-  assert.match(ci, /curl .*\/api\/healthz/);
-  assert.match(ci, /--read-only/);
+  assert.match(ci, /bash scripts\/docker-smoke\.sh the-master-list:ci/);
+  const smoke = read('scripts/docker-smoke.sh');
+  assert.match(smoke, /api\/healthz/);
+  assert.match(smoke, /--read-only/);
+  assert.match(smoke, /api\/auth\/setup/);
+  assert.match(smoke, /api\/gigs\/\$GIG_ID\/media/);
+  assert.match(smoke, /api\/maintenance\/instance-export/);
+  assert.match(smoke, /api\/maintenance\/instance-import/);
+  assert.match(smoke, /docker restart "\$TARGET_NAME"/);
+  assert.match(smoke, /Diagnostics leaked fixture data or configuration values/);
 });
 
 test('release tags publish pinned parallel multi-architecture GHCR images only after CI', () => {

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0 — 2026-08-01
+
+### Added
+
+- Installable PWA identity and improved mobile show-card presentation.
+- Owner-only support diagnostics containing versions, feature flags, storage totals and sanitized error codes without secrets, local paths or personal show data.
+- A populated v0.1 database upgrade regression that preserves shows, setlists, media associations and owner credentials.
+- A two-instance Docker smoke test covering first-owner setup, authentication, show creation, media storage, full export, staged import, restart and post-import login.
+
+### Changed
+
+- AMD64 and ARM64 release images now build concurrently on native GitHub runners and are verified before the multi-architecture manifest is published.
+- Maintenance and instance-transfer guidance now makes release verification and support-data collection clearer.
+
 ## 0.1.2 — 2026-07-31
 
 ### Fixed

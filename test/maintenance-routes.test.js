@@ -7,7 +7,7 @@ function harness({ account = { isAdmin: true }, body = {}, importError = null, c
   const handle = createMaintenanceRoutes({
     requireAccount: () => account, readBody: async () => body,
     sendJson: (_response, status, payload, headers) => replies.push({ status, payload, headers }), sendError: (_response, status, error) => replies.push({ status, error }),
-    status: async () => ({ ok: true }), settings: () => ({ enabled: true }), setSetting: (...args) => values.push(args), pruneBackups: async (count) => { pruned = count; },
+    status: async () => ({ ok: true }), diagnostics: async () => ({ format: 'the-master-list-diagnostics-v1' }), settings: () => ({ enabled: true }), setSetting: (...args) => values.push(args), pruneBackups: async (count) => { pruned = count; },
     createBackup: async () => ({ created: true }), manifest: async () => ({ format: 'manifest' }), integrity: async () => ({ healthy: true }), restore: async () => ({ staged: true }),
     exportInstance: async () => { exported = true; }, importInstance: async () => { imported = true; if (importError) throw importError; return { staged: true, restartRequired: true }; },
     importInstanceChunk: async () => { chunked = true; if (importError) throw importError; return chunkResult; }
@@ -22,6 +22,17 @@ test('maintenance routes expose status and clamp backup settings', async () => {
   await state.handle({ method: 'PATCH' }, {}, new URL('http://x/api/maintenance/backup-settings'));
   assert.deepEqual(state.values, [['backup_enabled', 'false'], ['backup_interval_hours', 24], ['backup_retention_count', 365]]);
   assert.equal(state.pruned(), 365);
+});
+
+test('maintenance routes provide owner-only downloadable diagnostics', async () => {
+  const state = harness();
+  await state.handle({ method: 'GET' }, {}, new URL('http://x/api/maintenance/diagnostics'));
+  assert.equal(state.replies[0].status, 200);
+  assert.equal(state.replies[0].payload.format, 'the-master-list-diagnostics-v1');
+  assert.match(state.replies[0].headers['Content-Disposition'], /the-master-list-diagnostics-.*\.json/);
+  const member = harness({ account: { isAdmin: false } });
+  await member.handle({ method: 'GET' }, {}, new URL('http://x/api/maintenance/diagnostics'));
+  assert.equal(member.replies[0].status, 403);
 });
 
 test('maintenance routes enforce owner actions and restore content types', async () => {

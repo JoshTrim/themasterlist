@@ -10,7 +10,7 @@ Pull requests and branch pushes run three independent checks:
 
 - **Full regression tests** installs the lockfile with the repository's pinned Node version and runs `npm test`, including listener-based API tests.
 - **Production dependency audit** runs `npm audit --omit=dev` separately so dependency failures are visible.
-- **Docker build and health check** builds the production image, starts it with the same read-only and capability restrictions as Compose, and calls `/api/healthz`.
+- **Docker build and instance-transfer smoke test** builds the production image and exercises two restricted containers. It creates the source owner and show, stores media, downloads privacy-safe diagnostics, exports the full instance, imports it into a clean target, restarts and signs in with the imported owner.
 
 The local pre-commit hook intentionally runs `npm run test:unit`. This keeps local commits independent of network-listener permissions while CI remains the authoritative full-suite environment.
 
@@ -28,15 +28,15 @@ Configure the default-branch ruleset to require these checks before merging:
 4. Create and push an annotated tag:
 
    ```sh
-   git tag -a v0.1.0 -m "The Master List v0.1.0"
-   git push origin main v0.1.0
+   git tag -a v0.2.0 -m "The Master List v0.2.0"
+   git push origin main v0.2.0
    ```
 
 5. Watch the **Release** workflow. After CI passes, it publishes these GHCR tags:
 
-   - `v0.1.0`
-   - `0.1.0`
-   - `0.1`
+   - `v0.2.0`
+   - `0.2.0`
+   - `0.2`
    - `latest` for stable versions
 
 Pre-release versions containing a hyphen do not replace `latest`.
@@ -46,8 +46,8 @@ After the first publication, open the package settings on GitHub and make `ghcr.
 Verify the release without relying on a local build:
 
 ```sh
-docker pull ghcr.io/joshtrim/themasterlist:v0.1.0
-docker buildx imagetools inspect ghcr.io/joshtrim/themasterlist:v0.1.0
+docker pull ghcr.io/joshtrim/themasterlist:v0.2.0
+docker buildx imagetools inspect ghcr.io/joshtrim/themasterlist:v0.2.0
 ```
 
 The manifest must list both `linux/amd64` and `linux/arm64`. An anonymous `docker pull` must work after package visibility is public, and `/api/healthz` should report the tagged application version.
@@ -65,7 +65,7 @@ docker compose ps
 For repeatable deployments, set a specific tag in `.env`:
 
 ```env
-MASTER_LIST_VERSION=v0.1.0
+MASTER_LIST_VERSION=v0.2.0
 ```
 
 Create an in-app database backup before upgrading. The `./data` bind mount is not replaced by image pulls or container recreation.
