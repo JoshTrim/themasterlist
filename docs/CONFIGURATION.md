@@ -16,6 +16,8 @@ Copy `.env.example` to `.env` and edit the copy. `.env` is ignored by Git and mu
 | `CONNECTIONS_ENCRYPTION_KEY` | empty | AES-256-GCM key for OAuth tokens; required in production. Generate with `openssl rand -base64 32`. |
 | `CONNECTIONS_ENCRYPTION_KEY_PREVIOUS` | empty | Previous OAuth key used once during rotation. Remove after successful migration. |
 | `INSTANCE_NAME` | `The Master List instance` | Friendly name advertised to paired instances. |
+| `PEER_SYNC_ENABLED` | `true` | Runs peer synchronization in the server even when no browser is open. |
+| `PEER_SYNC_INTERVAL_SECONDS` | `60` | Frequency of the server-side peer sweep. Minimum 15 seconds; unreachable peers also use persistent exponential backoff. |
 
 `APP_ORIGIN` must be the address actually shown in the browser. When a reverse proxy terminates TLS, use its public `https://` origin and enable secure cookies.
 

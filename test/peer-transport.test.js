@@ -23,7 +23,7 @@ function pairFixture() {
 }
 
 function transport(identity, fetch, options = {}) {
-  return createPeerTransport({ fetch, identity, timeoutMs: options.timeoutMs || 50, retries: options.retries ?? 1, AbortController, setTimeout, clearTimeout });
+  return createPeerTransport({ fetch, identity, timeoutMs: options.timeoutMs || 50, retries: options.retries ?? 1, retryBaseDelayMs: options.retryBaseDelayMs ?? 1, AbortController, setTimeout, clearTimeout });
 }
 
 test('peer transport retries a transient network failure with a newly signed request', async () => {

@@ -25,6 +25,8 @@ Add or edit a show and select paired attendees. The owner’s show remains in th
 
 Ratings, favourites, memories and matching media assignments remain attributable to each instance. Media manifests sync; original uploaded files are not automatically copied between servers.
 
+Synchronization runs in the server, so both instances can exchange changes without an authenticated browser being left open. A failed peer remains paired and is retried automatically with an increasing delay, up to one hour. Restarting the app does not clear that retry state. The peer card shows the last successful sync, recent failure count, error and next retry time; **Sync now** bypasses the delay when you want to retry immediately.
+
 ## Conflicts
 
 If both instances modify a shared show after their last common sync, open **System → Conflicts**. The owner can keep either version or merge notes, ratings, setlists and media assignments field by field.

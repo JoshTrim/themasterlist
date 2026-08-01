@@ -115,6 +115,7 @@ test('account peer lifecycle exposes health, notifications, bulk sync and deleti
   const health = response();
   await route({ method: 'POST', headers: {} }, health, new URL(`http://local.test/api/peers/${peer.id}/test`));
   assert.equal(health.status, 200);
+  app.database.prepare("UPDATE peer_instances SET status = 'unreachable' WHERE id = ?").run(peer.id);
   const synced = response();
   await route({ method: 'POST', headers: {} }, synced, new URL('http://local.test/api/peers/sync-all'));
   assert.equal(JSON.parse(synced.body).applied, 2);

@@ -7,6 +7,7 @@
 - The System page can compare the installed version with the latest GitHub release and show backup and database-migration readiness alongside safe Docker Compose update commands.
 - Maintenance tools are grouped into compact quick actions and expandable backup, transfer, integrity and deployment sections.
 - Maintenance now reports media usage by type, the largest files and shows, configurable capacity warnings, storage locations, and safe playback-copy cleanup and regeneration controls.
+- Peer synchronization now runs server-side, persists failures and retry schedules, retries unreachable instances with bounded backoff, deduplicates overlapping exchanges, and exposes recovery details on each peer card.
 
 ## 0.2.0 — 2026-08-01
 

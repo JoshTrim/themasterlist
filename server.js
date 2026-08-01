@@ -30,6 +30,7 @@ const { recoverMediaWork } = require('./lib/media-recovery');
 const { createPeerIdentity } = require('./lib/peer-identity');
 const { createPeerTransport } = require('./lib/peer-transport');
 const { createPeerSync } = require('./lib/peer-sync');
+const { createPeerSyncScheduler } = require('./lib/peer-sync-scheduler');
 const { createPeerRoutes } = require('./lib/routes/peers');
 const { createSetlistFmProvider } = require('./lib/providers/setlist-fm');
 const { createMetadataProvider } = require('./lib/providers/metadata');
@@ -77,6 +78,8 @@ const GEOCODES_FILE = path.join(DATA_DIR, 'geocodes.json');
 const INSTANCE_IMPORT_PENDING_DIR = path.join(DATA_DIR, 'instance-import-pending');
 const MAX_MEDIA_SIZE = Number(process.env.MAX_MEDIA_SIZE_GB || 50) * 1024 * 1024 * 1024;
 const MAX_MEDIA_STORAGE_SIZE = Number(process.env.MAX_MEDIA_STORAGE_GB || 500) * 1024 * 1024 * 1024;
+const PEER_SYNC_ENABLED = String(process.env.PEER_SYNC_ENABLED || 'true').toLowerCase() !== 'false';
+const PEER_SYNC_INTERVAL_MS = Math.max(15, Number(process.env.PEER_SYNC_INTERVAL_SECONDS || 60) || 60) * 1000;
 
 if (process.env.NODE_ENV === 'production' && !process.env.CONNECTIONS_ENCRYPTION_KEY) {
   throw new Error('CONNECTIONS_ENCRYPTION_KEY is required in production. Generate one with: openssl rand -base64 32');
@@ -254,6 +257,7 @@ const peerSync = createPeerSync({
   database, identity: peerIdentity, transport: peerTransport, findGig: findGigSync,
   normaliseRating, createHash, detectConflict: (...args) => conflictStore.detect(...args)
 });
+const peerSyncScheduler = createPeerSyncScheduler({ syncAll: () => peerSync.syncAll(), enabled: PEER_SYNC_ENABLED, intervalMs: PEER_SYNC_INTERVAL_MS });
 const {
   contributionRows: sharedContributionRows,
   conflictPayloadFromGig,
@@ -706,6 +710,7 @@ if (require.main === module) mediaRecoveryPromise.finally(() => {
     initialBackupCheck.unref?.();
     const backupTimer = setInterval(runScheduledBackupCheck, 60 * 60 * 1000);
     backupTimer.unref?.();
+    peerSyncScheduler.start();
   });
 });
 
@@ -714,5 +719,5 @@ module.exports = {
   database,
   ready: mediaRecoveryPromise,
   paths: { data: DATA_DIR, database: DB_FILE, media: MEDIA_DIR },
-  testables: { archiveIntegrity, maintenanceStatus, mediaManifest, backupSettings, createScheduledBackup, peerConflictRows, detectSyncConflict, resolvePeerConflict: sharedShows.resolveConflict, estimateFullShowTimings, parsePlaybackChapters, suggestPlaybackPlan, youtubeVideoId }
+  testables: { archiveIntegrity, maintenanceStatus, mediaManifest, backupSettings, createScheduledBackup, peerSyncScheduler, peerConflictRows, detectSyncConflict, resolvePeerConflict: sharedShows.resolveConflict, estimateFullShowTimings, parsePlaybackChapters, suggestPlaybackPlan, youtubeVideoId }
 };

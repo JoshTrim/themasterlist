@@ -297,6 +297,9 @@ body[data-page="login"] .shared-section > .shared-list { display: none; }
 .peer-status { display: block; margin-top: 5px; color: #caa5d8; font-size: 13px; text-transform: uppercase; }
 .peer-status-connected { color: #7fffb2; }
 .peer-status-unreachable { color: #ff8fbf; }
+.peer-sync-health, .peer-error { display: block; max-width: 680px; margin-top: 4px; font-size: 13px; }
+.peer-sync-health { color: #a987b5; }
+.peer-error { overflow: hidden; color: #ff8fbf; text-overflow: ellipsis; white-space: nowrap; }
 .peer-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .peer-card button:disabled { cursor: not-allowed; opacity: .45; }
 body[data-page="account"] .account-page { padding: 34px 0 70px; }

@@ -48,10 +48,13 @@ describe('peer instance settings', () => {
   });
 
   test('renders escaped peer identity, status and connection controls', () => {
-    const markup = peers.peerCardMarkup({ id: 'peer&1', name: '<Friend>', baseUrl: '', status: 'offline' }, escapeHtml);
+    const markup = peers.peerCardMarkup({ id: 'peer&1', name: '<Friend>', baseUrl: '', status: 'unreachable', consecutiveFailures: 2, lastError: '<Offline>', nextRetryAt: '2026-07-18T01:00:00Z' }, escapeHtml);
     assert.match(markup, /data-peer-id="peer&amp;1"/);
     assert.match(markup, /&lt;Friend>/);
-    assert.match(markup, /peer-status-offline/);
+    assert.match(markup, /peer-status-unreachable/);
+    assert.match(markup, /2 failed attempts/);
+    assert.match(markup, /&lt;Offline>/);
+    assert.match(markup, /retry/);
     assert.match(markup, /Direct relay\/VPN connection not configured/);
     assert.match(markup, /class="peer-test" disabled/);
   });

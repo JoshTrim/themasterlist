@@ -21,11 +21,11 @@ function addPeer(local, remote) {
   return local.database.prepare('SELECT * FROM peer_instances WHERE peer_id = ?').get(row.instanceId);
 }
 
-function syncService(app, transport = { post: async () => ({ type: 'sync-response', snapshots: [] }) }) {
+function syncService(app, transport = { post: async () => ({ type: 'sync-response', snapshots: [] }) }, options = {}) {
   return createPeerSync({
     database: app.database, identity: app.identity, transport, findGig: app.gigs.find,
     normaliseRating, createHash: crypto.createHash, detectConflict: () => ({ conflict: false }),
-    now: () => '2026-07-18T00:00:00.000Z'
+    now: options.now || (() => '2026-07-18T00:00:00.000Z')
   });
 }
 
@@ -60,6 +60,54 @@ test('failed outbound sync marks the peer unreachable', async () => {
   const peer = addPeer(alpha, beta);
   const service = syncService(alpha, { post: async () => { throw new Error('offline'); } });
   await assert.rejects(service.syncWithPeer(peer), /offline/);
-  assert.equal(alpha.database.prepare('SELECT status FROM peer_instances WHERE id = ?').get(peer.id).status, 'unreachable');
+  const failed = alpha.database.prepare('SELECT status, consecutive_failures AS failures, last_error AS error, next_retry_at AS nextRetryAt FROM peer_instances WHERE id = ?').get(peer.id);
+  assert.equal(failed.status, 'unreachable');
+  assert.equal(failed.failures, 1);
+  assert.equal(failed.error, 'offline');
+  assert.equal(failed.nextRetryAt, '2026-07-18T00:00:15.000Z');
+  alpha.database.close(); beta.database.close();
+});
+
+test('automatic sync defers an offline peer then recovers after persistent backoff', async () => {
+  const alpha = instance('Alpha'); const beta = instance('Beta'); addPeer(alpha, beta);
+  let clock = '2026-07-18T00:00:00.000Z'; let offline = true; let attempts = 0;
+  const service = syncService(alpha, { post: async () => { attempts += 1; if (offline) throw new Error('offline'); return { type: 'sync-response', snapshots: [] }; } }, { now: () => clock });
+  const first = await service.syncAll();
+  assert.equal(first.failed, 1);
+  assert.equal(attempts, 1);
+  const restartedService = syncService(alpha, { post: async () => { attempts += 1; if (offline) throw new Error('offline'); return { type: 'sync-response', snapshots: [] }; } }, { now: () => clock });
+  const deferred = await restartedService.syncAll();
+  assert.equal(deferred.deferred, 1);
+  assert.equal(attempts, 1);
+  clock = '2026-07-18T00:00:16.000Z'; offline = false;
+  const recovered = await restartedService.syncAll();
+  assert.equal(recovered.results[0].ok, true);
+  assert.equal(attempts, 2);
+  const peer = alpha.database.prepare('SELECT status, consecutive_failures AS failures, last_error AS error, next_retry_at AS nextRetryAt, last_sync_at AS lastSyncAt FROM peer_instances').get();
+  assert.deepEqual(peer, { status: 'connected', failures: 0, error: null, nextRetryAt: null, lastSyncAt: clock });
+  alpha.database.close(); beta.database.close();
+});
+
+test('peer retry delay grows exponentially and caps at one hour', () => {
+  const alpha = instance('Alpha');
+  const service = syncService(alpha);
+  assert.equal(service.retryDelayMs(1), 15_000);
+  assert.equal(service.retryDelayMs(4), 120_000);
+  assert.equal(service.retryDelayMs(99), 3_600_000);
+  alpha.database.close();
+});
+
+test('overlapping requests share one in-flight exchange per peer', async () => {
+  const alpha = instance('Alpha'); const beta = instance('Beta'); const peer = addPeer(alpha, beta);
+  let release; let attempts = 0;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const service = syncService(alpha, { post: async () => { attempts += 1; return pending; } });
+  const first = service.syncWithPeer(peer); const second = service.syncWithPeer(peer);
+  assert.equal(first, second);
+  assert.equal(service.inFlightCount(), 1);
+  release({ type: 'sync-response', snapshots: [] });
+  await first;
+  assert.equal(attempts, 1);
+  assert.equal(service.inFlightCount(), 0);
   alpha.database.close(); beta.database.close();
 });
