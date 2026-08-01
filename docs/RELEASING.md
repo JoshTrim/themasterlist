@@ -70,6 +70,8 @@ MASTER_LIST_VERSION=v0.2.0
 
 Create an in-app database backup before upgrading. The `./data` bind mount is not replaced by image pulls or container recreation.
 
+The owner-facing **System → Maintenance** panel checks GitHub's latest published release endpoint, caches successful results for six hours and reports the installed application and database-schema versions. Keep the repository URL in `lib/update-checker.js` fixed to the canonical public repository so this feature cannot become an arbitrary server-side URL fetch.
+
 ## Roll back
 
 Select the last known-good release in `.env`, then recreate the container without rebuilding:

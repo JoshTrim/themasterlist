@@ -972,6 +972,22 @@ a.metadata-step:hover { border-color: #ff2d9b; background: #210b35; color: #fff0
 .maintenance-panel-heading p:not(.eyebrow) { margin: 8px 0 0; color: #cda8d8; font-size: 16px; }
 .maintenance-panel-heading > div:last-child { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .maintenance-security-note { margin: 16px 0 0; padding: 11px 13px; border-left: 3px solid #ffd166; background: rgba(70, 42, 10, .28); color: #e8cfa3; font-size: 15px; }
+.update-status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
+.update-status-grid article { min-width: 0; padding: 14px; border: 1px solid #5e2a78; background: rgba(13, 7, 24, .76); }
+.update-status-grid article.is-healthy { border-color: #28cfa3; }
+.update-status-grid article.has-warning { border-color: #ffd166; }
+.update-status-grid strong, .update-status-grid span { display: block; }
+.update-status-grid strong { overflow: hidden; color: #ff82c8; font: 23px/1.15 "VT323", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.update-status-grid .is-healthy strong { color: #70f0c7; }
+.update-status-grid .has-warning strong { color: #ffd166; }
+.update-status-grid span { margin-top: 5px; color: #cda8d8; font-size: 14px; }
+.update-result { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 14px; }
+.update-result p { margin: 0; color: #fff0fa; font-size: 17px; }
+.update-result small { display: block; margin-top: 3px; color: #a987b5; font-size: 14px; }
+.update-error { margin: 14px 0 0; color: #ff8ca2; }
+.update-commands { margin-top: 16px; border: 1px solid #54216e; background: #090410; }
+.update-commands > span { display: block; padding: 9px 12px; border-bottom: 1px solid #54216e; color: #ff82c8; font: 8px/1.4 "Press Start 2P", monospace; text-transform: uppercase; }
+.update-commands pre { overflow-x: auto; margin: 0; padding: 14px; color: #d9c6ff; font: 17px/1.5 "VT323", monospace; }
 .maintenance-actions { display: flex; flex-wrap: wrap; gap: 9px; margin: 18px 0; }
 .backup-schedule { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 18px 0 22px; padding: 16px; border: 1px solid #7422a0; background: rgba(16, 7, 25, .82); }
 .backup-schedule > label:not(.pixel-checkbox) { display: grid; gap: 6px; color: #ff82c8; font: 8px/1.4 "Press Start 2P", monospace; text-transform: uppercase; }
@@ -1037,6 +1053,8 @@ a.metadata-step:hover { border-color: #ff2d9b; background: #210b35; color: #fff0
 .conflict-card > footer .form-message { margin: 0; }
 @media (max-width: 760px) {
   .maintenance-summary, .integrity-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .update-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .update-result { align-items: flex-start; flex-direction: column; }
   .maintenance-panel-heading, .activity-heading { align-items: stretch; flex-direction: column; }
   .maintenance-panel-heading > div:last-child { display: grid; grid-template-columns: 1fr; }
   .restore-box { grid-template-columns: 1fr; align-items: stretch; }

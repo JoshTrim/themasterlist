@@ -16,6 +16,7 @@ const { mediaExtension, mediaCategory, safeMediaName, validMediaSignature, hashF
 const { createAuthRoutes } = require('./lib/routes/auth');
 const { createConflictStore } = require('./lib/conflicts');
 const { migrateSchema } = require('./lib/schema');
+const { createUpdateChecker } = require('./lib/update-checker');
 const { loadEnvFile } = require('./lib/env');
 const { createGigRepository } = require('./lib/gigs');
 const { createBackgroundJobs } = require('./lib/background-jobs');
@@ -101,7 +102,7 @@ if (legacyFs.existsSync(PENDING_RESTORE_FILE)) {
 const database = new Database(DB_FILE);
 database.pragma('journal_mode = WAL');
 secureStorage({ fs: legacyFs, path, dataDir: DATA_DIR, mediaDir: MEDIA_DIR, backupDir: BACKUP_DIR });
-migrateSchema(database);
+const schemaMigration = migrateSchema(database);
 const peerIdentity = createPeerIdentity({ database, crypto, instanceName: () => process.env.INSTANCE_NAME || 'The Master List instance' });
 peerIdentity.ensure();
 const instanceRow = peerIdentity.row;
@@ -205,7 +206,8 @@ async function exportFullInstance(response) {
 }
 const fileServing = createFileServing({ fs, legacyFs, path, publicDir: PUBLIC_DIR, mediaDir: MEDIA_DIR, database, profileImages, sendError });
 const diagnosticReport = createDiagnostics({ database, status: maintenanceStatus, recentErrors: diagnosticLog, appVersion: APP_VERSION });
-const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, diagnostics: diagnosticReport, settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup, manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore, exportInstance: exportFullInstance, importInstance: instanceTransfer.stageImport, importInstanceChunk: instanceTransfer.receiveImportChunk });
+const updateStatus = createUpdateChecker({ request: fetch, currentVersion: APP_VERSION });
+const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, diagnostics: diagnosticReport, updateStatus, settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup, manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore, exportInstance: exportFullInstance, importInstance: instanceTransfer.stageImport, importInstanceChunk: instanceTransfer.receiveImportChunk });
 const handleSetlistRoute = createSetlistRoutes({ provider: setlistProvider, enrichAlbums: enrichGigAlbums, sendJson, sendError });
 const handleStatsRoute = createStatsRoutes({ database, requireAccount, sendJson, genreStats: archiveGenreStats, usageDay: apiUsage.day, configured, youtubeQuota: process.env.YOUTUBE_DAILY_QUOTA_UNITS, setlistConfigured: Boolean(process.env.SETLIST_FM_API_KEY && process.env.SETLIST_FM_API_KEY !== 'replace-me') });
 const handleDirectoryRoute = createDirectoryRoutes({ database, requireAccount, readBody, sendJson, sendError, fetchArtistInfo, refetchArtistInfo: metadataProvider.artistInfoFromUrl, fetchVenueInfo, cachedArtistGenres, saveArtistGenres, normaliseImagePosition, profileImages, geocoding, validCoordinates });
@@ -343,7 +345,7 @@ async function maintenanceStatus() {
   const trustedOrigin = configuredOrigin(process.env) || 'Derived from each development request';
   const secureCookies = authService.sessionCookieSecure();
   const originUsesHttps = trustedOrigin.startsWith('https://');
-  return { appVersion: APP_VERSION, appOrigin: trustedOrigin, secureCookies, originCookieMismatch: trustedOrigin.startsWith('http') && originUsesHttps !== secureCookies, databaseSize, mediaWritable, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), instanceImportPending: transfer.pending, lastInstanceImport: transfer.lastImport, backupSchedule: backupSettings(), integrity };
+  return { appVersion: APP_VERSION, appOrigin: trustedOrigin, secureCookies, originCookieMismatch: trustedOrigin.startsWith('http') && originUsesHttps !== secureCookies, schemaMigration, databaseSize, mediaWritable, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), instanceImportPending: transfer.pending, lastInstanceImport: transfer.lastImport, backupSchedule: backupSettings(), integrity };
 }
 
 async function receiveDatabaseRestore(request) {

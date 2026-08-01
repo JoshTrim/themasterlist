@@ -14,6 +14,7 @@ function elementsFixture() {
   };
   return {
     summary: { innerHTML: '' }, message: { textContent: '', classList: classList() }, integrityList: { innerHTML: '' }, cleanup: button(),
+    updateStatus: { innerHTML: '' }, checkUpdates: button(),
     scheduleForm, scheduleStatus: { textContent: '', classList: classList() }, backupNow: button(), refreshIntegrity: button(),
     restoreInput: { files: [] }, stageRestore: button(), downloadLink: { addEventListener() {} },
     exportArchive: button(), importArchive: { files: [], value: '', addEventListener() {} },
@@ -23,7 +24,8 @@ function elementsFixture() {
 }
 
 const integrity = { healthy: false, summary: { records: 2, diskFiles: 3, diskBytes: 100 }, counts: { orphan: 1 }, issues: [{ type: 'orphan', title: '<Orphan>', detail: 'Unused', href: '/maintenance' }] };
-const status = { appVersion: '0.1.0', appOrigin: 'https://archive.example', secureCookies: true, originCookieMismatch: false, databaseSize: 200, backupCount: 2, latestBackup: 'the-master-list-2026-07-19.sqlite', restorePending: false, backupSchedule: { enabled: true, intervalHours: 24, retentionCount: 7, lastBackupAt: null, lastStatus: 'ok' }, integrity };
+const status = { appVersion: '0.2.0', appOrigin: 'https://archive.example', secureCookies: true, originCookieMismatch: false, schemaMigration: { previousVersion: 0, version: 1, migrated: true }, databaseSize: 200, backupCount: 2, latestBackup: 'the-master-list-2026-07-19.sqlite', restorePending: false, backupSchedule: { enabled: true, intervalHours: 24, retentionCount: 7, lastBackupAt: null, lastStatus: 'ok' }, integrity };
+const update = { installedVersion: '0.2.0', latestVersion: '0.3.0', updateAvailable: true, checkedAt: '2026-08-01T00:00:00Z' };
 
 describe('maintenance page', () => {
   test('renders escaped integrity details and normalized backup names', () => {
@@ -31,9 +33,18 @@ describe('maintenance page', () => {
     const markup = maintenance.statusMarkup(status, { escapeHtml, formatBytes });
     assert.match(markup, />2026-07-19</);
     assert.doesNotMatch(markup, /the-master-list-/);
-    assert.match(markup, /v0\.1\.0/);
+    assert.match(markup, /v0\.2\.0/);
     assert.match(markup, /https:\/\/archive\.example/);
     assert.match(maintenance.statusMarkup({ ...status, instanceImportPending: { stagedAt: 'now' } }, { escapeHtml, formatBytes }), /Full instance import staged/);
+  });
+
+  test('renders update, migration and backup readiness without trusting release URLs', () => {
+    const markup = maintenance.updateStatusMarkup(update, status, { escapeHtml });
+    assert.match(markup, /v0\.3\.0/);
+    assert.match(markup, /Update available/);
+    assert.match(markup, /Migration applied at this startup/);
+    assert.match(markup, /Backup available/);
+    assert.match(markup, /github\.com\/JoshTrim\/themasterlist\/releases\/latest/);
   });
 
   test('serializes the backup schedule without unrelated form data', () => {
@@ -46,13 +57,14 @@ describe('maintenance page', () => {
 
   test('loads maintenance status, schedule and integrity state', async () => {
     const elements = elementsFixture();
-    const controller = maintenance.createController({ page: 'maintenance', fetchJson: async () => status, escapeHtml, formatBytes, confirmAction: () => true, elements });
+    const controller = maintenance.createController({ page: 'maintenance', fetchJson: async (url) => url.includes('update-status') ? update : status, escapeHtml, formatBytes, confirmAction: () => true, elements });
     await controller.render();
     assert.match(elements.summary.innerHTML, /200 bytes/);
     assert.equal(elements.scheduleForm.elements.enabled.checked, true);
     assert.equal(elements.scheduleForm.elements.intervalHours.value, 24);
     assert.equal(elements.cleanup.disabled, false);
     assert.match(elements.integrityList.innerHTML, /Orphan/);
+    assert.match(elements.updateStatus.innerHTML, /Update available/);
   });
 
   test('saves schedule settings and restores the submit button', async () => {

@@ -7,7 +7,7 @@ function harness({ account = { isAdmin: true }, body = {}, importError = null, c
   const handle = createMaintenanceRoutes({
     requireAccount: () => account, readBody: async () => body,
     sendJson: (_response, status, payload, headers) => replies.push({ status, payload, headers }), sendError: (_response, status, error) => replies.push({ status, error }),
-    status: async () => ({ ok: true }), diagnostics: async () => ({ format: 'the-master-list-diagnostics-v1' }), settings: () => ({ enabled: true }), setSetting: (...args) => values.push(args), pruneBackups: async (count) => { pruned = count; },
+    status: async () => ({ ok: true }), diagnostics: async () => ({ format: 'the-master-list-diagnostics-v1' }), updateStatus: async ({ refresh }) => ({ latestVersion: '0.2.0', refresh }), settings: () => ({ enabled: true }), setSetting: (...args) => values.push(args), pruneBackups: async (count) => { pruned = count; },
     createBackup: async () => ({ created: true }), manifest: async () => ({ format: 'manifest' }), integrity: async () => ({ healthy: true }), restore: async () => ({ staged: true }),
     exportInstance: async () => { exported = true; }, importInstance: async () => { imported = true; if (importError) throw importError; return { staged: true, restartRequired: true }; },
     importInstanceChunk: async () => { chunked = true; if (importError) throw importError; return chunkResult; }
@@ -32,6 +32,15 @@ test('maintenance routes provide owner-only downloadable diagnostics', async () 
   assert.match(state.replies[0].headers['Content-Disposition'], /the-master-list-diagnostics-.*\.json/);
   const member = harness({ account: { isAdmin: false } });
   await member.handle({ method: 'GET' }, {}, new URL('http://x/api/maintenance/diagnostics'));
+  assert.equal(member.replies[0].status, 403);
+});
+
+test('maintenance routes provide an owner-only forced update check', async () => {
+  const state = harness();
+  await state.handle({ method: 'GET' }, {}, new URL('http://x/api/maintenance/update-status?refresh=1'));
+  assert.deepEqual(state.replies[0].payload, { latestVersion: '0.2.0', refresh: true });
+  const member = harness({ account: { isAdmin: false } });
+  await member.handle({ method: 'GET' }, {}, new URL('http://x/api/maintenance/update-status'));
   assert.equal(member.replies[0].status, 403);
 });
 

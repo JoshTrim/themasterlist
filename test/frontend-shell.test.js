@@ -50,6 +50,12 @@ describe('frontend shell contracts', () => {
     assert.match(html, /Personal show data, local paths, secrets and configuration values are excluded/);
   });
 
+  test('maintenance includes release and database migration status', () => {
+    assert.match(html, /id="check-updates"/);
+    assert.match(html, /docker compose pull/);
+    assert.match(html, /Updates apply database migrations automatically/);
+  });
+
   test('keeps application behavior behind modules instead of rebuilding it in the composition root', () => {
     assert.doesNotMatch(app, /\.addEventListener\s*\(/);
     assert.doesNotMatch(app, /document\.createElement\s*\(/);

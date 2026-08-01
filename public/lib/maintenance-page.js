@@ -26,8 +26,29 @@
     return { enabled: form.elements.enabled.checked, intervalHours: form.elements.intervalHours.value, retentionCount: form.elements.retentionCount.value };
   }
 
+  function updateStatusMarkup(update, maintenance, { escapeHtml }) {
+    const schema = maintenance.schemaMigration || {};
+    const schemaText = schema.migrated ? `${schema.previousVersion || 0} → ${schema.version || '—'}` : `v${schema.version || '—'}`;
+    const schemaLabel = schema.ahead ? 'Schema newer than this app' : schema.migrated ? 'Migration applied at this startup' : 'Database schema current';
+    const schemaState = schema.ahead ? 'has-warning' : 'is-healthy';
+    const hasBackup = Number(maintenance.backupCount || 0) > 0;
+    const state = update.updateAvailable ? 'has-warning' : 'is-healthy';
+    const stateText = update.updateAvailable ? 'Update available' : update.aheadOfLatest ? 'Development build' : 'Up to date';
+    const checked = update.checkedAt ? new Date(update.checkedAt).toLocaleString() : '—';
+    const result = update.updateAvailable
+      ? `Version ${escapeHtml(update.latestVersion)} is ready to install.`
+      : update.aheadOfLatest ? 'This installation is newer than the latest published release.' : 'This installation matches the latest published release.';
+    return `<div class="update-status-grid"><article><strong>v${escapeHtml(update.installedVersion || maintenance.appVersion || '—')}</strong><span>Installed version</span></article><article class="${state}"><strong>v${escapeHtml(update.latestVersion || '—')}</strong><span>${stateText}</span></article><article class="${schemaState}"><strong>${escapeHtml(schemaText)}</strong><span>${schemaLabel}</span></article><article class="${hasBackup ? 'is-healthy' : 'has-warning'}"><strong>${hasBackup ? '✓' : '!'}</strong><span>${hasBackup ? 'Backup available' : 'Back up before updating'}</span></article></div><div class="update-result"><p>${result}<small>Checked ${escapeHtml(checked)}${update.cached ? ' · cached' : ''}</small></p><a class="text-button" href="https://github.com/JoshTrim/themasterlist/releases/latest" target="_blank" rel="noreferrer">Release notes</a></div>`;
+  }
+
+  function updateErrorMarkup(message, maintenance, { escapeHtml }) {
+    const schema = maintenance.schemaMigration || {};
+    return `<div class="update-status-grid"><article><strong>v${escapeHtml(maintenance.appVersion || '—')}</strong><span>Installed version</span></article><article class="has-warning"><strong>?</strong><span>Latest version unavailable</span></article><article class="is-healthy"><strong>v${escapeHtml(schema.version || '—')}</strong><span>Database schema current</span></article><article class="${maintenance.backupCount ? 'is-healthy' : 'has-warning'}"><strong>${maintenance.backupCount ? '✓' : '!'}</strong><span>${maintenance.backupCount ? 'Backup available' : 'Back up before updating'}</span></article></div><p class="update-error">${escapeHtml(message)}</p>`;
+  }
+
   function createController({ page, fetchJson, escapeHtml, formatBytes, confirmAction, setTimeoutFn = globalThis.setTimeout, document, BlobClass = globalThis.Blob, URLApi = globalThis.URL, XMLHttpRequestClass = globalThis.XMLHttpRequest, createUploadId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`, instanceChunkSize = 4 * 1024 * 1024, now = () => new Date(), reload = () => globalThis.location.reload(), elements }) {
-    const { summary, message, integrityList, cleanup, scheduleForm, scheduleStatus, backupNow, refreshIntegrity, restoreInput, stageRestore, downloadLink, exportArchive, importArchive, exportInstance, importInstance, stageInstanceImport, transferStatus } = elements;
+    const { summary, message, updateStatus, checkUpdates, integrityList, cleanup, scheduleForm, scheduleStatus, backupNow, refreshIntegrity, restoreInput, stageRestore, downloadLink, exportArchive, importArchive, exportInstance, importInstance, stageInstanceImport, transferStatus } = elements;
+    let maintenanceData = {};
 
     function renderIntegrity(data) {
       if (!integrityList) return;
@@ -36,6 +57,7 @@
     }
 
     function renderStatus(data) {
+      maintenanceData = data;
       if (!summary) return;
       summary.innerHTML = statusMarkup(data, { escapeHtml, formatBytes });
       if (scheduleForm && data.backupSchedule) {
@@ -51,8 +73,18 @@
 
     async function render() {
       if (page !== 'maintenance' || !summary) return;
-      try { renderStatus(await fetchJson('/api/maintenance/status')); message.classList.remove('error'); }
+      try { renderStatus(await fetchJson('/api/maintenance/status')); message.classList.remove('error'); await checkForUpdates(false); }
       catch (error) { message.textContent = error.message; message.classList.add('error'); }
+    }
+
+    async function checkForUpdates(refresh = true) {
+      if (!updateStatus) return;
+      if (checkUpdates) { checkUpdates.disabled = true; checkUpdates.textContent = 'Checking…'; }
+      try {
+        const update = await fetchJson(`/api/maintenance/update-status${refresh ? '?refresh=1' : ''}`);
+        updateStatus.innerHTML = updateStatusMarkup(update, maintenanceData, { escapeHtml });
+      } catch (error) { updateStatus.innerHTML = updateErrorMarkup(error.message, maintenanceData, { escapeHtml }); }
+      finally { if (checkUpdates) { checkUpdates.disabled = false; checkUpdates.textContent = 'Check again'; } }
     }
 
     async function saveSchedule() {
@@ -219,6 +251,7 @@
 
     function bind() {
       scheduleForm?.addEventListener('submit', (event) => { event.preventDefault(); saveSchedule(); });
+      checkUpdates?.addEventListener('click', () => checkForUpdates(true));
       backupNow?.addEventListener('click', createBackup);
       refreshIntegrity?.addEventListener('click', checkIntegrity);
       downloadLink?.addEventListener('click', () => { message.textContent = 'Creating a consistent SQLite snapshot…'; setTimeoutFn(render, 1800); });
@@ -230,8 +263,8 @@
       stageInstanceImport?.addEventListener('click', stageFullInstanceImport);
     }
 
-    return { render, renderStatus, renderIntegrity, saveSchedule, createBackup, checkIntegrity, stageDatabaseRestore, cleanupOrphans, exportShowsArchive, importShowsArchive, uploadInstanceBundle, stageFullInstanceImport, bind };
+    return { render, renderStatus, renderIntegrity, checkForUpdates, saveSchedule, createBackup, checkIntegrity, stageDatabaseRestore, cleanupOrphans, exportShowsArchive, importShowsArchive, uploadInstanceBundle, stageFullInstanceImport, bind };
   }
 
-  return { integrityMarkup, statusMarkup, backupSchedulePayload, createController };
+  return { integrityMarkup, statusMarkup, updateStatusMarkup, updateErrorMarkup, backupSchedulePayload, createController };
 }));

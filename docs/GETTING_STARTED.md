@@ -176,7 +176,9 @@ The installed app uses the neon chest icon, launches without ordinary browser ch
 
 ## Updating
 
-Create a backup first. For Docker:
+Open **System → Maintenance** to compare the installed version with the latest published GitHub release. The update panel also reports whether the database schema migrated during the current startup, whether a backup is available and the commands below. Update checks are requested by the owner browser, performed by the server and cached for six hours; a failed GitHub request does not affect the archive.
+
+Create an in-app backup first. For Docker:
 
 ```sh
 git pull --ff-only
@@ -205,4 +207,4 @@ npm ci
 npm start
 ```
 
-Schema migrations run automatically at startup. Never replace or delete `data` during an update.
+Schema migrations run automatically at startup and their result is shown in **System → Maintenance**. Never replace or delete `data` during an update.
