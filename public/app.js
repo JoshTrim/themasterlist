@@ -193,6 +193,7 @@ let integrations = {};
 let profiles = [];
 let peers = [];
 let sharedShows = [];
+let artistImages = [];
 let activeProfileId = '';
 let account = null;
 
@@ -712,7 +713,7 @@ addShowPageController.bind();
 const archivePageController = archivePageModule.createController({
   window, document, OptionClass: Option, fetchJson, escapeHtml, formatDate: formatGigDate,
   showsModule: window.MasterListShows, cardsModule: window.MasterListShowCards,
-  getState: () => ({ gigs, sharedShows }), onGigs: (nextGigs) => { gigs = nextGigs; }, setMessage,
+  getState: () => ({ gigs, sharedShows, artistImages }), onGigs: (nextGigs) => { gigs = nextGigs; }, setMessage,
   renderAttendeeSummary, setupSetlist: setupArchiveSetlist, setupExports: setupExportButtons, renderMediaGallery,
   elements: { count, stats: archiveStats, list: gigList, empty: emptyState, queryInput: showFilter, yearInput: yearFilter, sortInput: sortFilter, favouriteInput: favouriteFilter, template: document.querySelector('#gig-template') }
 });
@@ -764,7 +765,7 @@ const appBootstrap = appBootstrapModule.createBootstrap({
   authElements: { navSignIn, authPanel, profileBar, inviteButton, logoutButton, accountName: accountForm?.elements.name },
   showAuth, onAccount: (nextAccount) => { account = nextAccount; },
   onAuthenticated: (signedIn) => { activeProfileId = signedIn.id; },
-  onData: (data) => { ({ gigs, integrations, profiles, sharedShows, peers } = data); },
+  onData: (data) => { ({ gigs, integrations, profiles, sharedShows, peers, artistImages } = data); },
   remoteShowCount: () => remoteSharedArchiveShows().length, controllers: pageControllers, countElement: count,
   afterRun: async () => { await loadPeerNotifications(); await loadConflictCount(); peerSyncPoller.start(5_000); }
 });

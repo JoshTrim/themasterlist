@@ -16,7 +16,7 @@ test('directory routes fetch and persist artist and venue metadata', async () =>
   let body = {};
   const handle = createDirectoryRoutes({
     database, requireAccount: () => ({}), readBody: async () => body,
-    sendJson: (_response, status, payload) => replies.push({ status, payload }), sendError: (_response, status, error) => replies.push({ status, payload: { error } }),
+    sendJson: (_response, status, payload, headers) => replies.push({ status, payload, headers }), sendError: (_response, status, error) => replies.push({ status, payload: { error } }),
     fetchArtistInfo: async (name) => ({ name, title: name, imagePosition: 'bad' }),
     refetchArtistInfo: async (name, source) => ({ name, title: 'Fetched Artist', bio: 'Fetched bio', source }),
     fetchVenueInfo: async (name, city) => ({ name, city, title: name }),
@@ -32,7 +32,7 @@ test('directory routes fetch and persist artist and venue metadata', async () =>
 
   body = { source: 'https://en.wikipedia.org/wiki/Poppy_(singer)' };
   await handle({ method: 'POST' }, {}, new URL('http://x/api/artists/refetch?name=Poppy'));
-  assert.deepEqual(replies.pop(), { status: 200, payload: {
+  assert.deepEqual(replies.pop(), { status: 200, headers: undefined, payload: {
     name: 'Poppy', title: 'Fetched Artist', bio: 'Fetched bio', source: body.source, imagePosition: 'center', genres: ['Rock']
   } });
 
@@ -49,6 +49,10 @@ test('directory routes fetch and persist artist and venue metadata', async () =>
 
   await handle({ method: 'GET' }, {}, new URL('http://x/api/directory/metadata'));
   assert.equal(replies.pop().payload.venues.length, 1);
+  await handle({ method: 'GET' }, {}, new URL('http://x/api/directory/artist-images'));
+  const imageManifest = replies.pop();
+  assert.equal(imageManifest.payload[0].lookupName, 'poppy');
+  assert.match(imageManifest.headers['Cache-Control'], /private, max-age=60/);
   assert.equal(await handle({ method: 'GET' }, {}, new URL('http://x/api/not-directory')), false);
   database.close();
 });

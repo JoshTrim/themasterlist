@@ -12,6 +12,11 @@
     return String(artist || '').split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '♪';
   }
 
+  function artistImageFromMetadata(artist, metadata = []) {
+    const key = String(artist || '').trim().toLocaleLowerCase();
+    return metadata.find((entry) => String(entry.lookupName || '').trim().toLocaleLowerCase() === key)?.image || '';
+  }
+
   function createController({
     window, document, OptionClass = Option, fetchJson, escapeHtml, formatDate,
     showsModule, cardsModule, getState, onGigs, setMessage, renderAttendeeSummary,
@@ -47,7 +52,10 @@
     async function artistImage(artist) {
       const key = artist.trim().toLocaleLowerCase();
       if (!imageCache.has(key)) {
-        imageCache.set(key, fetchJson(`/api/artists?name=${encodeURIComponent(artist)}`).then((info) => info.image || '').catch(() => ''));
+        const cachedImage = artistImageFromMetadata(artist, getState().artistImages);
+        imageCache.set(key, cachedImage
+          ? Promise.resolve(cachedImage)
+          : fetchJson(`/api/artists?name=${encodeURIComponent(artist)}`).then((info) => info.image || '').catch(() => ''));
       }
       return imageCache.get(key);
     }
@@ -62,18 +70,22 @@
         if (!artists.has(key)) artists.set(key, { artist, visuals: [] });
         artists.get(key).visuals.push(visual);
       }
+      let priority = 0;
       for (const { artist, visuals: artistVisuals } of artists.values()) {
+        const highPriority = priority < 3;
         artistImage(artist).then((imageUrl) => {
           if (!imageUrl) return;
           for (const visual of artistVisuals) {
             if (!visual.isConnected) continue;
             const image = visual.querySelector('img');
+            if (highPriority) { image.loading = 'eager'; image.fetchPriority = 'high'; }
             image.addEventListener('load', () => visual.classList.add('has-image'), { once: true });
             image.addEventListener('error', () => { visual.classList.remove('has-image'); image.hidden = true; image.removeAttribute('src'); }, { once: true });
             image.hidden = false;
             image.src = imageUrl;
           }
         });
+        priority += 1;
       }
     }
 
@@ -135,5 +147,5 @@
     return { remoteShows: () => remoteSharedShows(getState().gigs, getState().sharedShows), setupMedia, setupArtifacts, setupArtistVisual, render, populateYears, bind };
   }
 
-  return { remoteSharedShows, artistInitials, createController };
+  return { remoteSharedShows, artistInitials, artistImageFromMetadata, createController };
 }));

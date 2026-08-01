@@ -71,3 +71,15 @@ test('media serving streams playback copies and honours byte ranges', async (con
   assert.equal(response.headers['Content-Range'], 'bytes 2-5/10');
   assert.equal(response.body.toString(), '2345');
 });
+
+test('stored profile images use immutable browser caching', async (context) => {
+  const mediaDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'master-list-profile-serving-'));
+  context.after(() => fsp.rm(mediaDir, { recursive: true, force: true }));
+  const filePath = path.join(mediaDir, 'profile-id.jpg');
+  await fsp.writeFile(filePath, Buffer.from([0xff, 0xd8, 0xff]));
+  const serving = createFileServing({ fs: fsp, legacyFs: fs, path, publicDir: mediaDir, mediaDir, database: {}, profileImages: { resolve: () => null }, sendError: (_response, status) => { throw new Error(`HTTP ${status}`); } });
+  const response = new Response();
+  await serving.serveProfileImage({ headers: {} }, response, { filePath, mimeType: 'image/jpeg' });
+  await finished(response);
+  assert.equal(response.headers['Cache-Control'], 'private, max-age=31536000, immutable');
+});

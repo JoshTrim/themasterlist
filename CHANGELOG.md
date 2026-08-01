@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Load show-card artist artwork from one cacheable manifest and keep immutable local profile photos in the browser cache.
+
 ### Added
 
 - The System page can compare the installed version with the latest GitHub release and show backup and database-migration readiness alongside safe Docker Compose update commands.

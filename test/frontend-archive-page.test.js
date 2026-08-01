@@ -20,6 +20,12 @@ describe('show archive page controller', () => {
     assert.equal(archive.artistInitials(''), '♪');
   });
 
+  test('resolves artist images from the batched metadata manifest case-insensitively', () => {
+    const metadata = [{ lookupName: 'the flaming lips', image: '/api/profile-images/profile-123.jpg' }];
+    assert.equal(archive.artistImageFromMetadata('The Flaming Lips', metadata), '/api/profile-images/profile-123.jpg');
+    assert.equal(archive.artistImageFromMetadata('Poppy', metadata), '');
+  });
+
   test('renders archive totals, filters and empty state through existing card models', () => {
     const state = { gigs: [], sharedShows: [] };
     const list = {

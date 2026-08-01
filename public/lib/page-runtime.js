@@ -8,10 +8,11 @@
     integrations: '/api/integrations',
     profiles: '/api/profiles',
     sharedShows: '/api/shared/shows',
-    peers: '/api/peers'
+    peers: '/api/peers',
+    artistImages: '/api/directory/artist-images'
   });
 
-  const defaults = Object.freeze({ gigs: [], integrations: {}, profiles: [], sharedShows: [], peers: [] });
+  const defaults = Object.freeze({ gigs: [], integrations: {}, profiles: [], sharedShows: [], peers: [], artistImages: [] });
   const pageRequirements = Object.freeze({
     overview: ['gigs', 'sharedShows'],
     artists: ['gigs', 'sharedShows'],
@@ -20,7 +21,7 @@
     search: ['gigs', 'sharedShows'],
     health: ['gigs', 'sharedShows'],
     add: ['gigs', 'sharedShows', 'peers'],
-    shows: ['gigs', 'integrations', 'sharedShows'],
+    shows: ['gigs', 'integrations', 'sharedShows', 'artistImages'],
     artist: ['gigs'],
     'artist-edit': ['gigs', 'sharedShows'],
     show: ['gigs', 'integrations', 'sharedShows'],
@@ -38,7 +39,7 @@
   }
 
   async function loadPageData(page, { authenticated = true, fetchJson }) {
-    const data = { gigs: [], integrations: {}, profiles: [], sharedShows: [], peers: [] };
+    const data = { gigs: [], integrations: {}, profiles: [], sharedShows: [], peers: [], artistImages: [] };
     const required = requirementsFor(page, authenticated);
     const values = await Promise.all(required.map((key) => fetchJson(endpoints[key])));
     required.forEach((key, index) => { data[key] = values[index]; });
