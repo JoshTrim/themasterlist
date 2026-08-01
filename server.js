@@ -123,7 +123,8 @@ function ensureBackupSettings() {
     backup_enabled: String(process.env.BACKUP_ENABLED || 'true').toLowerCase() === 'false' ? 'false' : 'true',
     backup_interval_hours: String(Math.max(1, Number(process.env.BACKUP_INTERVAL_HOURS || 24))),
     backup_retention_count: String(Math.max(1, Number(process.env.BACKUP_RETENTION_COUNT || 14))),
-    backup_last_status: 'never'
+    backup_last_status: 'never',
+    media_storage_warning_percent: String(Math.max(50, Math.min(99, Number(process.env.MEDIA_STORAGE_WARNING_PERCENT || 85))))
   };
   const insert = database.prepare('INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)');
   const now = new Date().toISOString();
@@ -207,13 +208,30 @@ async function exportFullInstance(response) {
 const fileServing = createFileServing({ fs, legacyFs, path, publicDir: PUBLIC_DIR, mediaDir: MEDIA_DIR, database, profileImages, sendError });
 const diagnosticReport = createDiagnostics({ database, status: maintenanceStatus, recentErrors: diagnosticLog, appVersion: APP_VERSION });
 const updateStatus = createUpdateChecker({ request: fetch, currentVersion: APP_VERSION });
-const handleMaintenanceRoute = createMaintenanceRoutes({ requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, diagnostics: diagnosticReport, updateStatus, settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup, manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore, exportInstance: exportFullInstance, importInstance: instanceTransfer.stageImport, importInstanceChunk: instanceTransfer.receiveImportChunk });
 const handleSetlistRoute = createSetlistRoutes({ provider: setlistProvider, enrichAlbums: enrichGigAlbums, sendJson, sendError });
 const handleStatsRoute = createStatsRoutes({ database, requireAccount, sendJson, genreStats: archiveGenreStats, usageDay: apiUsage.day, configured, youtubeQuota: process.env.YOUTUBE_DAILY_QUOTA_UNITS, setlistConfigured: Boolean(process.env.SETLIST_FM_API_KEY && process.env.SETLIST_FM_API_KEY !== 'replace-me') });
 const handleDirectoryRoute = createDirectoryRoutes({ database, requireAccount, readBody, sendJson, sendError, fetchArtistInfo, refetchArtistInfo: metadataProvider.artistInfoFromUrl, fetchVenueInfo, cachedArtistGenres, saveArtistGenres, normaliseImagePosition, profileImages, geocoding, validCoordinates });
 const handlePlaybackPlanRoute = createPlaybackPlanRoutes({ database, requireAccount, readBody, sendJson, sendError, findGig: findGigSync, mediaRows, refreshMetadata: refreshYouTubePlaybackMetadata, suggestPlaybackPlan });
 const mediaProcessor = createMediaProcessor({ spawn, fs, path, root: ROOT, existsSync: legacyFs.existsSync });
 const mediaEncoding = createMediaEncoding({ database, fs, path, mediaDir: MEDIA_DIR, jobs: backgroundJobs, processor: mediaProcessor, safeMediaName, randomUUID });
+async function regeneratePlaybackCopies() {
+  const rows = database.prepare(`SELECT id, gig_id AS gigId, filename, caption FROM gig_media
+    WHERE external_url IS NULL AND mime_type LIKE 'video/%' AND (playback_filename IS NULL OR playback_filename = '')
+      AND playback_status <> 'encoding' ORDER BY created_at`).all();
+  let queued = 0; let missingOriginals = 0;
+  for (const media of rows) {
+    if (!legacyFs.existsSync(path.join(MEDIA_DIR, media.filename))) { missingOriginals += 1; continue; }
+    mediaEncoding.start(media.id, media.gigId, media.filename, media.caption || media.filename); queued += 1;
+  }
+  return { queued, missingOriginals };
+}
+const handleMaintenanceRoute = createMaintenanceRoutes({
+  requireAccount, readBody, sendJson, sendError, status: maintenanceStatus, diagnostics: diagnosticReport, updateStatus,
+  settings: backupSettings, setSetting: setAppSetting, pruneBackups: pruneScheduledBackups, createBackup: createScheduledBackup,
+  manifest: mediaManifest, integrity: archiveIntegrity, restore: receiveDatabaseRestore, exportInstance: exportFullInstance,
+  importInstance: instanceTransfer.stageImport, importInstanceChunk: instanceTransfer.receiveImportChunk,
+  removePlaybackCopies: archiveIntegrityService.removePlaybackCopies, regeneratePlaybackCopies
+});
 const mediaRecognition = createMediaRecognition({
   database, fs, token: () => process.env.AUDD_API_TOKEN, jobs: backgroundJobs,
   processor: mediaProcessor, providerResponse, findGig: findGigSync, recognitionKey, randomUUID
@@ -345,7 +363,11 @@ async function maintenanceStatus() {
   const trustedOrigin = configuredOrigin(process.env) || 'Derived from each development request';
   const secureCookies = authService.sessionCookieSecure();
   const originUsesHttps = trustedOrigin.startsWith('https://');
-  return { appVersion: APP_VERSION, appOrigin: trustedOrigin, secureCookies, originCookieMismatch: trustedOrigin.startsWith('http') && originUsesHttps !== secureCookies, schemaMigration, databaseSize, mediaWritable, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), instanceImportPending: transfer.pending, lastInstanceImport: transfer.lastImport, backupSchedule: backupSettings(), integrity };
+  const warningPercent = Math.max(50, Math.min(99, Number(appSetting('media_storage_warning_percent', 85)) || 85));
+  const usedBytes = Number(integrity.summary?.diskBytes || 0);
+  const usedPercent = MAX_MEDIA_STORAGE_SIZE > 0 ? (usedBytes / MAX_MEDIA_STORAGE_SIZE) * 100 : 0;
+  const storage = { ...integrity.storage, usedBytes, quotaBytes: MAX_MEDIA_STORAGE_SIZE, usedPercent, warningPercent, warning: usedPercent >= warningPercent, databaseFile: DB_FILE, mediaDirectory: MEDIA_DIR };
+  return { appVersion: APP_VERSION, appOrigin: trustedOrigin, secureCookies, originCookieMismatch: trustedOrigin.startsWith('http') && originUsesHttps !== secureCookies, schemaMigration, databaseSize, mediaWritable, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), instanceImportPending: transfer.pending, lastInstanceImport: transfer.lastImport, backupSchedule: backupSettings(), storage, integrity };
 }
 
 async function receiveDatabaseRestore(request) {

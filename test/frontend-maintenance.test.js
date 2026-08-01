@@ -12,9 +12,12 @@ function elementsFixture() {
     elements: { enabled: { checked: false }, intervalHours: { value: '' }, retentionCount: { value: '' } },
     querySelector: () => submit, addEventListener() {}, submit
   };
+  const storageSubmit = button();
+  const storageSettingsForm = { elements: { warningPercent: { value: '' } }, querySelector: () => storageSubmit, addEventListener() {}, submit: storageSubmit };
   return {
     summary: { innerHTML: '' }, message: { textContent: '', classList: classList() }, integrityList: { innerHTML: '' }, cleanup: button(),
     updateStatus: { innerHTML: '' }, checkUpdates: button(), deployment: { innerHTML: '' }, integrityDisclosure: { open: false },
+    storageOverview: { innerHTML: '' }, storageSettingsForm, storageDisclosure: { open: false }, removePlaybackCopies: button(), regeneratePlaybackCopies: button(),
     scheduleForm, scheduleStatus: { textContent: '', classList: classList() }, backupNow: button(), refreshIntegrity: button(),
     restoreInput: { files: [] }, stageRestore: button(), downloadLink: { addEventListener() {} },
     exportArchive: button(), importArchive: { files: [], value: '', addEventListener() {} },
@@ -24,7 +27,8 @@ function elementsFixture() {
 }
 
 const integrity = { healthy: false, summary: { records: 2, diskFiles: 3, diskBytes: 100 }, counts: { orphan: 1 }, issues: [{ type: 'orphan', title: '<Orphan>', detail: 'Unused', href: '/maintenance' }] };
-const status = { appVersion: '0.2.0', appOrigin: 'https://archive.example', secureCookies: true, originCookieMismatch: false, schemaMigration: { previousVersion: 0, version: 1, migrated: true }, databaseSize: 200, backupCount: 2, latestBackup: 'the-master-list-2026-07-19.sqlite', restorePending: false, backupSchedule: { enabled: true, intervalHours: 24, retentionCount: 7, lastBackupAt: null, lastStatus: 'ok' }, integrity };
+const storage = { usedBytes: 100, quotaBytes: 1000, usedPercent: 10, warningPercent: 85, originals: 60, artifacts: 10, playbackCopies: 20, cutouts: 0, profileImages: 4, orphaned: 6, databaseFile: '/data/master-list.sqlite', mediaDirectory: '/media', largestFiles: [{ filename: 'clip.mp4', title: 'Artist · Venue', bytes: 60, href: '/edit?id=gig' }], largestShows: [{ gigId: 'gig', artist: 'Artist', venue: 'Venue', date: '2026-01-01', bytes: 90, href: '/edit?id=gig' }] };
+const status = { appVersion: '0.2.0', appOrigin: 'https://archive.example', secureCookies: true, originCookieMismatch: false, schemaMigration: { previousVersion: 0, version: 1, migrated: true }, databaseSize: 200, backupCount: 2, latestBackup: 'the-master-list-2026-07-19.sqlite', restorePending: false, backupSchedule: { enabled: true, intervalHours: 24, retentionCount: 7, lastBackupAt: null, lastStatus: 'ok' }, storage, integrity };
 const update = { installedVersion: '0.2.0', latestVersion: '0.3.0', updateAvailable: true, checkedAt: '2026-08-01T00:00:00Z' };
 
 describe('maintenance page', () => {
@@ -39,6 +43,12 @@ describe('maintenance page', () => {
     assert.match(deployment, />2026-07-19</);
     assert.doesNotMatch(deployment, /the-master-list-/);
     assert.match(maintenance.statusMarkup({ ...status, instanceImportPending: { stagedAt: 'now' } }, { escapeHtml, formatBytes }), /Full instance import staged/);
+    assert.match(maintenance.statusMarkup({ ...status, storage: { ...storage, warning: true } }, { escapeHtml, formatBytes }), /Media storage warning/);
+    const storageHtml = maintenance.storageMarkup(storage, { escapeHtml, formatBytes });
+    assert.match(storageHtml, /Original media/);
+    assert.match(storageHtml, /Largest files/);
+    assert.match(storageHtml, /Artist/);
+    assert.match(storageHtml, /\/data\/master-list\.sqlite/);
   });
 
   test('renders update, migration and backup readiness without trusting release URLs', () => {
@@ -69,6 +79,25 @@ describe('maintenance page', () => {
     assert.match(elements.integrityList.innerHTML, /Orphan/);
     assert.match(elements.updateStatus.innerHTML, /Update available/);
     assert.match(elements.deployment.innerHTML, /archive\.example/);
+    assert.match(elements.storageOverview.innerHTML, /clip\.mp4/);
+    assert.equal(elements.storageSettingsForm.elements.warningPercent.value, 85);
+  });
+
+  test('saves storage thresholds and safely manages replaceable playback copies', async () => {
+    const elements = elementsFixture(); const requests = [];
+    const controller = maintenance.createController({
+      page: 'maintenance', escapeHtml, formatBytes, confirmAction: () => true, elements,
+      fetchJson: async (url, options) => { requests.push([url, options]); if (url.endsWith('/remove')) return { removed: 2, bytesFreed: 100, skipped: 0 }; if (url.endsWith('/regenerate')) return { queued: 3, missingOriginals: 1 }; return status; }
+    });
+    elements.storageSettingsForm.elements.warningPercent.value = '90';
+    await controller.saveStorageSettings();
+    await controller.removeDerivedPlaybackCopies();
+    await controller.regenerateMissingPlaybackCopies();
+    assert.equal(requests[0][0], '/api/maintenance/storage-settings');
+    assert.deepEqual(JSON.parse(requests[0][1].body), { warningPercent: '90' });
+    assert.ok(requests.some(([url]) => url === '/api/maintenance/playback-copies/remove'));
+    assert.ok(requests.some(([url]) => url === '/api/maintenance/playback-copies/regenerate'));
+    assert.match(elements.message.textContent, /Queued 3 playback copies/);
   });
 
   test('opens the integrity disclosure when a fresh check runs', async () => {

@@ -161,6 +161,11 @@ const maintenanceMessage = document.querySelector('#maintenance-message');
 const updateStatus = document.querySelector('#update-status');
 const checkUpdatesButton = document.querySelector('#check-updates');
 const maintenanceDeployment = document.querySelector('#maintenance-deployment');
+const storageOverview = document.querySelector('#storage-overview');
+const storageSettingsForm = document.querySelector('#storage-settings-form');
+const storageDisclosure = document.querySelector('#storage-disclosure');
+const removePlaybackCopiesButton = document.querySelector('#remove-playback-copies');
+const regeneratePlaybackCopiesButton = document.querySelector('#regenerate-playback-copies');
 const integrityDisclosure = document.querySelector('#integrity-disclosure');
 const integrityList = document.querySelector('#integrity-list');
 const refreshIntegrityButton = document.querySelector('#refresh-integrity');
@@ -507,6 +512,8 @@ const maintenancePageController = maintenancePageModule.createController({
   elements: {
     summary: maintenanceSummary, message: maintenanceMessage, integrityList, cleanup: cleanupMediaButton,
     updateStatus, checkUpdates: checkUpdatesButton, deployment: maintenanceDeployment, integrityDisclosure,
+    storageOverview, storageSettingsForm, storageDisclosure,
+    removePlaybackCopies: removePlaybackCopiesButton, regeneratePlaybackCopies: regeneratePlaybackCopiesButton,
     scheduleForm: backupScheduleForm, scheduleStatus: backupScheduleStatus, backupNow: backupNowButton,
     refreshIntegrity: refreshIntegrityButton, restoreInput: restoreDatabaseInput,
     stageRestore: stageRestoreButton, downloadLink: downloadDatabaseLink,

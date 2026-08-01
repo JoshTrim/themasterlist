@@ -3,16 +3,18 @@ const assert = require('node:assert/strict');
 const { createMaintenanceRoutes } = require('../lib/routes/maintenance');
 
 function harness({ account = { isAdmin: true }, body = {}, importError = null, chunkResult = { complete: false, offset: 4 } } = {}) {
-  const replies = []; const values = []; let pruned = null; let exported = false; let imported = false; let chunked = false;
+  const replies = []; const values = []; let pruned = null; let exported = false; let imported = false; let chunked = false; let removedPlayback = false; let regeneratedPlayback = false;
   const handle = createMaintenanceRoutes({
     requireAccount: () => account, readBody: async () => body,
     sendJson: (_response, status, payload, headers) => replies.push({ status, payload, headers }), sendError: (_response, status, error) => replies.push({ status, error }),
     status: async () => ({ ok: true }), diagnostics: async () => ({ format: 'the-master-list-diagnostics-v1' }), updateStatus: async ({ refresh }) => ({ latestVersion: '0.2.0', refresh }), settings: () => ({ enabled: true }), setSetting: (...args) => values.push(args), pruneBackups: async (count) => { pruned = count; },
     createBackup: async () => ({ created: true }), manifest: async () => ({ format: 'manifest' }), integrity: async () => ({ healthy: true }), restore: async () => ({ staged: true }),
     exportInstance: async () => { exported = true; }, importInstance: async () => { imported = true; if (importError) throw importError; return { staged: true, restartRequired: true }; },
-    importInstanceChunk: async () => { chunked = true; if (importError) throw importError; return chunkResult; }
+    importInstanceChunk: async () => { chunked = true; if (importError) throw importError; return chunkResult; },
+    removePlaybackCopies: async () => { removedPlayback = true; return { removed: 2, bytesFreed: 100, skipped: 0 }; },
+    regeneratePlaybackCopies: async () => { regeneratedPlayback = true; return { queued: 2, missingOriginals: 0 }; }
   });
-  return { handle, replies, values, pruned: () => pruned, exported: () => exported, imported: () => imported, chunked: () => chunked };
+  return { handle, replies, values, pruned: () => pruned, exported: () => exported, imported: () => imported, chunked: () => chunked, removedPlayback: () => removedPlayback, regeneratedPlayback: () => regeneratedPlayback };
 }
 
 test('maintenance routes expose status and clamp backup settings', async () => {
@@ -51,6 +53,22 @@ test('maintenance routes enforce owner actions and restore content types', async
   const restore = harness();
   await restore.handle({ method: 'POST', headers: { 'content-type': 'text/plain' } }, {}, new URL('http://x/api/maintenance/restore'));
   assert.equal(restore.replies[0].status, 415);
+});
+
+test('storage settings and playback-copy maintenance are owner-only', async () => {
+  const state = harness({ body: { warningPercent: 42 } });
+  await state.handle({ method: 'PATCH' }, {}, new URL('http://x/api/maintenance/storage-settings'));
+  assert.deepEqual(state.values, [['media_storage_warning_percent', 50]]);
+  await state.handle({ method: 'POST' }, {}, new URL('http://x/api/maintenance/playback-copies/remove'));
+  await state.handle({ method: 'POST' }, {}, new URL('http://x/api/maintenance/playback-copies/regenerate'));
+  assert.equal(state.removedPlayback(), true);
+  assert.equal(state.regeneratedPlayback(), true);
+  assert.equal(state.replies.at(-2).status, 200);
+  assert.equal(state.replies.at(-1).status, 202);
+
+  const member = harness({ account: { isAdmin: false } });
+  await member.handle({ method: 'POST' }, {}, new URL('http://x/api/maintenance/playback-copies/remove'));
+  assert.equal(member.replies[0].status, 403);
 });
 
 test('maintenance routes stream exports and stage validated instance imports for the owner', async () => {

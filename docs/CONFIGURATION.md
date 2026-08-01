@@ -63,6 +63,7 @@ See [Integrations](INTEGRATIONS.md) for provider setup and callback URLs.
 | --- | --- | --- |
 | `MAX_MEDIA_SIZE_GB` | `50` | Maximum accepted size for one uploaded file. |
 | `MAX_MEDIA_STORAGE_GB` | `500` | Maximum combined locally uploaded media recorded by the archive. |
+| `MEDIA_STORAGE_WARNING_PERCENT` | `85` | Initial percentage at which Maintenance warns that media storage is filling up. The owner can change it in the app. |
 | `REMBG_COMMAND` | automatic | Override the background-removal executable. |
 | `REMBG_MODEL` | `u2net` | Model used for artifact background removal. |
 | `MASTER_LIST_DATA_DIR` | `./data` | Advanced override for all mutable application state. Docker sets `/data`. |

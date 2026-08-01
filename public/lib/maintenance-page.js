@@ -13,8 +13,9 @@
   function statusMarkup(data, { escapeHtml, formatBytes }) {
     const pending = data.instanceImportPending || data.restorePending;
     const pendingLabel = data.instanceImportPending ? 'Full instance import staged — restart required' : data.restorePending ? 'Database restore staged — restart required' : 'No restore pending';
-    const healthy = data.integrity?.healthy !== false && data.mediaWritable !== false;
-    return `<article><strong>v${escapeHtml(data.appVersion || '—')}</strong><span>Running version</span></article><article><strong>${formatBytes(data.databaseSize)}</strong><span>Database size</span></article><article><strong>${Number(data.backupCount || 0)}</strong><span>Saved backups</span></article><article class="${pending || !healthy ? 'has-warning' : 'is-healthy'}"><strong>${pending || !healthy ? '!' : '✓'}</strong><span>${pending ? pendingLabel : healthy ? 'Archive healthy' : 'Archive needs attention'}</span></article>`;
+    const healthy = data.integrity?.healthy !== false && data.mediaWritable !== false && data.storage?.warning !== true;
+    const healthLabel = data.storage?.warning ? 'Media storage warning' : healthy ? 'Archive healthy' : 'Archive needs attention';
+    return `<article><strong>v${escapeHtml(data.appVersion || '—')}</strong><span>Running version</span></article><article><strong>${formatBytes(data.databaseSize)}</strong><span>Database size</span></article><article><strong>${Number(data.backupCount || 0)}</strong><span>Saved backups</span></article><article class="${pending || !healthy ? 'has-warning' : 'is-healthy'}"><strong>${pending || !healthy ? '!' : '✓'}</strong><span>${pending ? pendingLabel : healthLabel}</span></article>`;
   }
 
   function deploymentMarkup(data, { escapeHtml }) {
@@ -23,6 +24,21 @@
     const imported = data.lastInstanceImport?.summary;
     const importValue = data.lastInstanceImport ? imported ? `${imported.gigs || 0} shows · ${imported.media || 0} media` : 'Completed' : 'Never';
     return `<div class="${data.originCookieMismatch ? 'has-warning' : ''}"><dt>Trusted browser origin</dt><dd title="${origin}">${origin}</dd></div><div><dt>Session cookies</dt><dd>${data.secureCookies ? 'Secure · HTTPS' : 'Standard · HTTP'}</dd></div><div><dt>Media storage</dt><dd>${data.mediaWritable === false ? 'Not writable' : 'Writable'}</dd></div><div><dt>Latest backup</dt><dd>${backup}</dd></div><div><dt>Last full import</dt><dd>${escapeHtml(importValue)}</dd></div>`;
+  }
+
+  function storageMarkup(storage = {}, { escapeHtml, formatBytes }) {
+    const usedPercent = Math.max(0, Number(storage.usedPercent || 0));
+    const barPercent = Math.min(100, usedPercent);
+    const buckets = [
+      ['Original media', storage.originals], ['Artifacts', storage.artifacts], ['Playback copies', storage.playbackCopies],
+      ['Cutouts', storage.cutouts], ['Profile images', storage.profileImages], ['Orphaned files', storage.orphaned]
+    ];
+    const bucketCards = buckets.map(([label, bytes]) => `<article><strong>${formatBytes(bytes || 0)}</strong><span>${label}</span></article>`).join('');
+    const row = (item, show = false) => `<li><div><strong>${escapeHtml(show ? item.artist : item.title || item.filename)}</strong><span>${escapeHtml(show ? `${item.venue}${item.date ? ` · ${item.date}` : ''}` : item.filename)}</span></div><b>${formatBytes(item.bytes)}</b>${item.href ? `<a class="text-button" href="${escapeHtml(item.href)}">Open</a>` : ''}</li>`;
+    const files = storage.largestFiles?.length ? storage.largestFiles.slice(0, 5).map((item) => row(item)).join('') : '<li class="empty-state">No media files yet.</li>';
+    const shows = storage.largestShows?.length ? storage.largestShows.slice(0, 5).map((item) => row(item, true)).join('') : '<li class="empty-state">No show storage yet.</li>';
+    const quota = storage.quotaBytes ? `${formatBytes(storage.usedBytes)} of ${formatBytes(storage.quotaBytes)}` : formatBytes(storage.usedBytes);
+    return `<div class="storage-meter ${storage.warning ? 'has-warning' : ''}"><div><strong>${quota}</strong><span>${usedPercent.toFixed(1)}% used · warning at ${Number(storage.warningPercent || 85)}%</span></div><div class="storage-meter-track" role="progressbar" aria-label="Media storage used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(barPercent)}"><i style="width:${barPercent}%"></i></div></div><div class="storage-breakdown">${bucketCards}</div><div class="storage-rankings"><section><h3>Largest files</h3><ol>${files}</ol></section><section><h3>Largest shows</h3><ol>${shows}</ol></section></div><dl class="storage-paths"><div><dt>Database</dt><dd>${escapeHtml(storage.databaseFile || '—')}</dd></div><div><dt>Media</dt><dd>${escapeHtml(storage.mediaDirectory || '—')}</dd></div></dl>`;
   }
 
   function backupSchedulePayload(form) {
@@ -50,7 +66,7 @@
   }
 
   function createController({ page, fetchJson, escapeHtml, formatBytes, confirmAction, setTimeoutFn = globalThis.setTimeout, document, BlobClass = globalThis.Blob, URLApi = globalThis.URL, XMLHttpRequestClass = globalThis.XMLHttpRequest, createUploadId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`, instanceChunkSize = 4 * 1024 * 1024, now = () => new Date(), reload = () => globalThis.location.reload(), elements }) {
-    const { summary, message, updateStatus, checkUpdates, deployment, integrityDisclosure, integrityList, cleanup, scheduleForm, scheduleStatus, backupNow, refreshIntegrity, restoreInput, stageRestore, downloadLink, exportArchive, importArchive, exportInstance, importInstance, stageInstanceImport, transferStatus } = elements;
+    const { summary, message, updateStatus, checkUpdates, deployment, storageOverview, storageSettingsForm, storageDisclosure, removePlaybackCopies, regeneratePlaybackCopies, integrityDisclosure, integrityList, cleanup, scheduleForm, scheduleStatus, backupNow, refreshIntegrity, restoreInput, stageRestore, downloadLink, exportArchive, importArchive, exportInstance, importInstance, stageInstanceImport, transferStatus } = elements;
     let maintenanceData = {};
 
     function renderIntegrity(data) {
@@ -64,6 +80,8 @@
       if (!summary) return;
       summary.innerHTML = statusMarkup(data, { escapeHtml, formatBytes });
       if (deployment) deployment.innerHTML = deploymentMarkup(data, { escapeHtml });
+      if (storageOverview) storageOverview.innerHTML = storageMarkup(data.storage, { escapeHtml, formatBytes });
+      if (storageSettingsForm && data.storage) storageSettingsForm.elements.warningPercent.value = data.storage.warningPercent || 85;
       if (scheduleForm && data.backupSchedule) {
         scheduleForm.elements.enabled.checked = Boolean(data.backupSchedule.enabled);
         scheduleForm.elements.intervalHours.value = data.backupSchedule.intervalHours;
@@ -113,6 +131,38 @@
         await render();
       } catch (error) { message.textContent = error.message; message.classList.add('error'); }
       finally { backupNow.disabled = false; backupNow.textContent = 'Back up now'; }
+    }
+
+    async function saveStorageSettings() {
+      const button = storageSettingsForm.querySelector('button[type="submit"]');
+      button.disabled = true;
+      try {
+        await fetchJson('/api/maintenance/storage-settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ warningPercent: storageSettingsForm.elements.warningPercent.value }) });
+        message.textContent = 'Storage warning threshold saved.'; message.classList.remove('error'); await render();
+      } catch (error) { message.textContent = error.message; message.classList.add('error'); }
+      finally { button.disabled = false; }
+    }
+
+    async function removeDerivedPlaybackCopies() {
+      if (!confirmAction('Remove every completed playback copy? Original uploads will be preserved and copies can be recreated later.')) return;
+      removePlaybackCopies.disabled = true;
+      try {
+        const result = await fetchJson('/api/maintenance/playback-copies/remove', { method: 'POST' });
+        message.textContent = `Removed ${result.removed} playback cop${result.removed === 1 ? 'y' : 'ies'} and freed ${formatBytes(result.bytesFreed)}.${result.skipped ? ` ${result.skipped} active encode${result.skipped === 1 ? ' was' : 's were'} left untouched.` : ''}`;
+        message.classList.remove('error'); await render();
+      } catch (error) { message.textContent = error.message; message.classList.add('error'); }
+      finally { removePlaybackCopies.disabled = false; }
+    }
+
+    async function regenerateMissingPlaybackCopies() {
+      if (!confirmAction('Create playback copies for every uploaded video that is missing one? Encoding runs as background jobs and may take some time.')) return;
+      regeneratePlaybackCopies.disabled = true;
+      try {
+        const result = await fetchJson('/api/maintenance/playback-copies/regenerate', { method: 'POST' });
+        message.textContent = result.queued ? `Queued ${result.queued} playback cop${result.queued === 1 ? 'y' : 'ies'}.${result.missingOriginals ? ` Skipped ${result.missingOriginals} missing original${result.missingOriginals === 1 ? '' : 's'}.` : ''}` : 'No missing playback copies were ready to create.';
+        message.classList.remove('error');
+      } catch (error) { message.textContent = error.message; message.classList.add('error'); }
+      finally { regeneratePlaybackCopies.disabled = false; }
     }
 
     async function checkIntegrity() {
@@ -256,6 +306,9 @@
 
     function bind() {
       scheduleForm?.addEventListener('submit', (event) => { event.preventDefault(); saveSchedule(); });
+      storageSettingsForm?.addEventListener('submit', (event) => { event.preventDefault(); saveStorageSettings(); });
+      removePlaybackCopies?.addEventListener('click', removeDerivedPlaybackCopies);
+      regeneratePlaybackCopies?.addEventListener('click', regenerateMissingPlaybackCopies);
       checkUpdates?.addEventListener('click', () => checkForUpdates(true));
       backupNow?.addEventListener('click', createBackup);
       refreshIntegrity?.addEventListener('click', checkIntegrity);
@@ -268,8 +321,8 @@
       stageInstanceImport?.addEventListener('click', stageFullInstanceImport);
     }
 
-    return { render, renderStatus, renderIntegrity, checkForUpdates, saveSchedule, createBackup, checkIntegrity, stageDatabaseRestore, cleanupOrphans, exportShowsArchive, importShowsArchive, uploadInstanceBundle, stageFullInstanceImport, bind };
+    return { render, renderStatus, renderIntegrity, checkForUpdates, saveSchedule, saveStorageSettings, removeDerivedPlaybackCopies, regenerateMissingPlaybackCopies, createBackup, checkIntegrity, stageDatabaseRestore, cleanupOrphans, exportShowsArchive, importShowsArchive, uploadInstanceBundle, stageFullInstanceImport, bind };
   }
 
-  return { integrityMarkup, statusMarkup, deploymentMarkup, updateStatusMarkup, updateErrorMarkup, backupSchedulePayload, createController };
+  return { integrityMarkup, statusMarkup, deploymentMarkup, storageMarkup, updateStatusMarkup, updateErrorMarkup, backupSchedulePayload, createController };
 }));

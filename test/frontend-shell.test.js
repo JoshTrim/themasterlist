@@ -61,6 +61,9 @@ describe('frontend shell contracts', () => {
     assert.match(html, /<details class="maintenance-disclosure"/);
     assert.match(html, /Backup settings & restore/);
     assert.match(html, /Full instance transfer/);
+    assert.match(html, /Media storage/);
+    assert.match(html, /id="remove-playback-copies"/);
+    assert.match(html, /id="regenerate-playback-copies"/);
     assert.match(html, /Deployment details/);
   });
 
