@@ -2,8 +2,7 @@
 
 ## Unreleased
 
-- Load show-card artist artwork from one cacheable manifest and keep immutable local profile photos in the browser cache.
-- Keep the show archive available if its optional artwork manifest fails, and cache public external artist and venue artwork on profile and directory pages.
+## 0.2.1 — 2026-08-02
 
 ### Added
 
@@ -12,6 +11,15 @@
 - Maintenance now reports media usage by type, the largest files and shows, configurable capacity warnings, storage locations, and safe playback-copy cleanup and regeneration controls.
 - Peer synchronization now runs server-side, persists failures and retry schedules, retries unreachable instances with bounded backoff, deduplicates overlapping exchanges, and exposes recovery details on each peer card.
 - Shared-show photos and videos can now stream securely from their owner instance with byte-range playback; owners can queue a checksum-verified local copy when they want to retain one.
+
+### Changed
+
+- Show-card artist artwork now loads from one cacheable manifest, while immutable local profile photos remain in the browser cache.
+
+### Fixed
+
+- The show archive remains available if its optional artwork manifest fails.
+- Public external artist and venue artwork is cached on profile and directory pages.
 
 ## 0.2.0 — 2026-08-01
 
