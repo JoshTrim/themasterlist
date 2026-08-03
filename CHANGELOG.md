@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.2 — 2026-08-04
+
 ### Added
 
 - Shows can track opening acts and co-headliners, including separate imported or manually entered setlists.
