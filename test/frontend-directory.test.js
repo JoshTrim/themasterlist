@@ -3,6 +3,10 @@ const assert = require('node:assert/strict');
 const directory = require('../public/lib/directory-ui');
 
 describe('artist and venue directory state', () => {
+  test('includes opening acts and co-headliners as archive artists', () => {
+    const artists = directory.buildArtists([{ artist: 'Headliner', venue: 'Hall', city: 'City', date: '2026-01-01', acts: [{ artist: 'Opener', role: 'Opener' }, { artist: 'Co-headliner', role: 'Co-headliner' }] }]);
+    assert.deepEqual(artists.map((artist) => artist.name), ['Headliner', 'Opener', 'Co-headliner']);
+  });
   const shows = [
     { artist: 'Poppy', venue: 'The Tivoli', city: 'Brisbane', date: '2026-01-20', performanceRating: 4, favorite: true },
     { artist: 'Poppy', venue: 'Riverstage', city: 'Brisbane', date: '2025-01-20', contributions: [{ performanceRating: 5 }] },

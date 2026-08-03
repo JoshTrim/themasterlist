@@ -6,7 +6,7 @@ The Master List is self-hosted. Show records, uploaded originals, encoded playba
 
 | Feature | Information sent |
 | --- | --- |
-| setlist.fm search | Artist, city and optional show date |
+| setlist.fm search | Artist, venue, city and optional show date; venue/date searches may also be used to suggest other performers on the bill |
 | Venue map lookup | Venue or address text sent to OpenStreetMap Nominatim |
 | Album and profile enrichment | Artist, track or venue search terms sent to Apple, MusicBrainz, Wikipedia and optionally Google Custom Search |
 | YouTube discovery | Artist, venue, date and track search terms |

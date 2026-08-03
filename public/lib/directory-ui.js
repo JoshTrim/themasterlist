@@ -15,16 +15,19 @@
     return missing;
   }
   function filterMatches(entity, filter) { if (!filter || filter === 'all') return true; if (filter === 'incomplete') return entity.missingMetadata.length > 0; return entity.missingMetadata.includes(filter.replace('missing-', '')); }
+  function performers(show) { return [{ name: show.artist, role: 'Headliner' }, ...(show.acts || []).map((act) => ({ name: act.artist, role: act.role }))].filter((entry) => normalize(entry.name)); }
 
   function buildArtists(shows, metadata = new Map()) {
     const records = new Map();
     shows.forEach((show) => {
-      const key = normalize(show.artist); if (!key) return;
-      if (!records.has(key)) records.set(key, { key, name: show.artist, shows: 0, venues: new Set(), latestDate: '', ratings: [], favourites: 0 });
-      const record = records.get(key); record.shows += 1; record.venues.add(normalize(`${show.venue}|${show.city}`));
-      if (show.date > record.latestDate) record.latestDate = show.date;
-      const rating = ratingFor(show); if (rating) record.ratings.push(rating);
-      if (show.favorite || show.contributions?.some((entry) => entry.favorite)) record.favourites += 1;
+      performers(show).forEach((performer) => {
+        const key = normalize(performer.name);
+        if (!records.has(key)) records.set(key, { key, name: performer.name, shows: 0, venues: new Set(), latestDate: '', ratings: [], favourites: 0 });
+        const record = records.get(key); record.shows += 1; record.venues.add(normalize(`${show.venue}|${show.city}`));
+        if (show.date > record.latestDate) record.latestDate = show.date;
+        const rating = performer.role === 'Headliner' ? ratingFor(show) : 0; if (rating) record.ratings.push(rating);
+        if (show.favorite || show.contributions?.some((entry) => entry.favorite)) record.favourites += 1;
+      });
     });
     return [...records.values()].map((record) => { const info = metadata.get(record.key) || {}; return { ...record, image: info.image || '', imagePosition: info.imagePosition || 'center', description: info.description || '', missingMetadata: missingFields('artist', info), averageRating: record.ratings.length ? record.ratings.reduce((sum, rating) => sum + rating, 0) / record.ratings.length : 0 }; });
   }
@@ -34,7 +37,7 @@
     shows.forEach((show) => {
       const key = normalize(`${show.venue}|${show.city}`); if (!normalize(show.venue)) return;
       if (!records.has(key)) records.set(key, { key, name: show.venue, city: show.city, shows: 0, artists: new Set(), latestDate: '', favourites: 0 });
-      const record = records.get(key); record.shows += 1; record.artists.add(normalize(show.artist));
+      const record = records.get(key); record.shows += 1; performers(show).forEach((performer) => record.artists.add(normalize(performer.name)));
       if (show.date > record.latestDate) record.latestDate = show.date;
       if (show.favorite || show.contributions?.some((entry) => entry.favorite)) record.favourites += 1;
     });
@@ -53,7 +56,10 @@
 
   function editorEntries(shows, type) {
     const entities = new Map();
-    shows.forEach((show) => { const name = type === 'artist' ? show.artist : show.venue; const city = type === 'venue' ? show.city : ''; const key = normalize(`${name}|${city}`); if (name && !entities.has(key)) entities.set(key, { name, city }); });
+    shows.forEach((show) => {
+      const entries = type === 'artist' ? performers(show).map((performer) => ({ name: performer.name, city: '' })) : [{ name: show.venue, city: show.city }];
+      entries.forEach(({ name, city }) => { const key = normalize(`${name}|${city}`); if (name && !entities.has(key)) entities.set(key, { name, city }); });
+    });
     return [...entities.values()].sort((a, b) => a.name.localeCompare(b.name) || a.city.localeCompare(b.city));
   }
 
@@ -64,5 +70,5 @@
     return file;
   }
 
-  return { normalize, initials, ratingFor, missingFields, filterMatches, buildArtists, buildVenues, visibleEntities, editorEntries, validateImage };
+  return { normalize, initials, ratingFor, missingFields, filterMatches, performers, buildArtists, buildVenues, visibleEntities, editorEntries, validateImage };
 }));

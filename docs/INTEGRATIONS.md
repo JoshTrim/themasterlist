@@ -10,6 +10,8 @@ Every integration is optional. Add credentials to `.env`, restart the server, th
 
 Search sends the artist, city and optional date to setlist.fm. Review the selected result before saving.
 
+After choosing a dated setlist, **Find same-night setlists** searches the same venue and date for possible opening acts and co-headliners. setlist.fm stores each artist performance separately and does not expose billing roles, so The Master List always asks you to confirm `Opener` or `Co-headliner` before adding the performer. Additional performers can also be entered manually.
+
 ## Spotify playlist export
 
 1. Create an application in the [Spotify developer dashboard](https://developer.spotify.com/dashboard).

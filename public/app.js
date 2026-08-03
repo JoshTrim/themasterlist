@@ -27,6 +27,7 @@ const mediaGalleryModule = window.MasterListMediaGallery;
 const uploadQueue = window.MasterListUploadQueue;
 const mediaJobs = window.MasterListMediaJobs;
 const showEditor = window.MasterListShowEditor;
+const supportingActsModule = window.MasterListSupportingActs;
 const showFormController = window.MasterListShowFormController;
 const directoryUi = window.MasterListDirectoryUi;
 const archiveSearchModule = window.MasterListArchiveSearch;
@@ -580,6 +581,12 @@ const editTrackListController = trackListEditorModule.createController({
 });
 editTrackListController.bind();
 
+const editActsController = supportingActsModule.createController({
+  root: document.querySelector('#edit-supporting-acts'), fetchJson, escapeHtml,
+  getContext: () => ({ headliner: editForm.elements.artist.value, venueName: editForm.elements.venue.value, cityName: editForm.elements.city.value, date: editForm.elements.date.value }),
+  message: (text, isError = false) => { editMessage.textContent = text; editMessage.classList.toggle('error', isError); }
+});
+
 const editMediaUploadController = editMediaUploadModule.createController({
   isMobile: () => isMobileUpload, input: editMediaInput, message: editMessage, pendingFiles: pendingMedia,
   mobileState: mobileUploadStateFor, startMobileQueue: startMobileUploadQueue,
@@ -597,6 +604,7 @@ const editShowPageController = editShowPageModule.createController({
   uploadFiles: editMediaUploadController.uploadForSave,
   addExternalMedia: (record) => addYouTubeMedia(record.id, editYoutubeMediaInput),
   renderArchive: renderGigs,
+  actsController: editActsController,
   elements: { form: editForm, message: editMessage, mediaInput: editMediaInput, duplicateWarning: editDuplicateWarning }
 });
 editShowPageController.bind();
@@ -693,7 +701,16 @@ const addMediaUploadController = addMediaUploadModule.createController({
   uploadFiles: uploadGigMedia, setMessage,
   onRecognized: (record, media) => { gigs = gigs.map((entry) => entry.id === record.id ? { ...entry, media } : entry); renderGigs(); }
 });
-const addShowPageController = addShowPageModule.createController({
+let addShowPageController;
+const addActsController = supportingActsModule.createController({
+  root: document.querySelector('#add-supporting-acts'), fetchJson, escapeHtml,
+  getContext: () => {
+    const selected = addShowPageController?.getSelectedSetlist();
+    return { headliner: form.elements.artist.value, venueId: selected?.venueId || '', venueName: form.elements.venue.value, cityName: form.elements.city.value, date: form.elements.date.value };
+  },
+  message: (text, isError = false) => { message.textContent = text; message.classList.toggle('error', isError); }
+});
+addShowPageController = addShowPageModule.createController({
   URLSearchParamsClass: URLSearchParams, FormDataClass: FormData, fetchJson, escapeHtml,
   editor: showEditor, workflow: showFormController,
   getAttendees: () => readAttendees(addAttendeePicker),
@@ -705,7 +722,7 @@ const addShowPageController = addShowPageModule.createController({
   addExternalMedia: (record) => addYouTubeMedia(record.id, youtubeMediaInput),
   onSaved: (saved) => { gigs.unshift(saved); },
   afterSaved: async () => { renderGigs(); await loadPersistentJobs(); await renderDashboardStats(); },
-  resetReviewForm,
+  resetReviewForm, actsController: addActsController,
   elements: { form, results, message, duplicateWarning: addDuplicateWarning, findButton: document.querySelector('#find-setlist') }
 });
 addShowPageController.bind();

@@ -28,8 +28,11 @@
   function createController({ document, fetchJson, escapeHtml }) {
     function setupArchive(setlist, gig, { fetchAlbums = true } = {}) {
       const source = gig.setlistFmUrl ? `<a href="${escapeHtml(gig.setlistFmUrl)}" target="_blank" rel="noreferrer">View source on setlist.fm ↗</a>` : '';
-      const tracks = () => `<ol>${trackListMarkup(gig.songs || [], escapeHtml, fetchAlbums ? 'Loading album…' : 'Album data unavailable')}</ol>${source}`;
-      setlist.innerHTML = `<details class="setlist-accordion"><summary>Setlist <span>${gig.songs.length} tracks</span></summary><div class="setlist-accordion-content">${tracks()}</div></details>`;
+      const additional = () => (gig.acts || []).map((act) => `<section class="additional-act-setlist"><h4><span>${escapeHtml(act.role)}</span>${escapeHtml(act.artist)}</h4>${act.songs?.length ? `<ol>${trackListMarkup(act.songs, escapeHtml)}</ol>` : '<p>No setlist attached.</p>'}${act.setlistFmUrl ? `<a href="${escapeHtml(act.setlistFmUrl)}" target="_blank" rel="noreferrer">View source on setlist.fm ↗</a>` : ''}</section>`).join('');
+      const tracks = () => `<section class="additional-act-setlist headliner-setlist"><h4><span>Headliner</span>${escapeHtml(gig.artist)}</h4><ol>${trackListMarkup(gig.songs || [], escapeHtml, fetchAlbums ? 'Loading album…' : 'Album data unavailable')}</ol>${source}</section>${additional()}`;
+      const totalTracks = (gig.songs?.length || 0) + (gig.acts || []).reduce((sum, act) => sum + (act.songs?.length || 0), 0);
+      const actCount = (gig.acts?.length || 0) + 1;
+      setlist.innerHTML = `<details class="setlist-accordion"><summary>Setlists <span>${totalTracks} tracks · ${actCount} act${actCount === 1 ? '' : 's'}</span></summary><div class="setlist-accordion-content">${tracks()}</div></details>`;
       if (!fetchAlbums || !hasMissingAlbums(gig.songs)) return;
       const details = setlist.querySelector('.setlist-accordion');
       details.addEventListener('toggle', async () => {

@@ -20,7 +20,7 @@
     URLSearchParamsClass = URLSearchParams, FormDataClass = FormData, fetchJson, escapeHtml,
     editor, workflow, getAttendees, getMediaFiles, isMobile, confirmDuplicateSave,
     showDuplicateWarning, queueMobileUploads, uploadFiles, addExternalMedia,
-    onSaved, afterSaved, resetReviewForm, elements
+    onSaved, afterSaved, resetReviewForm, actsController, elements
   }) {
     const { form, results, message, duplicateWarning, findButton } = elements;
     let selectedSetlist = null;
@@ -45,6 +45,7 @@
         results.querySelectorAll('.match').forEach((item) => item.classList.remove('selected'));
         button.classList.add('selected');
         setMessage(`Setlist selected: ${selectedSetlist.songs.length} songs will be saved with this show.`);
+        actsController?.search();
       }));
     }
 
@@ -76,7 +77,7 @@
       const gig = values();
       if (!confirmDuplicateSave(duplicateWarning, gig)) return null;
       const mediaFiles = getMediaFiles();
-      const payload = editor.createAddPayload(gig, { attendees: getAttendees(), setlist: selectedSetlist });
+      const payload = editor.createAddPayload(gig, { attendees: getAttendees(), setlist: selectedSetlist, acts: actsController?.getActs() || [] });
       const submitButton = form.querySelector('button[type="submit"]');
       try {
         submitButton.disabled = true;
@@ -89,6 +90,7 @@
         form.reset();
         resetReviewForm();
         selectedSetlist = null;
+        actsController?.setActs([]);
         results.hidden = true;
         duplicateWarning.hidden = true;
         setMessage(result.uploadsQueued ? 'Show saved. Uploads are continuing in the queue.' : 'Show saved to The Master List.');

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- Shows can track opening acts and co-headliners, including separate imported or manually entered setlists.
+- Selecting a dated setlist can discover other setlist.fm performances at the same venue and date for explicit role confirmation.
+
 ## 0.2.1 — 2026-08-02
 
 ### Added

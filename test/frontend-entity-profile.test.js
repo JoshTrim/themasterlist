@@ -14,6 +14,12 @@ function element() {
 }
 
 describe('artist and venue profile pages', () => {
+  test('selects a supporting artist with that performance setlist', () => {
+    const records = profiles.artistShows([{ id: 'show', artist: 'Headliner', songs: [{ title: 'Main' }], acts: [{ artist: 'Opener', role: 'Opener', songs: [{ title: 'Opening song' }] }] }], 'opener');
+    assert.equal(records.length, 1);
+    assert.equal(records[0].artist, 'Opener');
+    assert.equal(records[0].songs[0].title, 'Opening song');
+  });
   test('presents persisted venue metadata consistently after edits', () => {
     const elements = { heading: element(), description: element(), bio: element(), closedBadge: element(), image: element(), source: element() };
     profiles.presentVenueMetadata(elements, {

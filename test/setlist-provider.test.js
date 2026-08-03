@@ -40,6 +40,19 @@ describe('setlist.fm provider', () => {
     assert.equal(requests[1].searchParams.has('cityName'), false);
   });
 
+  test('finds all setlists at the selected venue and date', async () => {
+    let requested;
+    const provider = createSetlistFmProvider({
+      apiKey: 'secret',
+      fetch: async (url) => { requested = new URL(url); return jsonResponse(200, { total: 1, setlist: [{ id: 'support', artist: { name: 'Support' }, venue: { id: 'venue-1', name: 'Hall', city: { name: 'City' } }, eventDate: '18-07-2026', sets: {} }] }); },
+      normaliseSongs: () => [{ title: 'Opening song' }]
+    });
+    const result = await provider.searchEvent({ venueId: 'venue-1', eventDate: '2026-07-18' });
+    assert.equal(requested.searchParams.get('venueId'), 'venue-1');
+    assert.equal(requested.searchParams.get('date'), '18-07-2026');
+    assert.equal(result.setlists[0].artist, 'Support');
+  });
+
   test('reports configuration, upstream and network failures consistently', async () => {
     const missing = createSetlistFmProvider({ apiKey: '', fetch: async () => jsonResponse(200), normaliseSongs: () => [] });
     await assert.rejects(missing.search({ artistName: 'A', cityName: 'B' }), (error) => error instanceof SetlistProviderError && error.status === 503);

@@ -37,10 +37,10 @@ describe('shared show editor', () => {
     const entries = { artist: 'Poppy', venue: 'The Tivoli', media: [{ id: 'old' }], artifacts: [{}], mediaFiles: [{}] };
     const setlist = { id: 'set-1', url: 'https://setlist.fm/set-1', songs: [{ title: 'Concrete' }] };
     assert.deepEqual(editor.createAddPayload(entries, { attendees: [{ id: 'owner' }], setlist }), {
-      artist: 'Poppy', venue: 'The Tivoli', attendees: [{ id: 'owner' }], songs: setlist.songs, setlistFmId: 'set-1', setlistFmUrl: setlist.url
+      artist: 'Poppy', venue: 'The Tivoli', attendees: [{ id: 'owner' }], acts: [], songs: setlist.songs, setlistFmId: 'set-1', setlistFmUrl: setlist.url
     });
     assert.deepEqual(editor.createEditPayload(entries, { attendees: [], songs: setlist.songs }), {
-      artist: 'Poppy', venue: 'The Tivoli', attendees: [], songs: setlist.songs
+      artist: 'Poppy', venue: 'The Tivoli', attendees: [], songs: setlist.songs, acts: []
     });
   });
 

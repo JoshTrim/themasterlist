@@ -40,14 +40,14 @@
     return [...inputs].filter((input) => input.checked).map((input) => ({ id: input.value, type: input.dataset.attendeeType }));
   }
 
-  function createAddPayload(entries, { attendees = [], setlist = null } = {}) {
-    const payload = { ...entries, attendees, songs: setlist?.songs || [], setlistFmId: setlist?.id || null, setlistFmUrl: setlist?.url || null };
+  function createAddPayload(entries, { attendees = [], setlist = null, acts = [] } = {}) {
+    const payload = { ...entries, attendees, acts, songs: setlist?.songs || [], setlistFmId: setlist?.id || null, setlistFmUrl: setlist?.url || null };
     for (const field of ['media', 'artifacts', 'mediaFiles', 'artifactFiles']) delete payload[field];
     return payload;
   }
 
-  function createEditPayload(entries, { attendees = [], songs = [] } = {}) {
-    const payload = { ...entries, attendees, songs };
+  function createEditPayload(entries, { attendees = [], songs = [], acts = [] } = {}) {
+    const payload = { ...entries, attendees, songs, acts };
     for (const field of ['media', 'artifacts', 'mediaFiles', 'artifactFiles']) delete payload[field];
     return payload;
   }

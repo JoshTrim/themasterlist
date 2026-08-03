@@ -71,7 +71,9 @@
     }
 
     function renderSetlist() {
-      setlist.innerHTML = gig.songs?.length ? `<ol>${renderTrackList(gig.songs)}</ol>${renderAlbumStats(gig.songs)}` : '<p>No setlist attached.</p>';
+      const headliner = `<section class="additional-act-setlist headliner-setlist"><h3><span>Headliner</span>${escapeHtml(gig.artist)}</h3>${gig.songs?.length ? `<ol>${renderTrackList(gig.songs)}</ol>${renderAlbumStats(gig.songs)}` : '<p>No setlist attached.</p>'}</section>`;
+      const additional = (gig.acts || []).map((act) => `<section class="additional-act-setlist"><h3><span>${escapeHtml(act.role)}</span><a href="/artist?name=${encodeURIComponent(act.artist)}">${escapeHtml(act.artist)}</a></h3>${act.songs?.length ? `<ol>${renderTrackList(act.songs)}</ol>` : '<p>No setlist attached.</p>'}${act.setlistFmUrl ? `<a href="${escapeHtml(act.setlistFmUrl)}" target="_blank" rel="noreferrer">View source on setlist.fm ↗</a>` : ''}</section>`).join('');
+      setlist.innerHTML = headliner + additional;
       findAlbums.hidden = !hasMissingAlbums(gig.songs || []);
     }
 
@@ -95,11 +97,12 @@
       renderHero(media);
       noMedia.hidden = Boolean(media.general.length);
       noArtifacts.hidden = Boolean(media.artifacts.length);
-      navTrackCount.textContent = gig.songs?.length ? String(gig.songs.length) : '';
+      const totalTracks = (gig.songs?.length || 0) + (gig.acts || []).reduce((sum, act) => sum + (act.songs?.length || 0), 0);
+      navTrackCount.textContent = totalTracks ? String(totalTracks) : '';
       navMediaCount.textContent = media.general.length ? String(media.general.length) : '';
       navArtifactCount.textContent = media.artifacts.length ? String(media.artifacts.length) : '';
       const attendeeTotal = Math.max(names.length, 1);
-      facts.innerHTML = `<span><b>${gig.performanceRating || '—'}</b> rating</span><span><b>${gig.songs?.length || 0}</b> tracks</span><span><b>${media.general.length}</b> media</span><span><b>${media.artifacts.length}</b> artifacts</span><span><b>${attendeeTotal}</b> attendee${attendeeTotal === 1 ? '' : 's'}</span>`;
+      facts.innerHTML = `<span><b>${gig.performanceRating || '—'}</b> rating</span><span><b>${totalTracks}</b> tracks</span><span><b>${(gig.acts?.length || 0) + 1}</b> acts</span><span><b>${media.general.length}</b> media</span><span><b>${media.artifacts.length}</b> artifacts</span><span><b>${attendeeTotal}</b> attendee${attendeeTotal === 1 ? '' : 's'}</span>`;
       renderMediaGallery(gallery, media.general, { editable: true, songs: gig.songs || [] });
       renderMediaGallery(artifactGallery, media.artifacts, { editable: true, allowCover: false, songs: gig.songs || [] });
       if (page === 'playback' || new URLSearchParamsClass(window.location.search).get('play') === '1') setTimeoutFn(startPlayback, 0);

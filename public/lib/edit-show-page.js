@@ -11,7 +11,7 @@
     page, gigId, FormDataClass = FormData, fetchJson, editor, workflow, trackEditor,
     getGigs, onGigs, setupImmediateUpload, showDuplicateWarning, confirmDuplicateSave,
     ensureAttendeePicker, renderAttendees, readAttendees, renderMediaWorkspace,
-    getMediaFiles, uploadFiles, addExternalMedia, renderArchive, elements
+    getMediaFiles, uploadFiles, addExternalMedia, renderArchive, actsController, elements
   }) {
     const { form, message, mediaInput, duplicateWarning } = elements;
     let gig = null;
@@ -34,6 +34,7 @@
       form.elements.city.value = gig.city;
       showDuplicateWarning(duplicateWarning, values(), gig.id);
       trackEditor.load(gig.songs || []);
+      actsController?.setActs(gig.acts || []);
       renderMediaWorkspace(gig, gig.media);
       renderAttendees(ensureAttendeePicker(), gig.attendees || []);
       return gig;
@@ -45,7 +46,7 @@
       try {
         if (!confirmDuplicateSave(duplicateWarning, values(), gig.id)) return null;
         submitButton.disabled = true;
-        const update = editor.createEditPayload(values(), { attendees: readAttendees(ensureAttendeePicker()), songs: trackEditor.sync() });
+        const update = editor.createEditPayload(values(), { attendees: readAttendees(ensureAttendeePicker()), songs: trackEditor.sync(), acts: actsController?.getActs() || [] });
         const files = getMediaFiles();
         const result = await workflow.updateShow({
           gig, update, mediaFiles: files,

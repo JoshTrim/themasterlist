@@ -23,6 +23,10 @@ describe('SQLite schema migrations', () => {
     assert.ok(venueColumns.has('is_closed'));
     const peerColumns = new Set(database.prepare('PRAGMA table_info(peer_instances)').all().map((column) => column.name));
     for (const column of ['last_sync_at', 'last_attempt_at', 'last_error', 'consecutive_failures', 'next_retry_at']) assert.ok(peerColumns.has(column), column);
+    const gigColumns = new Set(database.prepare('PRAGMA table_info(gigs)').all().map((column) => column.name));
+    assert.ok(gigColumns.has('acts'));
+    const sharedShowColumns = new Set(database.prepare('PRAGMA table_info(shared_shows)').all().map((column) => column.name));
+    assert.ok(sharedShowColumns.has('acts'));
   });
 
   test('does not downgrade a database created by a newer application', () => {

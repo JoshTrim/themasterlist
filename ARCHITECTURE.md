@@ -24,6 +24,7 @@
 - `lib/routes/media-mutations.js` — edit, delete, retry, rotate, trim and background-removal endpoints.
 - `lib/media-utils.js` — media naming, categorisation and duplicate hashes.
 - `lib/validation.js` — account, show, metadata and rating validation.
+- `lib/show-acts.js` — normalization and role constraints for opening acts and co-headliners.
 - `lib/env.js` — `.env` parsing without overwriting process-level settings.
 - `lib/providers/setlist-fm.js` — setlist.fm request construction, retry behavior, usage accounting and response normalization.
 - `lib/providers/metadata.js` — iTunes, MusicBrainz, Wikipedia and official-site metadata lookups without persistence concerns.
@@ -55,6 +56,7 @@
 - `jobs.js` — persistent background-job queue state and panel rendering.
 - `shows.js` — archive filtering, ordering and combined local/peer statistics.
 - `show-cards.js` — local and peer show-card factories, card actions and media/artifact accordion presentation.
+- `supporting-acts.js` — additional-performer editing and same-event setlist.fm discovery.
 - `playback-core.js` — playback sources, clip bounds, queue construction, gap handling and timeline interpolation.
 - `playback-media.js` — YouTube URL/embed normalization, upload source presentation and player-stage markup.
 - `media-lightbox.js` — image/video lightbox source selection, captions, rotation presentation and close behavior.

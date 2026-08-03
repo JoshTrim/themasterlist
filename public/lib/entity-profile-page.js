@@ -5,7 +5,11 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function createEntityProfilePageModule() {
   function artistShows(gigs = [], name = '') {
     const lookup = name.toLocaleLowerCase();
-    return gigs.filter((gig) => gig.artist.toLocaleLowerCase() === lookup);
+    return gigs.map((gig) => {
+      if (gig.artist.toLocaleLowerCase() === lookup) return gig;
+      const act = (gig.acts || []).find((entry) => String(entry.artist || '').toLocaleLowerCase() === lookup);
+      return act ? { ...gig, artist: act.artist, songs: act.songs || [], setlistFmId: act.setlistFmId, setlistFmUrl: act.setlistFmUrl, performanceRating: null, performanceNotes: `${act.role} at this show` } : null;
+    }).filter(Boolean);
   }
 
   function venueShows(gigs = [], name = '', city = '') {
@@ -27,7 +31,7 @@
   function venueStats(records = []) {
     return {
       shows: records.length,
-      artists: new Set(records.map((gig) => gig.artist)).size,
+      artists: new Set(records.flatMap((gig) => [gig.artist, ...(gig.acts || []).map((act) => act.artist)])).size,
       cities: new Set(records.map((gig) => gig.city)).size,
       songs: records.reduce((sum, gig) => sum + (gig.songs?.length || 0), 0),
       favourites: records.filter((gig) => gig.favorite).length
