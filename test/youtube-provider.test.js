@@ -1,6 +1,6 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { eventNeedles, playableInRegion, createYouTubeProvider } = require('../lib/providers/youtube');
+const { eventNeedles, playableInRegion, transientPlaylistWrite, createYouTubeProvider } = require('../lib/providers/youtube');
 
 describe('YouTube provider', () => {
   test('builds stable venue and date matching terms', () => {
@@ -52,6 +52,38 @@ describe('YouTube provider', () => {
     const result = await provider.exportPlaylist({ gig: { artist: 'Artist', songs: [{ title: 'Found' }, { title: 'Missing' }] }, accessToken: 'token', details: { name: 'Show' } });
     assert.deepEqual(result, { url: 'https://www.youtube.com/playlist?list=playlist-1', matched: 1, unmatched: ['Artist — Missing'] });
     assert.deepEqual(inserted, ['video-1']);
+  });
+
+  test('retries aborted playlist writes and continues after a persistently unavailable item', async () => {
+    let searches = 0;
+    const insertAttempts = new Map();
+    const delays = [];
+    const provider = createYouTubeProvider({ insertAttempts: 3, sleep: async (milliseconds) => delays.push(milliseconds), requestJson: async (url, options) => {
+      if (url.includes('/search?')) return { items: [{ id: { videoId: `video-${++searches}` } }] };
+      if (url.includes('/playlists?')) return { id: 'playlist-1' };
+      const videoId = JSON.parse(options.body).snippet.resourceId.videoId;
+      insertAttempts.set(videoId, (insertAttempts.get(videoId) || 0) + 1);
+      if (videoId === 'video-1') throw new Error('YouTube playlist: The operation was aborted.');
+      if (videoId === 'video-2' && insertAttempts.get(videoId) === 1) throw new Error('YouTube playlist: The operation was aborted.');
+      return {};
+    } });
+    const result = await provider.exportPlaylist({
+      gig: { artist: 'Artist', songs: [{ title: 'Never added' }, { title: 'Eventually added' }] },
+      accessToken: 'token', details: { name: 'Show' }
+    });
+    assert.deepEqual(result, {
+      url: 'https://www.youtube.com/playlist?list=playlist-1',
+      matched: 1,
+      unmatched: ['Artist — Never added']
+    });
+    assert.deepEqual(Object.fromEntries(insertAttempts), { 'video-1': 3, 'video-2': 2 });
+    assert.deepEqual(delays, [300, 600, 300]);
+  });
+
+  test('only treats transient YouTube write failures as retryable', () => {
+    assert.equal(transientPlaylistWrite(new Error('YouTube playlist: The operation was aborted.')), true);
+    assert.equal(transientPlaylistWrite(Object.assign(new Error('conflict'), { status: 409 })), true);
+    assert.equal(transientPlaylistWrite(new Error('YouTube playlist: quota exceeded')), false);
   });
 
   test('retrieves metadata for a bounded set of video IDs', async () => {

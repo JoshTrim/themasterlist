@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.4 — 2026-08-08
+
+### Fixed
+
+- YouTube playlist exports retry transient item-insertion failures and continue adding later songs if one video remains unavailable.
+
 ## 0.2.3 — 2026-08-08
 
 ### Fixed
