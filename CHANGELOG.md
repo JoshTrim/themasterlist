@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.3 — 2026-08-08
+
+### Fixed
+
+- YouTube playlist exports now map the shared playlist name to YouTube’s required `snippet.title` field.
+
 ## 0.2.2 — 2026-08-04
 
 ### Added

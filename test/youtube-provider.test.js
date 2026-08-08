@@ -41,10 +41,15 @@ describe('YouTube provider', () => {
     let searches = 0;
     const provider = createYouTubeProvider({ requestJson: async (url, options) => {
       if (url.includes('/search?')) return ++searches === 1 ? { items: [{ id: { videoId: 'video-1' } }] } : { items: [] };
-      if (url.includes('/playlists?')) { assert.equal(JSON.parse(options.body).status.privacyStatus, 'private'); return { id: 'playlist-1' }; }
+      if (url.includes('/playlists?')) {
+        const body = JSON.parse(options.body);
+        assert.equal(body.snippet.title, 'Show');
+        assert.equal(body.status.privacyStatus, 'private');
+        return { id: 'playlist-1' };
+      }
       inserted.push(JSON.parse(options.body).snippet.resourceId.videoId); return {};
     } });
-    const result = await provider.exportPlaylist({ gig: { artist: 'Artist', songs: [{ title: 'Found' }, { title: 'Missing' }] }, accessToken: 'token', details: { title: 'Show' } });
+    const result = await provider.exportPlaylist({ gig: { artist: 'Artist', songs: [{ title: 'Found' }, { title: 'Missing' }] }, accessToken: 'token', details: { name: 'Show' } });
     assert.deepEqual(result, { url: 'https://www.youtube.com/playlist?list=playlist-1', matched: 1, unmatched: ['Artist — Missing'] });
     assert.deepEqual(inserted, ['video-1']);
   });
