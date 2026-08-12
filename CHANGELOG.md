@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.5 — 2026-08-12
+
 ### Added
 
 - Playlist exports now run as visible background jobs with searching and insertion progress.
