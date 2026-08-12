@@ -762,7 +762,7 @@ mapPageController.bind();
 const authorizeAppleMusic = playlistExportModule.createAppleAuthorizer({ window, document });
 const playlistExporter = playlistExportModule.createExporter({
   getIntegrations: () => integrations, providerName, fetchJson,
-  navigate: (href) => window.location.assign(href), document, authorizeAppleMusic
+  navigate: (href) => window.location.assign(href), document, authorizeAppleMusic, updateJob
 });
 function setupExportButtons(exports, gig) { return playlistExporter.setupButtons(exports, gig); }
 

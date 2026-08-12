@@ -50,7 +50,7 @@ describe('YouTube provider', () => {
       inserted.push(JSON.parse(options.body).snippet.resourceId.videoId); return {};
     } });
     const result = await provider.exportPlaylist({ gig: { artist: 'Artist', songs: [{ title: 'Found' }, { title: 'Missing' }] }, accessToken: 'token', details: { name: 'Show' } });
-    assert.deepEqual(result, { url: 'https://www.youtube.com/playlist?list=playlist-1', matched: 1, unmatched: ['Artist — Missing'] });
+    assert.deepEqual({ url: result.url, matched: result.matched, unmatched: result.unmatched }, { url: 'https://www.youtube.com/playlist?list=playlist-1', matched: 1, unmatched: ['Artist — Missing'] });
     assert.deepEqual(inserted, ['video-1']);
   });
 
@@ -61,6 +61,7 @@ describe('YouTube provider', () => {
     const provider = createYouTubeProvider({ insertAttempts: 3, sleep: async (milliseconds) => delays.push(milliseconds), requestJson: async (url, options) => {
       if (url.includes('/search?')) return { items: [{ id: { videoId: `video-${++searches}` } }] };
       if (url.includes('/playlists?')) return { id: 'playlist-1' };
+      if (!options.method) return { items: [] };
       const videoId = JSON.parse(options.body).snippet.resourceId.videoId;
       insertAttempts.set(videoId, (insertAttempts.get(videoId) || 0) + 1);
       if (videoId === 'video-1') throw new Error('YouTube playlist: The operation was aborted.');
@@ -71,13 +72,36 @@ describe('YouTube provider', () => {
       gig: { artist: 'Artist', songs: [{ title: 'Never added' }, { title: 'Eventually added' }] },
       accessToken: 'token', details: { name: 'Show' }
     });
-    assert.deepEqual(result, {
+    assert.deepEqual({ url: result.url, matched: result.matched, unmatched: result.unmatched }, {
       url: 'https://www.youtube.com/playlist?list=playlist-1',
       matched: 1,
       unmatched: ['Artist — Never added']
     });
     assert.deepEqual(Object.fromEntries(insertAttempts), { 'video-1': 3, 'video-2': 2 });
     assert.deepEqual(delays, [300, 600, 300]);
+  });
+
+  test('resumes an existing playlist and does not duplicate an item committed before interruption', async () => {
+    const inserted = [];
+    const progress = [];
+    const provider = createYouTubeProvider({ requestJson: async (url, options) => {
+      if (!options.method && url.includes('/playlistItems?')) return { items: [{ snippet: { resourceId: { videoId: 'video-1' } } }] };
+      inserted.push(JSON.parse(options.body).snippet.resourceId.videoId);
+      return {};
+    } });
+    const result = await provider.exportPlaylist({
+      gig: { artist: 'Artist', songs: [{ title: 'One' }, { title: 'Two' }] }, accessToken: 'token', details: { name: 'Show' },
+      resumeState: {
+        searchIndex: 2,
+        videos: [{ id: 'video-1', label: 'Artist — One' }, { id: 'video-2', label: 'Artist — Two' }],
+        unmatched: [], playlistId: 'playlist-1', insertIndex: 0, matched: 0
+      },
+      onProgress: async (update) => progress.push(update)
+    });
+    assert.deepEqual(inserted, ['video-2']);
+    assert.equal(result.matched, 2);
+    assert.equal(result.state.insertIndex, 2);
+    assert.equal(progress.at(-1).current, 2);
   });
 
   test('only treats transient YouTube write failures as retryable', () => {

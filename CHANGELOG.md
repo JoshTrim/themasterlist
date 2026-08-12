@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- Playlist exports now run as visible background jobs with searching and insertion progress.
+- Interrupted YouTube exports persist their playlist and track cursor so retrying resumes the existing playlist without duplicating confirmed items.
+
 ## 0.2.4 — 2026-08-08
 
 ### Fixed

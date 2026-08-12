@@ -20,6 +20,7 @@ const { createUpdateChecker } = require('./lib/update-checker');
 const { loadEnvFile } = require('./lib/env');
 const { createGigRepository } = require('./lib/gigs');
 const { createBackgroundJobs } = require('./lib/background-jobs');
+const { createPlaylistExportService } = require('./lib/playlist-exports');
 const { createMediaRepository } = require('./lib/media-repository');
 const { createMediaProcessor } = require('./lib/media-processing');
 const { createMediaUploadRoutes } = require('./lib/routes/media-uploads');
@@ -178,6 +179,11 @@ const oauthService = createOAuthService({
     spotify: { name: 'Spotify', clientId: process.env.SPOTIFY_CLIENT_ID, clientSecret: process.env.SPOTIFY_CLIENT_SECRET, authorizationUrl: 'https://accounts.spotify.com/authorize', tokenUrl: 'https://accounts.spotify.com/api/token', scope: 'playlist-modify-private playlist-modify-public', basicAuth: true },
     youtube: { name: 'YouTube', clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET, authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth', tokenUrl: 'https://oauth2.googleapis.com/token', scope: 'https://www.googleapis.com/auth/youtube', authorizationParams: { access_type: 'offline', prompt: 'consent' } }
   }, requestJson: providerResponse, readConnections, writeConnections, randomUUID
+});
+const playlistExports = createPlaylistExportService({
+  database, jobs: backgroundJobs,
+  providers: { spotify: spotifyProvider, youtube: youtubeProvider, 'apple-music': appleMusicProvider },
+  getAccessToken: (provider) => oauthService.accessToken(provider), randomUUID
 });
 const metadataCache = createMetadataCache({
   database, provider: metadataProvider, youtubeProvider,
@@ -419,24 +425,6 @@ async function receiveDatabaseRestore(request) {
   }
 }
 
-async function getAccessToken(provider) {
-  return oauthService.accessToken(provider);
-}
-
-async function exportSpotify(gig) {
-  const accessToken = await getAccessToken('spotify');
-  return spotifyProvider.exportPlaylist({ gig, accessToken, details: playlistDetails(gig) });
-}
-
-async function exportYouTube(gig) {
-  const accessToken = await getAccessToken('youtube');
-  return youtubeProvider.exportPlaylist({ gig, accessToken, details: playlistDetails(gig) });
-}
-
-async function exportAppleMusic(gig, musicUserToken) {
-  return appleMusicProvider.exportPlaylist({ gig, musicUserToken, details: playlistDetails(gig) });
-}
-
 async function handleAuth(request, response, url) {
   const account = requireAccount(request);
   const provider = url.pathname.includes('/spotify') ? 'spotify' : url.pathname.includes('/youtube') ? 'youtube' : null;
@@ -670,7 +658,12 @@ async function handleApi(request, response, url) {
   if (await handleMediaMutation(request, response, url)) return;
   if (await handlePlaybackPlanRoute(request, response, url)) return;
   const exportMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/export\/(spotify|youtube|apple-music)$/);
+  const exportStatusMatch = url.pathname.match(/^\/api\/playlist-exports\/([\w-]+)$/);
   const youtubeSearchMatch = url.pathname.match(/^\/api\/gigs\/([\w-]+)\/youtube-search$/);
+  if (request.method === 'GET' && exportStatusMatch) {
+    const exportStatus = playlistExports.publicStatus(exportStatusMatch[1]);
+    return sendJson(response, exportStatus ? 200 : 404, exportStatus || { error: 'Playlist export not found.' });
+  }
   if (request.method === 'POST' && youtubeSearchMatch) {
     const gig = findGig(await readGigs(), youtubeSearchMatch[1]);
     if (!configured('youtube')) return sendError(response, 503, 'YouTube is not configured yet.');
@@ -681,10 +674,8 @@ async function handleApi(request, response, url) {
     if (!configured(provider)) return sendError(response, 503, `${provider === 'apple-music' ? 'Apple Music' : provider === 'youtube' ? 'YouTube' : 'Spotify'} is not configured yet.`);
     const gig = findGig(await readGigs(), exportMatch[1]);
     const body = await readBody(request);
-    const exportResult = provider === 'spotify' ? await exportSpotify(gig)
-      : provider === 'youtube' ? await exportYouTube(gig)
-      : await exportAppleMusic(gig, body.musicUserToken);
-    return sendJson(response, 201, { provider, ...exportResult });
+    const exportJob = playlistExports.start({ gig, provider, details: playlistDetails(gig), musicUserToken: body.musicUserToken });
+    return sendJson(response, 202, playlistExports.publicStatus(exportJob.id));
   }
 
 
