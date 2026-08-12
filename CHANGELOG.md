@@ -7,6 +7,11 @@
 - Playlist exports now run as visible background jobs with searching and insertion progress.
 - Interrupted YouTube exports persist their playlist and track cursor so retrying resumes the existing playlist without duplicating confirmed items.
 
+### Fixed
+
+- Narrow mobile layouts now keep playback headings, source labels, maintenance commands and navigation controls within the viewport.
+- Playback pages no longer show the full memory artwork above the player because a broad mobile selector was overriding the compact layout.
+
 ## 0.2.4 — 2026-08-08
 
 ### Fixed

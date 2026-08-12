@@ -49,6 +49,12 @@
 .set-marker.marker-last .set-marker-label { right: 0; left: auto; transform: none; text-align: right; }
 .set-player-times { display: flex; justify-content: space-between; margin-top: 4px; color: #caa5d8; font: 15px "VT323", monospace; }
 @media (max-width: 640px) {
+  .set-player { padding: 10px; }
+  .set-player-heading { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; align-items: start; }
+  .set-player-heading > div, .set-player-heading h3 { min-width: 0; }
+  .set-player-heading h3 { overflow-wrap: anywhere; }
+  .set-player-source { width: 100%; min-width: 0; justify-items: start; padding: 0 0 8px; text-align: left; }
+  .set-player-source small { width: 100%; max-width: 100%; }
   .set-player-timeline { min-height: 88px; margin-right: 0; margin-left: 0; padding-top: 68px; }
   .set-player-timeline::before, .set-player-progress { top: 50px; height: 9px; }
   .set-player-markers { top: 44px; }

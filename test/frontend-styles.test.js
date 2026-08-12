@@ -28,3 +28,15 @@ test('mobile show cards keep controls and performance rating in bounded rows', (
   assert.match(css, /\.gig-meta \{ display: grid; grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\) 36px;/);
   assert.match(css, /body\[data-page="shows"\] main \{ padding-right: 16px; padding-left: 16px; \}/);
 });
+
+test('narrow layouts contain playback metadata and long maintenance commands', () => {
+  const pages = fs.readFileSync(path.join(publicRoot, 'styles', 'pages.css'), 'utf8');
+  const playback = fs.readFileSync(path.join(publicRoot, 'styles', 'playback.css'), 'utf8');
+  assert.match(pages, /body\[data-page="playback"\] \.show-detail-header h1 \{ max-width: 100%; overflow-wrap: anywhere;/);
+  assert.match(pages, /body\[data-page="playback"\] \.show-detail-header > \.show-memory-hero-copy \{ display: flex;/);
+  assert.doesNotMatch(pages, /body\[data-page="playback"\] \.show-detail-header > div \{ display:/);
+  assert.match(pages, /\.update-commands pre \{ max-width: 100%; box-sizing: border-box; white-space: pre-wrap;/);
+  assert.match(pages, /\.site-nav \.site-nav-group a \{ display: flex; min-height: 40px;/);
+  assert.match(playback, /\.set-player-heading \{ display: grid; grid-template-columns: minmax\(0, 1fr\);/);
+  assert.match(playback, /\.set-player-source \{ width: 100%; min-width: 0; justify-items: start;/);
+});
