@@ -118,6 +118,8 @@ For a native Node installation, LAN access, upgrades and the first-show walkthro
 | [Peer collaboration](docs/PEER_COLLABORATION.md) | Pairing instances, shared shows, conflicts and trust boundaries |
 | [Privacy](docs/PRIVACY.md) | Local data and information sent to optional external services |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common startup, OAuth, media and network problems |
+| [Visual style guide](docs/STYLE_GUIDE.md) | Pixel-art design language, palette roles, components and porting guidance |
+| [Gothic Pixel UI skill](skills/gothic-pixel-ui/SKILL.md) | Reapply the visual system to another local project with a different palette |
 | [Architecture](ARCHITECTURE.md) | Module boundaries and testing strategy |
 | [Contributing](CONTRIBUTING.md) | Development setup, tests and pull-request expectations |
 | [Security policy](SECURITY.md) | Safe deployment and vulnerability reporting |

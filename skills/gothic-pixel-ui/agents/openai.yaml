@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gothic Pixel UI"
+  short_description: "Port a palette-flexible pixel CRT interface"
+  default_prompt: "Use $gothic-pixel-ui to give this app a polished pixel-art interface with a custom palette."
