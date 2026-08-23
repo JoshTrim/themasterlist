@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.7 — 2026-08-23
+
+### Fixed
+
+- Mobile artifact selections retain their artifact category through the resumable upload queue instead of appearing as ordinary show media.
+- Artifact upload regressions now cover the full mobile queue transition and server-side database category.
+
 ## 0.2.6 — 2026-08-23
 
 ### Added

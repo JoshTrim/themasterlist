@@ -63,6 +63,20 @@ test('artifact uploads reject videos before touching disk', async () => {
   database.close();
 });
 
+test('artifact upload paths persist photos in the artifact category', async () => {
+  const { database, handle } = fixture();
+  const bytes = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from('artifact-photo')]);
+  const result = response();
+  await handle({
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: { mimeType: 'image/jpeg', filename: 'shirt.jpg', data: bytes.toString('base64') }
+  }, result, new URL('http://localhost/api/gigs/gig/artifacts'));
+  assert.equal(result.status, 201);
+  assert.equal(JSON.parse(result.body).category, 'artifact');
+  assert.equal(database.prepare('SELECT category FROM gig_media').get().category, 'artifact');
+  database.close();
+});
+
 test('raw uploads are checksummed and duplicate content reuses the first record', async () => {
   const { database, handle } = fixture();
   const upload = async () => {

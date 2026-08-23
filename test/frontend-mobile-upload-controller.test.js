@@ -65,6 +65,22 @@ describe('mobile upload controller', () => {
     assert.equal(controller.stateFor(view.input).items.every((item) => item.status === 'complete'), true);
   });
 
+  test('selecting an artifact preserves its queue category until upload', async () => {
+    const view = inputFixture();
+    const calls = [];
+    const { controller } = controllerFixture({
+      uploadFiles: async (gigId, files, progress, category) => {
+        calls.push([gigId, files[0].name, category]);
+        progress(files[0], 1);
+      }
+    });
+    controller.setup(view.input, 'artifact');
+    await controller.start(view.input, 'gig-1', null, null, 'artifact');
+    controller.queueFiles(view.input, [{ name: 'shirt.jpg', size: 100 }]);
+    await controller.process(view.input);
+    assert.deepEqual(calls, [['gig-1', 'shirt.jpg', 'artifact']]);
+  });
+
   test('preserves failed items for retry', async () => {
     const view = inputFixture();
     const { controller } = controllerFixture({ uploadFiles: async () => { throw new Error('Network lost'); } });

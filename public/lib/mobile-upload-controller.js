@@ -35,10 +35,10 @@
       if (!activeWakeLockUsers && wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
     }
 
-    function stateFor(input, gigId = '', category = 'show') {
+    function stateFor(input, gigId = '', category) {
       let state = states.get(input);
-      if (!state) { state = queue.createState(category); states.set(input, state); }
-      if (gigId) queue.bindGig(state, gigId, category);
+      if (!state) { state = queue.createState(category || 'show'); states.set(input, state); }
+      if (gigId) queue.bindGig(state, gigId, category || state.category);
       else if (category) state.category = category;
       return state;
     }
