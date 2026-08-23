@@ -23,6 +23,8 @@ test('CI owns full regressions, dependency auditing and a two-instance Docker sm
   const smoke = read('scripts/docker-smoke.sh');
   assert.match(smoke, /api\/healthz/);
   assert.match(smoke, /--read-only/);
+  assert.match(smoke, /target=\/media/);
+  assert.match(smoke, /target=\/backups/);
   assert.match(smoke, /pymatting\.util\.kdtree/);
   assert.match(smoke, /numba\.config\.CACHE_DIR/);
   assert.match(smoke, /api\/auth\/setup/);

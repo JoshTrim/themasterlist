@@ -6,6 +6,10 @@ SOURCE_NAME="master-list-ci-source"
 TARGET_NAME="master-list-ci-target"
 SOURCE_VOLUME="master-list-ci-source-data"
 TARGET_VOLUME="master-list-ci-target-data"
+SOURCE_MEDIA_VOLUME="master-list-ci-source-media"
+TARGET_MEDIA_VOLUME="master-list-ci-target-media"
+SOURCE_BACKUP_VOLUME="master-list-ci-source-backups"
+TARGET_BACKUP_VOLUME="master-list-ci-target-backups"
 SOURCE_ORIGIN="http://127.0.0.1:3000"
 TARGET_ORIGIN="http://127.0.0.1:3001"
 OWNER_NAME="CI Owner"
@@ -20,7 +24,7 @@ logs() {
 
 cleanup() {
   docker rm --force "$SOURCE_NAME" "$TARGET_NAME" 2>/dev/null || true
-  docker volume rm "$SOURCE_VOLUME" "$TARGET_VOLUME" 2>/dev/null || true
+  docker volume rm "$SOURCE_VOLUME" "$TARGET_VOLUME" "$SOURCE_MEDIA_VOLUME" "$TARGET_MEDIA_VOLUME" "$SOURCE_BACKUP_VOLUME" "$TARGET_BACKUP_VOLUME" 2>/dev/null || true
   rm -rf "$WORK"
 }
 
@@ -38,12 +42,14 @@ wait_for_health() {
 }
 
 start_instance() {
-  local name="$1" volume="$2" port="$3" origin="$4" setup_token="$5"
+  local name="$1" volume="$2" media_volume="$3" backup_volume="$4" port="$5" origin="$6" setup_token="$7"
   docker run --detach --name "$name" \
     --read-only --tmpfs /tmp:size=2G,mode=1777 \
     --security-opt no-new-privileges --cap-drop ALL \
     --publish "127.0.0.1:${port}:3000" \
     --mount "source=${volume},target=/data" \
+    --mount "source=${media_volume},target=/media" \
+    --mount "source=${backup_volume},target=/backups" \
     --env NODE_ENV=production \
     --env "APP_ORIGIN=${origin}" \
     --env "OWNER_SETUP_TOKEN=${setup_token}" \
@@ -53,7 +59,11 @@ start_instance() {
 
 docker volume create "$SOURCE_VOLUME" > /dev/null
 docker volume create "$TARGET_VOLUME" > /dev/null
-start_instance "$SOURCE_NAME" "$SOURCE_VOLUME" 3000 "$SOURCE_ORIGIN" source-setup-token
+docker volume create "$SOURCE_MEDIA_VOLUME" > /dev/null
+docker volume create "$TARGET_MEDIA_VOLUME" > /dev/null
+docker volume create "$SOURCE_BACKUP_VOLUME" > /dev/null
+docker volume create "$TARGET_BACKUP_VOLUME" > /dev/null
+start_instance "$SOURCE_NAME" "$SOURCE_VOLUME" "$SOURCE_MEDIA_VOLUME" "$SOURCE_BACKUP_VOLUME" 3000 "$SOURCE_ORIGIN" source-setup-token
 wait_for_health "$SOURCE_ORIGIN" "$SOURCE_NAME"
 docker exec "$SOURCE_NAME" /opt/rembg/bin/python -c \
   "from pymatting.util.kdtree import knn; import numba; assert numba.config.CACHE_DIR == '/tmp/numba-cache'"
@@ -88,7 +98,7 @@ curl --fail --silent --show-error --cookie "$WORK/source.cookies" \
   "$SOURCE_ORIGIN/api/maintenance/instance-export" > "$WORK/source.tml-instance"
 test -s "$WORK/source.tml-instance"
 
-start_instance "$TARGET_NAME" "$TARGET_VOLUME" 3001 "$TARGET_ORIGIN" target-setup-token
+start_instance "$TARGET_NAME" "$TARGET_VOLUME" "$TARGET_MEDIA_VOLUME" "$TARGET_BACKUP_VOLUME" 3001 "$TARGET_ORIGIN" target-setup-token
 wait_for_health "$TARGET_ORIGIN" "$TARGET_NAME"
 curl --fail --silent --show-error --cookie-jar "$WORK/target.cookies" \
   --header "Origin: ${TARGET_ORIGIN}" --header 'Content-Type: application/json' \
