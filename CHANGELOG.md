@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.2.6 — 2026-08-23
+
+### Added
+
+- A reusable, palette-flexible gothic pixel UI style guide, Codex skill and semantic CSS starter for porting the interface language to other projects.
+
+### Fixed
+
+- Existing shows once again expose a dedicated image-only artifact uploader for merch, tickets, physical setlists and keepsakes.
+- Artifact uploads use their own resumable mobile queue, remain separate from playback media and refresh into the attached-media workspace without audio recognition.
+
 ## 0.2.5 — 2026-08-12
 
 ### Added
