@@ -10,6 +10,10 @@
     };
   }
 
+  function artifactCount(media = []) {
+    return new Set(media.filter((item) => item.category === 'artifact').map((item) => item.artifactGroupId || item.id)).size;
+  }
+
   function heroMedia(media = []) {
     const images = media.filter((item) => item.category !== 'artifact' && String(item.mimeType || '').startsWith('image/') && item.url);
     return images.find((item) => item.isCover) || images[0] || null;
@@ -100,11 +104,12 @@
       const totalTracks = (gig.songs?.length || 0) + (gig.acts || []).reduce((sum, act) => sum + (act.songs?.length || 0), 0);
       navTrackCount.textContent = totalTracks ? String(totalTracks) : '';
       navMediaCount.textContent = media.general.length ? String(media.general.length) : '';
-      navArtifactCount.textContent = media.artifacts.length ? String(media.artifacts.length) : '';
+      const totalArtifacts = artifactCount(media.artifacts);
+      navArtifactCount.textContent = totalArtifacts ? String(totalArtifacts) : '';
       const attendeeTotal = Math.max(names.length, 1);
-      facts.innerHTML = `<span><b>${gig.performanceRating || '—'}</b> rating</span><span><b>${totalTracks}</b> tracks</span><span><b>${(gig.acts?.length || 0) + 1}</b> acts</span><span><b>${media.general.length}</b> media</span><span><b>${media.artifacts.length}</b> artifacts</span><span><b>${attendeeTotal}</b> attendee${attendeeTotal === 1 ? '' : 's'}</span>`;
+      facts.innerHTML = `<span><b>${gig.performanceRating || '—'}</b> rating</span><span><b>${totalTracks}</b> tracks</span><span><b>${(gig.acts?.length || 0) + 1}</b> acts</span><span><b>${media.general.length}</b> media</span><span><b>${totalArtifacts}</b> artifacts</span><span><b>${attendeeTotal}</b> attendee${attendeeTotal === 1 ? '' : 's'}</span>`;
       renderMediaGallery(gallery, media.general, { editable: true, songs: gig.songs || [] });
-      renderMediaGallery(artifactGallery, media.artifacts, { editable: true, allowCover: false, songs: gig.songs || [] });
+      renderMediaGallery(artifactGallery, media.artifacts, { editable: true, allowCover: false, songs: gig.songs || [], gigId: gig.id });
       if (page === 'playback' || new URLSearchParamsClass(window.location.search).get('play') === '1') setTimeoutFn(startPlayback, 0);
       return gig;
     }
@@ -163,5 +168,5 @@
     return { render, renderSetlist, refreshAlbums, shareMemory, downloadMemoryCard, bind, getGig: () => gig };
   }
 
-  return { partitionMedia, heroMedia, remoteMediaForGig, memoryCardSvg, createController };
+  return { partitionMedia, artifactCount, heroMedia, remoteMediaForGig, memoryCardSvg, createController };
 }));

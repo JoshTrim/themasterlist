@@ -34,6 +34,7 @@
 .show-setlist-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
 .show-detail-media .media-gallery, .show-detail-artifacts .media-gallery { grid-column: auto; }
 .show-detail-artifacts .media-item img { object-fit: contain; background: radial-gradient(circle, rgba(255, 45, 155, .1), transparent 65%); }
+.show-detail-artifacts .artifact-group-card { grid-column: span 2; }
 .show-memory-panel .empty-state { margin: 0; border: 1px dashed #5e2a78; background: rgba(16, 11, 29, .55); }
 .show-memory-hero { display: grid; grid-template-columns: minmax(280px, 42%) minmax(0, 1fr); min-height: 410px; align-items: stretch; padding: 0; overflow: hidden; }
 .show-memory-hero::after { right: 26px; bottom: 22px; }
@@ -1218,9 +1219,10 @@ a.metadata-step:hover { border-color: #ff2d9b; background: #210b35; color: #fff0
 .artifact-archive-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 18px; }
 .artifact-archive-card { min-width: 0; border: 1px solid #7422a0; background: linear-gradient(145deg, rgba(39, 13, 58, .86), rgba(9, 4, 16, .95)); box-shadow: 6px 6px 0 #22092f, 0 0 18px rgba(197, 45, 255, .16); }
 .artifact-archive-card:hover { border-color: #ff2d9b; box-shadow: 6px 6px 0 #53136d, 0 0 22px rgba(255, 45, 155, .3); }
-.artifact-archive-image { display: grid; aspect-ratio: 4 / 3; overflow: hidden; place-items: center; border-bottom: 2px solid #7422a0; background: radial-gradient(circle, rgba(255, 45, 155, .13), transparent 64%), #090410; }
+.artifact-archive-image { position: relative; display: grid; width: 100%; padding: 0; aspect-ratio: 4 / 3; overflow: hidden; place-items: center; border: 0; border-bottom: 2px solid #7422a0; background: radial-gradient(circle, rgba(255, 45, 155, .13), transparent 64%), #090410; cursor: pointer; }
 .artifact-archive-card.is-cutout .artifact-archive-image { background-color: #180d24; background-image: linear-gradient(45deg, rgba(255,255,255,.07) 25%, transparent 25%), linear-gradient(-45deg, rgba(255,255,255,.07) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(255,255,255,.07) 75%), linear-gradient(-45deg, transparent 75%, rgba(255,255,255,.07) 75%); background-position: 0 0, 0 10px, 10px -10px, -10px 0; background-size: 20px 20px; }
 .artifact-archive-image img { width: 100%; height: 100%; object-fit: contain; transform-origin: center; }
+.artifact-archive-image > span { position: absolute; right: 8px; bottom: 8px; padding: 6px 8px; border: 1px solid #ff2d9b; background: rgba(12, 3, 20, .9); color: #ffb4dd; font: 7px "Press Start 2P", monospace; text-transform: uppercase; box-shadow: 3px 3px 0 #09030f; }
 .artifact-archive-copy { display: grid; gap: 10px; padding: 14px; }
 .artifact-archive-copy h2 { margin: 0; color: #fff0fa; font: 21px/1.15 "VT323", monospace; }
 .artifact-archive-copy > p { margin: 0; color: #caa5d8; font-size: 16px; line-height: 1.3; }

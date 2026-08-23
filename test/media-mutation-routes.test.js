@@ -114,6 +114,21 @@ test('artifact metadata and framing updates are validated and persisted', async 
   app.database.close();
 });
 
+test('artifact identity updates propagate across views while framing stays per photo', async () => {
+  const app = fixture();
+  const insert = app.database.prepare("INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, category, artifact_group_id, artifact_view, artifact_is_cover, size, created_at) VALUES (?, 'gig', ?, 'image/jpeg', 'Tour shirt', 'artifact', 'shirt', ?, ?, 5, 'now')");
+  insert.run('front', 'front.jpg', 'front', 1); insert.run('back', 'back.jpg', 'back', 0);
+  const updated = response();
+  await app.handle({ method: 'PATCH', headers: {}, body: { caption: 'World tour shirt', artifactType: 'merch', artifactNotes: 'Front and back', artifactCropX: 20 } }, updated, new URL('http://localhost/api/media/back'));
+  const rows = app.database.prepare("SELECT id, caption, artifact_type AS type, artifact_notes AS notes, artifact_crop_x AS crop FROM gig_media WHERE artifact_group_id = 'shirt' ORDER BY id").all();
+  assert.deepEqual(rows.map(({ caption, type, notes }) => ({ caption, type, notes })), [
+    { caption: 'World tour shirt', type: 'merch', notes: 'Front and back' },
+    { caption: 'World tour shirt', type: 'merch', notes: 'Front and back' }
+  ]);
+  assert.deepEqual(rows.map((row) => row.crop), [20, 50]);
+  app.database.close();
+});
+
 test('deleting media removes every associated file and database record', async () => {
   const app = fixture();
   app.database.prepare("UPDATE gig_media SET background_filename = 'cutout.png' WHERE id = 'video'").run();

@@ -25,3 +25,15 @@ test('uploader chooses stable endpoint names', () => {
   assert.equal(uploader.endpoint('show-1', 'show'), '/api/gigs/show-1/media');
   assert.equal(uploader.endpoint('show-1', 'artifact'), '/api/gigs/show-1/artifacts');
 });
+
+test('artifact side uploads include group and view headers', async () => {
+  const requests = [];
+  const uploader = createUploader({
+    fetch: async (url, options) => { requests.push({ url, headers: options.headers }); return { ok: true, status: 200, json: async () => ({ complete: true, media: { category: 'artifact' } }) }; },
+    AbortController, randomUUID: () => 'upload', updateJob: () => {}, isMobile: () => true, sleep: async () => {}
+  });
+  const file = { name: 'back.jpg', type: 'image/jpeg', size: 10, slice: () => ({}) };
+  await uploader.upload('gig', [file], () => {}, 'artifact', { artifactGroupId: 'shirt', artifactView: 'back' });
+  assert.equal(requests[0].headers['X-Artifact-Group-Id'], 'shirt');
+  assert.equal(requests[0].headers['X-Artifact-View'], 'back');
+});

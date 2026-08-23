@@ -104,7 +104,7 @@ test('remote contribution manifests expose local authenticated stream and copy U
   alpha.database.prepare(`INSERT INTO shared_gig_contributions
     (shared_gig_id, instance_id, participant_name, media_manifest, updated_at) VALUES ('shared', ?, 'Beta', ?, 'now')`).run(
     beta.identity.row().instanceId,
-    JSON.stringify([{ id: 'clip', filename: 'clip.mp4', mimeType: 'video/mp4', size: 10 }, { id: 'youtube', mimeType: 'video/youtube', externalUrl: 'https://youtu.be/example' }, { id: 'shirt', filename: 'shirt.jpg', mimeType: 'image/jpeg', category: 'artifact', artifactType: 'merch', artifactNotes: 'Tour shirt', artifactCropX: 30, artifactCropY: 60, artifactZoom: 1.5, useBackgroundRemoved: true }])
+    JSON.stringify([{ id: 'clip', filename: 'clip.mp4', mimeType: 'video/mp4', size: 10 }, { id: 'youtube', mimeType: 'video/youtube', externalUrl: 'https://youtu.be/example' }, { id: 'shirt', filename: 'shirt.jpg', mimeType: 'image/jpeg', category: 'artifact', artifactType: 'merch', artifactNotes: 'Tour shirt', artifactCropX: 30, artifactCropY: 60, artifactZoom: 1.5, artifactGroupId: 'shirt-group', artifactView: 'back', artifactViewLabel: '', artifactIsCover: true, useBackgroundRemoved: true }])
   );
   const contribution = syncService(alpha).contributionRows('shared')[0];
   assert.equal(contribution.media[0].remote, true);
@@ -114,6 +114,8 @@ test('remote contribution manifests expose local authenticated stream and copy U
   assert.equal(contribution.media[1].copyUrl, null);
   assert.equal(contribution.media[2].artifactType, 'merch');
   assert.equal(contribution.media[2].artifactNotes, 'Tour shirt');
+  assert.equal(contribution.media[2].artifactGroupId, 'shirt-group');
+  assert.equal(contribution.media[2].artifactView, 'back');
   assert.match(contribution.media[2].url, /variant=cutout$/);
   alpha.database.close(); beta.database.close();
 });

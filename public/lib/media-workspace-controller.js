@@ -93,6 +93,7 @@
       renderGallery(gallery, media, {
         editable: true,
         songs: gig.songs || [],
+        gigId: gig.id,
         onDelete: (removed) => { const ids = new Set(removed.map((item) => item.id)); gig.media = gig.media.filter((item) => !ids.has(item.id)); },
         afterRender: (container, current) => { decorate(container, current, gig); renderPlaybackEditor(gig); }
       });

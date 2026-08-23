@@ -389,8 +389,8 @@ async function pollMediaRecognition(gigId, onMedia) {
   return mediaJobs.pollRecognition({ fetchMedia: () => fetchJson(`/api/gigs/${gigId}/media`), onUpdate: onMedia });
 }
 
-function uploadGigMedia(gigId, files, onProgress = () => {}, category = 'show') {
-  return gigMediaUploader.upload(gigId, files, onProgress, category);
+function uploadGigMedia(gigId, files, onProgress = () => {}, category = 'show', options = {}) {
+  return gigMediaUploader.upload(gigId, files, onProgress, category, options);
 }
 
 const externalMediaInput = externalMediaInputModule.createController({ fetchJson });
@@ -398,7 +398,15 @@ function addYouTubeMedia(gigId, input) { return externalMediaInput.add(gigId, in
 
 function youtubeEmbedUrl(url, options = {}) { return playbackMedia.youtubeEmbedUrl(url, { ...options, origin: window.location.origin }); }
 const mediaLightboxController = mediaLightboxModule.createController({
-  elements: { lightbox: mediaLightbox, image: mediaLightboxImage, video: mediaLightboxVideo, caption: mediaLightboxCaption, closeButton: mediaLightboxClose }
+  elements: {
+    lightbox: mediaLightbox, stage: document.querySelector('#media-lightbox-stage'), image: mediaLightboxImage, video: mediaLightboxVideo,
+    caption: mediaLightboxCaption, basicCaption: document.querySelector('#media-lightbox-basic-caption'), closeButton: mediaLightboxClose,
+    artifactCopy: document.querySelector('#artifact-lightbox-copy'), artifactType: document.querySelector('#artifact-lightbox-type'),
+    artifactNotes: document.querySelector('#artifact-lightbox-notes'), artifactViews: document.querySelector('#artifact-lightbox-views'),
+    artifactPrevious: document.querySelector('#artifact-lightbox-previous'), artifactFlip: document.querySelector('#artifact-lightbox-flip'),
+    artifactNext: document.querySelector('#artifact-lightbox-next'), artifactShow: document.querySelector('#artifact-lightbox-show'),
+    artifactDownload: document.querySelector('#artifact-lightbox-download')
+  }
 });
 mediaLightboxController.bind();
 function openMediaLightbox(item) { return mediaLightboxController.open(item); }
@@ -762,7 +770,7 @@ function setupArchiveArtistVisual(card, artist) { return archivePageController.s
 function renderGigs() { return archivePageController.render(); }
 
 const artifactsPageController = artifactsPageModule.createController({
-  page, getShows: () => [...gigs, ...remoteSharedArchiveShows()], escapeHtml, formatGigDate,
+  page, getShows: () => [...gigs, ...remoteSharedArchiveShows()], escapeHtml, formatGigDate, openArtifact: openMediaLightbox,
   elements: { query: artifactsFilter, type: artifactsTypeFilter, summary: artifactsSummary, grid: artifactsGrid, empty: artifactsEmpty }
 });
 function renderArtifacts() { return artifactsPageController.render(); }
@@ -813,4 +821,7 @@ const appBootstrap = appBootstrapModule.createBootstrap({
 });
 function initializeApp() { return appBootstrap.initialize(); }
 
-initializeApp().catch((error) => setMessage(error.message, true));
+initializeApp().catch((error) => {
+  setMessage(error.message, true);
+  if (page === 'artifacts' && artifactsSummary) artifactsSummary.textContent = `Could not load artifacts: ${error.message}`;
+});

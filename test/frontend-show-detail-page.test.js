@@ -44,6 +44,13 @@ function controllerFor(elements, gig, overrides = {}) {
 }
 
 describe('show detail page controller', () => {
+  test('counts grouped artifact views as one artifact', () => {
+    assert.equal(showDetail.artifactCount([
+      { id: 'front', category: 'artifact', artifactGroupId: 'shirt' },
+      { id: 'back', category: 'artifact', artifactGroupId: 'shirt' },
+      { id: 'ticket', category: 'artifact', artifactGroupId: 'ticket' }
+    ]), 2);
+  });
   test('partitions artifacts from ordinary show media', () => {
     const result = showDetail.partitionMedia([{ id: 'video' }, { id: 'shirt', category: 'artifact' }]);
     assert.deepEqual(result.general.map((item) => item.id), ['video']);

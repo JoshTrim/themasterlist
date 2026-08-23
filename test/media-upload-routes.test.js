@@ -73,7 +73,25 @@ test('artifact upload paths persist photos in the artifact category', async () =
   }, result, new URL('http://localhost/api/gigs/gig/artifacts'));
   assert.equal(result.status, 201);
   assert.equal(JSON.parse(result.body).category, 'artifact');
-  assert.equal(database.prepare('SELECT category FROM gig_media').get().category, 'artifact');
+  assert.deepEqual(database.prepare('SELECT category, artifact_group_id AS groupId, artifact_view AS view, artifact_is_cover AS isCover FROM gig_media').get(), { category: 'artifact', groupId: 'media-1', view: 'front', isCover: 1 });
+  database.close();
+});
+
+test('front, back and detail uploads share one artifact group', async () => {
+  const { database, handle } = fixture();
+  const upload = async (filename, marker, body = {}) => {
+    const bytes = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from(marker)]);
+    const result = response();
+    await handle({ method: 'POST', headers: { 'content-type': 'application/json' }, body: { mimeType: 'image/jpeg', filename, data: bytes.toString('base64'), ...body } }, result, new URL('http://localhost/api/gigs/gig/artifacts'));
+    return result;
+  };
+  const front = await upload('shirt-front.jpg', 'front');
+  const groupId = JSON.parse(front.body).artifactGroupId;
+  assert.equal((await upload('shirt-back.jpg', 'back', { artifactGroupId: groupId, artifactView: 'back' })).status, 201);
+  assert.equal((await upload('shirt-label.jpg', 'label', { artifactGroupId: groupId, artifactView: 'detail', artifactViewLabel: 'Label' })).status, 201);
+  const rows = database.prepare('SELECT artifact_group_id AS groupId, artifact_view AS view, artifact_view_label AS label FROM gig_media ORDER BY created_at, id').all();
+  assert.equal(new Set(rows.map((row) => row.groupId)).size, 1);
+  assert.deepEqual(rows.map((row) => [row.view, row.label]), [['front', ''], ['back', ''], ['detail', 'Label']]);
   database.close();
 });
 

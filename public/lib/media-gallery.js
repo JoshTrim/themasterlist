@@ -6,10 +6,39 @@
   function createGallery({ escapeHtml, youtubeEmbedUrl, isMobileUpload, openMediaLightbox, mediaSelection, fetchJson, confirm, prompt, mediaJobs, updateJob, mediaRecognitionMarkup }) {
     const originalPreviews = new Set();
     const artifactLabels = { merch: 'Merch', ticket: 'Ticket', setlist: 'Physical setlist', poster: 'Poster', memorabilia: 'Memorabilia' };
-    function renderMediaGallery(container, media = [], { editable = false, songs = [], allowCover = true, onDelete = () => {}, afterRender = () => {} } = {}) {
+    function artifactGroups(media) {
+      const groups = new Map();
+      media.forEach((item) => {
+        const id = item.artifactGroupId || item.id;
+        if (!groups.has(id)) groups.set(id, []);
+        groups.get(id).push(item);
+      });
+      return [...groups.entries()].map(([id, views]) => {
+        const order = { front: 0, back: 1, detail: 2 };
+        views.sort((left, right) => (order[left.artifactView || 'front'] ?? 3) - (order[right.artifactView || 'front'] ?? 3) || Number(left.sortOrder || 0) - Number(right.sortOrder || 0));
+        return { id, views, cover: views.find((item) => item.artifactIsCover) || views.find((item) => (item.artifactView || 'front') === 'front') || views[0] };
+      });
+    }
+
+    function uploadArtifactView(gigId, groupId, view, label, file) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `/api/gigs/${encodeURIComponent(gigId)}/artifacts`);
+        xhr.setRequestHeader('Content-Type', file.type);
+        xhr.setRequestHeader('X-Media-Filename', encodeURIComponent(file.name));
+        xhr.setRequestHeader('X-Artifact-Group-Id', groupId);
+        xhr.setRequestHeader('X-Artifact-View', view);
+        if (label) xhr.setRequestHeader('X-Artifact-View-Label', label);
+        xhr.onload = () => { let body = {}; try { body = JSON.parse(xhr.responseText); } catch {} if (xhr.status >= 200 && xhr.status < 300) resolve(body.media || body); else reject(new Error(body.error || 'Artifact upload failed.')); };
+        xhr.onerror = () => reject(new Error('Artifact upload failed.'));
+        xhr.send(file);
+      });
+    }
+
+    function renderMediaGallery(container, media = [], { editable = false, songs = [], allowCover = true, gigId = '', onDelete = () => {}, afterRender = () => {} } = {}) {
       container.replaceChildren();
       if (!media.length) { afterRender(container, media); return; }
-          const redraw = () => renderMediaGallery(container, media, { editable, songs, allowCover, onDelete, afterRender });
+          const redraw = () => renderMediaGallery(container, media, { editable, songs, allowCover, gigId, onDelete, afterRender });
           const localMedia = media.filter((item) => !item.remote);
           mediaSelection.prune(localMedia);
           const selectedCount = mediaSelection.selected(localMedia).length;
@@ -29,15 +58,71 @@
             const remoteState = item.remote ? `<small class="peer-media-source${item.remoteAvailable ? '' : ' is-offline'}">${item.remoteAvailable ? 'Available' : 'Currently offline'} from ${escapeHtml(item.peerName || 'peer')}</small>${item.copyUrl ? '<button type="button" class="peer-media-copy">Save local copy</button>' : ''}` : '';
             const detection = item.remote ? '' : mediaRecognitionMarkup(item, songs);
             const background = item.backgroundStatus === 'running' ? '<small class="media-background-status">Removing background…</small>' : item.backgroundStatus === 'error' ? `<small class="media-background-status media-detection-error">${escapeHtml(item.backgroundError || 'Background removal failed')}</small>` : item.useBackgroundRemoved ? '<small class="media-background-status">Transparent cutout</small>' : '';
-            const artifactControls = item.category === 'artifact' && mimeType.startsWith('image/') ? `<label class="media-song-label">Artifact type<select class="artifact-type-select">${Object.entries(artifactLabels).map(([value, label]) => `<option value="${value}" ${item.artifactType === value || (!item.artifactType && value === 'memorabilia') ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button class="artifact-notes" type="button">Notes</button><fieldset class="artifact-crop-controls"><legend>Crop and framing</legend><label>Horizontal focus<input class="artifact-crop-x" type="range" min="0" max="100" value="${Number(item.artifactCropX ?? 50)}" /></label><label>Vertical focus<input class="artifact-crop-y" type="range" min="0" max="100" value="${Number(item.artifactCropY ?? 50)}" /></label><label>Zoom<input class="artifact-zoom" type="range" min="1" max="3" step="0.05" value="${Number(item.artifactZoom ?? 1)}" /></label></fieldset>${item.backgroundFilename ? `<button type="button" class="artifact-compare">${originalPreviews.has(item.id) ? 'Preview cutout' : 'Compare with original'}</button><button type="button" class="media-background-toggle">${item.useBackgroundRemoved ? 'Make original the default' : 'Make cutout the default'}</button>` : ''}<button type="button" class="media-background-remove" ${item.backgroundStatus === 'running' ? 'disabled' : ''}>${item.backgroundFilename ? 'Recreate cutout' : item.backgroundStatus === 'error' ? 'Retry background removal' : 'Remove background'}</button>` : '';
+            const replaceControl = gigId && item.category === 'artifact' ? '<label class="artifact-replace-photo">Replace this photo<input type="file" accept="image/jpeg,image/png,image/gif,image/webp" /></label>' : '';
+            const artifactControls = item.category === 'artifact' && mimeType.startsWith('image/') ? `<label class="media-song-label">Artifact type<select class="artifact-type-select">${Object.entries(artifactLabels).map(([value, label]) => `<option value="${value}" ${item.artifactType === value || (!item.artifactType && value === 'memorabilia') ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button class="artifact-notes" type="button">Notes</button>${replaceControl}<fieldset class="artifact-crop-controls"><legend>Crop and framing</legend><label>Horizontal focus<input class="artifact-crop-x" type="range" min="0" max="100" value="${Number(item.artifactCropX ?? 50)}" /></label><label>Vertical focus<input class="artifact-crop-y" type="range" min="0" max="100" value="${Number(item.artifactCropY ?? 50)}" /></label><label>Zoom<input class="artifact-zoom" type="range" min="1" max="3" step="0.05" value="${Number(item.artifactZoom ?? 1)}" /></label></fieldset>${item.backgroundFilename ? `<button type="button" class="artifact-compare">${originalPreviews.has(item.id) ? 'Preview cutout' : 'Compare with original'}</button><button type="button" class="media-background-toggle">${item.useBackgroundRemoved ? 'Make original the default' : 'Make cutout the default'}</button>` : ''}<button type="button" class="media-background-remove" ${item.backgroundStatus === 'running' ? 'disabled' : ''}>${item.backgroundFilename ? 'Recreate cutout' : item.backgroundStatus === 'error' ? 'Retry background removal' : 'Remove background'}</button>` : '';
             const menu = canEdit ? `<div class="media-actions"><button type="button" class="media-menu-toggle" aria-expanded="false">⋮ Options</button><div class="media-action-menu" hidden>${songs.length && item.category !== 'artifact' ? `<label class="media-song-label">Setlist track${item.recognitionOverride ? ' · manual override' : ''}<select class="media-song-select"><option value="">Unassigned</option>${songs.map((song, songIndex) => `<option value="${songIndex}" ${item.songIndex === songIndex ? 'selected' : ''}>${songIndex + 1}. ${escapeHtml(song.title)}</option>`).join('')}</select></label>` : ''}<button class="media-caption" type="button">${item.category === 'artifact' ? 'Title' : 'Caption'}</button>${artifactControls}${allowCover && item.category !== 'artifact' ? `<button type="button" class="media-cover">${item.isCover ? 'Cover photo' : 'Make cover'}</button>` : ''}${mimeType.startsWith('video/') && mimeType !== 'video/youtube' ? '<button type="button" class="media-trim">Trim video</button><button type="button" class="media-rotate media-rotate-cw">↻ Clockwise</button><button type="button" class="media-rotate media-rotate-ccw">↺ Counter-clockwise</button>' : ''}<button type="button" class="media-up" ${localIndex <= 0 ? 'disabled' : ''}>↑ Move earlier</button><button type="button" class="media-down" ${localIndex === localMedia.length - 1 ? 'disabled' : ''}>↓ Move later</button></div></div>` : '';
             const artifactMeta = item.category === 'artifact' ? `<div class="artifact-card-meta"><span>${escapeHtml(artifactLabels[item.artifactType] || artifactLabels.memorabilia)}</span>${item.artifactNotes ? `<p>${escapeHtml(item.artifactNotes)}</p>` : ''}</div>` : '';
             return `<figure class="media-item${item.remote ? ' is-remote' : ''}${item.isCover ? ' is-cover' : ''}${item.useBackgroundRemoved && !originalPreviews.has(item.id) ? ' is-cutout' : ''}${mediaSelection.has(item.id) ? ' is-selected' : ''}" data-media-id="${item.id}">${canEdit ? `<button type="button" class="media-delete-corner" aria-label="${mediaSelection.has(item.id) ? 'Deselect media' : 'Select media for removal'}" title="${mediaSelection.has(item.id) ? 'Deselect media' : 'Select media for removal'}" aria-pressed="${mediaSelection.has(item.id)}">×</button>` : ''}${source}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${artifactMeta}${remoteState}${background}${detection}${menu}</figure>`;
           };
-          container.innerHTML = `${editable && selectedCount ? `<div class="media-bulk-actions"><span>${selectedCount} selected</span><button type="button" class="media-bulk-delete">Remove selected</button><button type="button" class="media-bulk-clear">Clear</button></div>` : ''}${media.map(itemMarkup).join('')}`;
+          const groupedArtifacts = media.length && media.every((item) => item.category === 'artifact');
+          const content = groupedArtifacts ? artifactGroups(media).map((group) => {
+            const hasFront = group.views.some((item) => (item.artifactView || 'front') === 'front');
+            const hasBack = group.views.some((item) => item.artifactView === 'back');
+            const viewLabel = (item, index) => item.artifactView === 'detail' ? (item.artifactViewLabel || `Detail ${index + 1}`) : (item.artifactView === 'back' ? 'Back' : 'Front');
+            const viewCards = editable ? group.views.map((item, index) => `<div class="artifact-group-view"><span>${escapeHtml(viewLabel(item, index))}</span>${itemMarkup(item)}</div>`).join('') : itemMarkup(group.cover);
+            const add = editable && gigId ? `<div class="artifact-add-views">${!hasFront ? `<label>Add front<input class="artifact-view-upload" type="file" accept="image/jpeg,image/png,image/gif,image/webp" data-artifact-group="${escapeHtml(group.id)}" data-artifact-view="front" /></label>` : ''}${!hasBack ? `<label>Add back<input class="artifact-view-upload" type="file" accept="image/jpeg,image/png,image/gif,image/webp" data-artifact-group="${escapeHtml(group.id)}" data-artifact-view="back" /></label>` : ''}<label>Add detail<input class="artifact-view-upload" type="file" accept="image/jpeg,image/png,image/gif,image/webp" data-artifact-group="${escapeHtml(group.id)}" data-artifact-view="detail" /></label></div>` : '';
+            return `<section class="artifact-group-card" data-artifact-group="${escapeHtml(group.id)}"><header><div><span>${escapeHtml(artifactLabels[group.cover.artifactType] || artifactLabels.memorabilia)}</span><h3>${escapeHtml(group.cover.caption || group.cover.filename || 'Artifact')}</h3></div><button class="artifact-open-group" type="button">${group.views.length > 1 ? `View ${group.views.length} sides` : 'View artifact'}</button></header><div class="artifact-group-views">${viewCards}</div>${add}</section>`;
+          }).join('') : media.map(itemMarkup).join('');
+          container.innerHTML = `${editable && selectedCount ? `<div class="media-bulk-actions"><span>${selectedCount} selected</span><button type="button" class="media-bulk-delete">Remove selected</button><button type="button" class="media-bulk-clear">Clear</button></div>` : ''}${content}`;
       container.querySelectorAll('.media-open').forEach((button) => button.addEventListener('click', () => {
         const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
-        if (item) openMediaLightbox(item);
+        if (item) {
+          const views = item.category === 'artifact' ? artifactGroups(media).find((group) => group.id === (item.artifactGroupId || item.id))?.views : null;
+          openMediaLightbox(views ? { ...item, artifactViews: views } : item);
+        }
+      }));
+      container.querySelectorAll('.artifact-open-group').forEach((button) => button.addEventListener('click', () => {
+        const group = artifactGroups(media).find((entry) => entry.id === button.closest('.artifact-group-card').dataset.artifactGroup);
+        if (group) openMediaLightbox({ ...group.cover, artifactViews: group.views });
+      }));
+      container.querySelectorAll('.artifact-view-upload').forEach((input) => input.addEventListener('change', async () => {
+        const file = input.files?.[0];
+        if (!file || !gigId) return;
+        let label = '';
+        if (input.dataset.artifactView === 'detail') label = prompt('Name this detail view', '') || '';
+        input.disabled = true;
+        const host = input.closest('label'); const original = host.firstChild?.textContent || 'Add view';
+        try {
+          if (host.firstChild) host.firstChild.textContent = 'Uploading…';
+          const added = await uploadArtifactView(gigId, input.dataset.artifactGroup, input.dataset.artifactView, label, file);
+          media.push(added); redraw();
+        } catch (error) {
+          input.disabled = false;
+          if (host.firstChild) host.firstChild.textContent = error.message;
+          setTimeout(() => { if (host.firstChild) host.firstChild.textContent = original; }, 3000);
+        }
+      }));
+      container.querySelectorAll('.artifact-replace-photo input').forEach((input) => input.addEventListener('change', async () => {
+        const file = input.files?.[0];
+        const card = input.closest('.media-item');
+        const current = media.find((entry) => entry.id === card?.dataset.mediaId);
+        if (!file || !current || !gigId) return;
+        const label = `replacement-${Date.now()}`;
+        input.disabled = true;
+        try {
+          const added = await uploadArtifactView(gigId, current.artifactGroupId || current.id, 'detail', label, file);
+          await fetchJson(`/api/media/${current.id}`, { method: 'DELETE' });
+          const replacement = await fetchJson(`/api/media/${added.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+            artifactView: current.artifactView || 'front', artifactViewLabel: current.artifactViewLabel || '', artifactIsCover: Boolean(current.artifactIsCover),
+            artifactCropX: current.artifactCropX ?? 50, artifactCropY: current.artifactCropY ?? 50, artifactZoom: current.artifactZoom ?? 1
+          }) });
+          media.splice(media.indexOf(current), 1, replacement);
+          redraw();
+        } catch (error) {
+          input.disabled = false;
+          const labelNode = input.closest('label');
+          if (labelNode?.firstChild) labelNode.firstChild.textContent = error.message;
+        }
       }));
       container.querySelectorAll('.peer-media-copy').forEach((button) => button.addEventListener('click', async () => {
         const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
@@ -89,11 +174,16 @@
           const caption = prompt('Caption this memory', item.caption || item.filename || '');
           if (caption === null) return;
           await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caption }) });
-          item.caption = caption; redraw();
+          const groupId = item.artifactGroupId || item.id;
+          media.filter((entry) => entry.category === 'artifact' && (entry.artifactGroupId || entry.id) === groupId).forEach((entry) => { entry.caption = caption; });
+          if (item.category !== 'artifact') item.caption = caption;
+          redraw();
         }));
         container.querySelectorAll('.artifact-type-select').forEach((select) => select.addEventListener('change', async () => {
           const item = media.find((entry) => entry.id === select.closest('.media-item').dataset.mediaId);
           const updated = await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artifactType: select.value }) });
+          const groupId = item.artifactGroupId || item.id;
+          media.filter((entry) => (entry.artifactGroupId || entry.id) === groupId).forEach((entry) => { entry.artifactType = updated.artifactType; });
           Object.assign(item, updated); redraw();
         }));
         container.querySelectorAll('.artifact-notes').forEach((button) => button.addEventListener('click', async () => {
@@ -101,6 +191,8 @@
           const artifactNotes = prompt('Notes about this artifact', item.artifactNotes || '');
           if (artifactNotes === null) return;
           const updated = await fetchJson(`/api/media/${item.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artifactNotes }) });
+          const groupId = item.artifactGroupId || item.id;
+          media.filter((entry) => (entry.artifactGroupId || entry.id) === groupId).forEach((entry) => { entry.artifactNotes = updated.artifactNotes; });
           Object.assign(item, updated); redraw();
         }));
         container.querySelectorAll('.artifact-compare').forEach((button) => button.addEventListener('click', () => {

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- A single artifact can contain front, back and named detail photos while remaining one listing throughout the archive.
+- Artifact photos can be added, replaced and framed independently, with a full-screen flip viewer, view navigation and original downloads.
+
+### Changed
+
+- Artifact groups, view labels, cover sides and transparent cutouts are preserved in peer-sync manifests and local peer copies.
+
 ## 0.3.0 — 2026-08-23
 
 ### Added
