@@ -17,5 +17,6 @@ test('Docker builds native SQLite for its pinned runtime', () => {
   assert.match(dockerfile, /find node_modules\/better-sqlite3\/prebuilds -type f -delete/);
   assert.match(dockerfile, /npm prune --omit=dev/);
   assert.match(dockerfile, /new Database\(':memory:'\)/);
+  assert.match(dockerfile, /NUMBA_CACHE_DIR=\/tmp\/numba-cache/);
   assert.match(dockerignore, /^node_modules$/m);
 });

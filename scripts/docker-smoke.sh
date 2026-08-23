@@ -55,6 +55,8 @@ docker volume create "$SOURCE_VOLUME" > /dev/null
 docker volume create "$TARGET_VOLUME" > /dev/null
 start_instance "$SOURCE_NAME" "$SOURCE_VOLUME" 3000 "$SOURCE_ORIGIN" source-setup-token
 wait_for_health "$SOURCE_ORIGIN" "$SOURCE_NAME"
+docker exec "$SOURCE_NAME" /opt/rembg/bin/python -c \
+  "from pymatting.util.kdtree import knn; import numba; assert numba.config.CACHE_DIR == '/tmp/numba-cache'"
 
 curl --fail --silent --show-error --cookie-jar "$WORK/source.cookies" \
   --header "Origin: ${SOURCE_ORIGIN}" --header 'Content-Type: application/json' \

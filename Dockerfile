@@ -6,6 +6,7 @@ ENV NODE_ENV=production \
     MASTER_LIST_DATA_DIR=/data \
     REMBG_COMMAND=/opt/rembg/bin/rembg \
     U2NET_HOME=/data/.u2net \
+    NUMBA_CACHE_DIR=/tmp/numba-cache \
     PYTHONUNBUFFERED=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.8 — 2026-08-23
+
+### Fixed
+
+- Docker background removal now gives Numba a writable cache directory under the container's `/tmp` tmpfs, preventing pymatting failures on read-only deployments.
+- The read-only Docker smoke test imports the background-removal dependency path before an image can be released.
+
 ## 0.2.7 — 2026-08-23
 
 ### Fixed
