@@ -7,6 +7,7 @@
 - A single artifact can contain front, back and named detail photos while remaining one listing throughout the archive.
 - Artifact photos can be added, replaced and framed independently, with a full-screen flip viewer, view navigation and original downloads.
 - Existing-show editing includes a guided artifact creator with shared metadata, a live multi-view preview and optional per-photo background removal.
+- Every artifact has a dedicated detail URL with its complete photo viewer, show context, notes, editing access and original downloads.
 
 ### Changed
 

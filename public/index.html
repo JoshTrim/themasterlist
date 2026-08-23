@@ -19,7 +19,7 @@
       body[data-page] main > section { display: none; }
       body[data-page="home"] #home-page, body[data-page="overview"] #overview-page,
       body[data-page="artists"] #artists-page, body[data-page="venues"] #venues-page,
-      body[data-page="timeline"] #timeline-page, body[data-page="artifacts"] #artifacts-page,
+      body[data-page="timeline"] #timeline-page, body[data-page="artifacts"] #artifacts-page, body[data-page="artifact"] #artifact-page,
       body[data-page="search"] #search-page, body[data-page="health"] #health-page,
       body[data-page="maintenance"] #maintenance-page, body[data-page="activity"] #activity-page, body[data-page="conflicts"] #conflicts-page,
       body[data-page="api-limits"] #api-limits-page, body[data-page="add"] #add-page,
@@ -31,11 +31,11 @@
       body[data-page="venue-edit"] #venue-edit-page, body[data-page="edit"] #edit-page,
       body[data-page="map"] #map-page, body[data-page="account"] #account-page { display: block; }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=css-split-18" />
+    <link rel="stylesheet" href="/styles.css?v=css-split-19" />
   </head>
   <body>
     <script>
-      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/artists': 'artists', '/venues': 'venues', '/timeline': 'timeline', '/artifacts': 'artifacts', '/search': 'search', '/health': 'health', '/maintenance': 'maintenance', '/activity': 'activity', '/conflicts': 'conflicts', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/artist/edit': 'artist-edit', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
+      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/artists': 'artists', '/venues': 'venues', '/timeline': 'timeline', '/artifacts': 'artifacts', '/artifact': 'artifact', '/search': 'search', '/health': 'health', '/maintenance': 'maintenance', '/activity': 'activity', '/conflicts': 'conflicts', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/artist/edit': 'artist-edit', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
     </script>
     <div class="crt-overlay" aria-hidden="true">
       <span class="crt-noise"></span>
@@ -127,6 +127,30 @@
         <p class="artifact-archive-summary" id="artifacts-summary"></p>
         <div class="artifact-archive-grid" id="artifacts-grid"></div>
         <p class="empty-state" id="artifacts-empty" hidden>No artifacts match this view.</p>
+      </section>
+
+      <section class="artifact-page" id="artifact-page" aria-labelledby="artifact-detail-title">
+        <a class="artifact-detail-back" href="/artifacts">← Artifact archive</a>
+        <div class="artifact-detail" id="artifact-detail" hidden>
+          <div class="artifact-detail-viewer">
+            <div class="artifact-detail-stage"><img id="artifact-detail-image" alt="" /></div>
+            <div class="artifact-detail-views" id="artifact-detail-views" aria-label="Artifact photos"></div>
+            <div class="artifact-detail-controls">
+              <button type="button" id="artifact-detail-previous">← Previous</button>
+              <button type="button" id="artifact-detail-flip">↻ Flip</button>
+              <button type="button" id="artifact-detail-next">Next →</button>
+              <button type="button" id="artifact-detail-fullscreen">⛶ Full screen</button>
+            </div>
+          </div>
+          <aside class="artifact-detail-copy">
+            <span class="artifact-type-badge" id="artifact-detail-type"></span>
+            <h1 id="artifact-detail-title"></h1>
+            <p class="artifact-detail-notes" id="artifact-detail-notes"></p>
+            <dl class="artifact-detail-facts"><div><dt>Show</dt><dd><a id="artifact-detail-show" href="#"><strong id="artifact-detail-artist"></strong><span id="artifact-detail-show-meta"></span></a></dd></div><div><dt>Archive</dt><dd id="artifact-detail-view-count"></dd></div></dl>
+            <div class="artifact-detail-actions"><a class="button button-secondary" id="artifact-detail-edit" href="#">Edit show</a><a class="button button-secondary" id="artifact-detail-download" href="#" download>Download original</a></div>
+          </aside>
+        </div>
+        <div class="artifact-detail-missing" id="artifact-detail-missing" hidden><p class="eyebrow">Artifact not found</p><h1>This keepsake is not in the archive.</h1><p>It may have been removed, or the link may belong to another instance.</p><a class="button" href="/artifacts">Return to artifacts</a></div>
       </section>
 
       <section class="overview-page" id="overview-page" aria-labelledby="overview-heading"><div class="section-heading"><p class="eyebrow">05 / Archive intelligence</p><h1 id="overview-heading">Overview</h1><p class="lede">A snapshot of your live-music life—and a way back into it.</p></div><section class="overview-discovery" id="overview-discovery" aria-label="Archive discovery"></section><div class="dashboard-stats" id="dashboard-stats"></div><section class="genre-stats" id="genre-stats" aria-labelledby="genre-stats-heading"><div class="genre-stats-heading"><div><p class="eyebrow">Archive sound</p><h2 id="genre-stats-heading">Shows by genre</h2></div><p id="genre-stats-note">Loading artist genres…</p></div><div id="genre-stats-chart"></div></section></section>
@@ -405,7 +429,8 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/directory-ui.js?v=frontend-modules-7"></script>
     <script src="/lib/archive-search.js?v=frontend-modules-8"></script>
     <script src="/lib/timeline-page.js?v=frontend-modules-9"></script>
-    <script src="/lib/artifacts-page.js?v=frontend-modules-70"></script>
+    <script src="/lib/artifacts-page.js?v=frontend-modules-74"></script>
+    <script src="/lib/artifact-detail-page.js?v=frontend-modules-74"></script>
     <script src="/lib/overview-page.js?v=frontend-modules-56"></script>
     <script src="/lib/entity-profile-page.js?v=frontend-modules-55"></script>
     <script src="/lib/metadata-editor.js?v=frontend-modules-59"></script>
@@ -430,6 +455,6 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/mobile-upload-controller.js?v=frontend-modules-32"></script>
     <script src="/lib/media-workspace-controller.js?v=frontend-modules-70"></script>
     <script src="/lib/pwa.js?v=frontend-modules-2"></script>
-    <script src="/app.js?v=frontend-modules-73"></script>
+    <script src="/app.js?v=frontend-modules-74"></script>
   </body>
 </html>

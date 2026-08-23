@@ -5,7 +5,7 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function shellRouterFactory() {
   const routeSections = Object.freeze({
     home: ['home-page'], overview: ['overview-page'], artists: ['artists-page'], venues: ['venues-page'],
-    timeline: ['timeline-page'], artifacts: ['artifacts-page'], search: ['search-page'], health: ['health-page'], maintenance: ['maintenance-page'],
+    timeline: ['timeline-page'], artifacts: ['artifacts-page'], artifact: ['artifact-page'], search: ['search-page'], health: ['health-page'], maintenance: ['maintenance-page'],
     activity: ['activity-page'], conflicts: ['conflicts-page'], 'api-limits': ['api-limits-page'], add: ['add-page'],
     shows: ['shows-archive'], shared: ['shows-archive'], login: ['shows-shared'], artist: ['artist-page'],
     'artist-edit': ['artist-edit-page'], show: ['show-page'], playback: ['show-page'], city: ['city-page'],

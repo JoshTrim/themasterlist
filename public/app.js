@@ -34,6 +34,7 @@ const directoryUi = window.MasterListDirectoryUi;
 const archiveSearchModule = window.MasterListArchiveSearch;
 const timelinePageModule = window.MasterListTimelinePage;
 const artifactsPageModule = window.MasterListArtifactsPage;
+const artifactDetailPageModule = window.MasterListArtifactDetailPage;
 const overviewPageModule = window.MasterListOverviewPage;
 const entityProfilePageModule = window.MasterListEntityProfilePage;
 const metadataEditorModule = window.MasterListMetadataEditor;
@@ -108,6 +109,7 @@ const artifactsTypeFilter = document.querySelector('#artifacts-type-filter');
 const artifactsSummary = document.querySelector('#artifacts-summary');
 const artifactsGrid = document.querySelector('#artifacts-grid');
 const artifactsEmpty = document.querySelector('#artifacts-empty');
+const artifactDetail = document.querySelector('#artifact-detail');
 const apiLimitsGrid = document.querySelector('#api-limits-grid');
 const apiLimitsNote = document.querySelector('#api-limits-note');
 const apiUsageDetail = document.querySelector('#api-usage-detail');
@@ -782,6 +784,20 @@ const artifactsPageController = artifactsPageModule.createController({
 });
 function renderArtifacts() { return artifactsPageController.render(); }
 
+const artifactDetailPageController = artifactDetailPageModule.createController({
+  page, getShows: () => [...gigs, ...remoteSharedArchiveShows()], artifactId: () => new URLSearchParams(window.location.search).get('id'),
+  escapeHtml, formatGigDate, openArtifact: openMediaLightbox,
+  elements: {
+    content: artifactDetail, missing: document.querySelector('#artifact-detail-missing'), image: document.querySelector('#artifact-detail-image'),
+    viewTabs: document.querySelector('#artifact-detail-views'), previous: document.querySelector('#artifact-detail-previous'),
+    flip: document.querySelector('#artifact-detail-flip'), next: document.querySelector('#artifact-detail-next'), fullscreen: document.querySelector('#artifact-detail-fullscreen'),
+    type: document.querySelector('#artifact-detail-type'), title: document.querySelector('#artifact-detail-title'), notes: document.querySelector('#artifact-detail-notes'),
+    artist: document.querySelector('#artifact-detail-artist'), show: document.querySelector('#artifact-detail-show'), showMeta: document.querySelector('#artifact-detail-show-meta'),
+    viewCount: document.querySelector('#artifact-detail-view-count'), edit: document.querySelector('#artifact-detail-edit'), download: document.querySelector('#artifact-detail-download')
+  }
+});
+function renderArtifact() { return artifactDetailPageController.render(); }
+
 const cityPageController = locationsPageModule.createCityController({
   page, window, getGigs: () => gigs, escapeHtml,
   elements: { heading: document.querySelector('#city-heading'), subtitle: document.querySelector('#city-subtitle'), venues: document.querySelector('#city-venues') }
@@ -809,7 +825,7 @@ function setupExportButtons(exports, gig) { return playlistExporter.setupButtons
 const pageControllers = pageControllersModule.createRegistry({
   window, providerName, setMessage,
   actions: {
-    renderDashboard: renderDashboardStats, renderDirectories: renderEntityDirectories, renderTimeline, renderArtifacts, renderSearch: renderGlobalSearch,
+    renderDashboard: renderDashboardStats, renderDirectories: renderEntityDirectories, renderTimeline, renderArtifacts, renderArtifact, renderSearch: renderGlobalSearch,
     renderHealth: renderArchiveHealth, renderApiLimits, renderMaintenance, renderActivity, renderConflicts,
     renderAddAttendees: () => renderAttendeePicker(addAttendeePicker, []), populateAutofill: populateShowAutofill,
     populateYears: populateYearFilter, renderGigs, renderArtist: renderArtistPage, renderArtistEdit: renderArtistEditPage,
@@ -831,4 +847,5 @@ function initializeApp() { return appBootstrap.initialize(); }
 initializeApp().catch((error) => {
   setMessage(error.message, true);
   if (page === 'artifacts' && artifactsSummary) artifactsSummary.textContent = `Could not load artifacts: ${error.message}`;
+  if (page === 'artifact' && document.querySelector('#artifact-detail-missing')) document.querySelector('#artifact-detail-missing').hidden = false;
 });

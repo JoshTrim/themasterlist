@@ -68,6 +68,7 @@ describe('route-aware frontend runtime', () => {
     assert.deepEqual(requirementsFor('show'), ['gigs', 'integrations', 'sharedShows']);
     assert.deepEqual(requirementsFor('playback'), ['gigs', 'integrations', 'sharedShows']);
     assert.deepEqual(requirementsFor('artifacts'), ['gigs', 'sharedShows']);
+    assert.deepEqual(requirementsFor('artifact'), ['gigs', 'sharedShows']);
     assert.deepEqual(requirementsFor('account'), ['gigs', 'profiles', 'sharedShows', 'peers']);
   });
 

@@ -37,6 +37,7 @@ test('artifact archive renders metadata and filters without losing show context'
   assert.match(elements.grid.innerHTML, /Bought after the encore/);
   assert.match(elements.grid.innerHTML, /&lt;Artist&gt;/);
   assert.match(elements.grid.innerHTML, /is-cutout/);
+  assert.match(elements.grid.innerHTML, /\/artifact\?id=shirt/);
   type.value = 'ticket'; type.listeners.change();
   assert.doesNotMatch(elements.grid.innerHTML, /Tour shirt/);
   assert.match(elements.grid.innerHTML, /Ticket/);

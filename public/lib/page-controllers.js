@@ -13,6 +13,7 @@
       venues: actions.renderDirectories,
       timeline: actions.renderTimeline,
       artifacts: actions.renderArtifacts,
+      artifact: actions.renderArtifact,
       search: actions.renderSearch,
       health: actions.renderHealth,
       'api-limits': actions.renderApiLimits,
