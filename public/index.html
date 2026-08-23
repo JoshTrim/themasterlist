@@ -31,7 +31,7 @@
       body[data-page="venue-edit"] #venue-edit-page, body[data-page="edit"] #edit-page,
       body[data-page="map"] #map-page, body[data-page="account"] #account-page { display: block; }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=css-split-17" />
+    <link rel="stylesheet" href="/styles.css?v=css-split-18" />
   </head>
   <body>
     <script>
@@ -261,12 +261,22 @@ docker compose ps</code></pre></div></details>
             <div class="edit-form-panel-heading"><div><p class="eyebrow">Add media</p><h2 id="edit-media-sources-heading">Attach to this show</h2></div><span>02</span></div>
             <div class="edit-upload-grid">
               <label class="media-upload"><span class="edit-field-label">Photos and videos</span><input id="edit-media-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>Choose one or more files. Uploads queue one at a time on mobile.</small><div class="media-upload-status" aria-live="polite" hidden></div></label>
-              <label class="media-upload"><span class="edit-field-label">Artifacts</span><input id="edit-artifact-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple /><small>Photos of merch, tickets, physical setlists and other keepsakes. These stay separate from playback media.</small><div class="media-upload-status" aria-live="polite" hidden></div><span class="artifact-message" id="edit-artifact-message" role="status"></span></label>
               <label class="media-upload"><span class="edit-field-label">YouTube video</span><input id="edit-youtube-media-input" type="url" placeholder="https://youtube.com/watch?v=…" /><small>Paste a link to add somebody else's footage.</small></label>
             </div>
           </section>
           <div class="duplicate-warning" id="edit-duplicate-warning" hidden></div><section class="supporting-acts-editor edit-supporting-acts" id="edit-supporting-acts"><div class="supporting-acts-heading"><div><p class="eyebrow">Line-up</p><h2>Opening acts &amp; co-headliners</h2></div><div><button class="button button-secondary" data-find-acts type="button">Find same-night setlists</button><button class="button button-secondary" data-add-act type="button">+ Add manually</button></div></div><div data-acts-list></div><div class="supporting-acts-results" data-acts-results hidden></div></section><div class="edit-setlist"><p class="eyebrow">Headliner setlist</p><div id="edit-setlist-tracks"></div><button class="button button-secondary" id="add-edit-track" type="button">+ Add track</button></div><div class="form-actions"><button class="button" type="submit">Save changes</button></div><p class="form-message" id="edit-message" role="status"></p>
         </form>
+        <section class="artifact-create" aria-labelledby="artifact-create-heading">
+          <div class="media-workspace-heading"><div><p class="eyebrow">What came home</p><h2 id="artifact-create-heading">New artifact</h2><p>Create one keepsake with front, back and optional detail photos.</p></div></div>
+          <form id="artifact-create-form">
+            <div class="artifact-create-fields"><label>Title<input id="artifact-create-title" required maxlength="160" placeholder="Tour shirt" /></label><label>Type<select id="artifact-create-type"><option value="merch">Merch</option><option value="ticket">Ticket</option><option value="setlist">Physical setlist</option><option value="poster">Poster</option><option value="memorabilia">Memorabilia</option></select></label><label class="artifact-create-notes">Notes<textarea id="artifact-create-notes" rows="3" placeholder="Size, edition, where it came from…"></textarea></label></div>
+            <div class="artifact-create-primary-views"><label class="artifact-create-file"><span>Front photo <strong>Required</strong></span><input id="artifact-create-front" type="file" accept="image/jpeg,image/png,image/gif,image/webp" required /></label><label class="artifact-create-file"><span>Back photo <small>Optional</small></span><input id="artifact-create-back" type="file" accept="image/jpeg,image/png,image/gif,image/webp" /></label></div>
+            <div class="artifact-create-details-heading"><div><strong>Detail photos</strong><small>Add labels such as sleeve print, tag or signature.</small></div><button class="button button-secondary" id="artifact-create-add-detail" type="button">+ Add detail</button></div><div class="artifact-create-details" id="artifact-create-details"></div>
+            <label class="artifact-create-background"><input id="artifact-create-remove-background" type="checkbox" /><span><strong>Remove backgrounds after upload</strong><small>Runs separately for each photo and keeps every original.</small></span></label>
+            <aside class="artifact-create-preview" id="artifact-create-preview" aria-label="Artifact preview"></aside>
+            <div class="artifact-create-actions"><button class="button" id="artifact-create-submit" type="submit">Create artifact</button><p class="artifact-message" id="artifact-create-message" role="status"></p></div>
+          </form>
+        </section>
         <section class="media-workspace" aria-labelledby="media-workspace-heading"><div class="media-workspace-heading"><div><p class="eyebrow">Attached media</p><h2 id="media-workspace-heading">Media processing</h2><p>Track uploads, playback copies and song detection before they enter the show memory.</p></div><button class="button button-secondary" id="media-workspace-refresh" type="button">Refresh status</button></div><div class="media-workspace-stats" id="media-workspace-stats" aria-label="Media processing summary"></div><div class="media-workspace-filters" id="media-workspace-filters" aria-label="Filter attached media"><button type="button" data-media-filter="all" class="active">All</button><button type="button" data-media-filter="processing">Processing</button><button type="button" data-media-filter="failed">Needs attention</button><button type="button" data-media-filter="unassigned">Unassigned</button><button type="button" data-media-filter="ready">Ready</button></div><p class="empty-state media-workspace-empty" id="media-workspace-empty" hidden>No media matches this filter.</p><div class="media-gallery edit-gallery" id="edit-gallery"></div></section>
         <section class="playback-editor" aria-labelledby="playback-editor-heading"><div class="media-workspace-heading"><div><p class="eyebrow">Whole-set player</p><h2 id="playback-editor-heading">Playback plan</h2><p>Choose one source per track and set non-destructive in/out points in seconds. Missing tracks remain visible and will be skipped automatically.</p></div><div class="playback-editor-actions"><button class="button button-secondary" id="auto-build-playback-plan" type="button">✦ Suggest plan</button><button class="button" id="save-playback-plan" type="button">Save playback plan</button></div></div><div class="playback-editor-suggestions" id="playback-editor-suggestions" role="status"></div><div class="playback-editor-health" id="playback-editor-health" role="status"></div><div class="playback-editor-list" id="playback-editor-list"></div><p class="form-message" id="playback-editor-message" role="status"></p></section>
       </section>
@@ -384,7 +394,8 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/theatre.js?v=frontend-modules-3"></script>
     <script src="/lib/theatre-controller.js?v=frontend-modules-8"></script>
     <script src="/lib/media-ui.js?v=frontend-modules-4"></script>
-    <script src="/lib/media-uploader.js?v=frontend-modules-70"></script>
+    <script src="/lib/media-uploader.js?v=frontend-modules-73"></script>
+    <script src="/lib/artifact-creator.js?v=frontend-modules-73"></script>
     <script src="/lib/media-gallery.js?v=frontend-modules-70"></script>
     <script src="/lib/upload-queue.js?v=frontend-modules-4"></script>
     <script src="/lib/media-jobs.js?v=frontend-modules-4"></script>
@@ -419,6 +430,6 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/mobile-upload-controller.js?v=frontend-modules-32"></script>
     <script src="/lib/media-workspace-controller.js?v=frontend-modules-70"></script>
     <script src="/lib/pwa.js?v=frontend-modules-2"></script>
-    <script src="/app.js?v=frontend-modules-72"></script>
+    <script src="/app.js?v=frontend-modules-73"></script>
   </body>
 </html>

@@ -13,11 +13,12 @@ test('mobile uploader sends files serially in resumable chunks with artifact ide
     updateJob: (id, update) => jobs.push({ id, ...update }), isMobile: () => true, sleep: async () => {}, now: () => 1, random: () => .5
   });
   const files = ['one.jpg', 'two.jpg'].map((name) => ({ name, type: 'image/jpeg', size: 10, slice: () => ({}) }));
-  await uploader.upload('gig', files, () => {}, 'artifact');
+  const uploaded = await uploader.upload('gig', files, () => {}, 'artifact');
   assert.equal(maximumActive, 1); assert.equal(requests.length, 2);
   assert.ok(requests.every((request) => request.url === '/api/gigs/gig/artifacts/chunk'));
   assert.ok(requests.every((request) => request.headers['X-Media-Category'] === 'artifact'));
   assert.equal(jobs.filter((job) => job.status === 'complete').length, 2);
+  assert.equal(uploaded.length, 2);
 });
 
 test('uploader chooses stable endpoint names', () => {

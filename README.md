@@ -14,7 +14,7 @@ The Master List can find setlists through setlist.fm, export them as playlists, 
 
 - Record attended shows, memories, ratings and favourites.
 - Fetch and edit setlists, album metadata, artists and venues.
-- Upload photos, large videos and grouped artifacts such as merch, tickets or paper setlists, including front, back and detail views.
+- Upload photos, large videos and grouped artifacts such as merch, tickets or paper setlists, including a guided front, back and named-detail workflow with live preview.
 - Build editable whole-set playback with chapters, fallbacks and theatre mode.
 - Export setlists to Spotify, YouTube and Apple Music.
 - Explore artists, venues, maps, timelines and archive statistics.

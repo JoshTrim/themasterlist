@@ -19,7 +19,7 @@
     async function uploadChunked(gigId, file, jobId, category, onProgress, options) {
       const uploadPath = endpoint(gigId, category); const uploadId = randomUUID(); const controller = new AbortController();
       updateJob(jobId, { cancel: () => controller.abort() });
-      let offset = 0;
+      let offset = 0; let uploaded = null;
       while (offset < file.size) {
         const chunk = file.slice(offset, offset + chunkSize); let attempt = 0;
         while (true) {
@@ -29,6 +29,7 @@
             if (response.status === 409 && Number.isFinite(Number(body.offset))) { offset = Math.max(0, Math.min(file.size, Number(body.offset))); continue; }
             if (!response.ok) throw new Error(body.error || `Chunk failed (HTTP ${response.status})`);
             if (body.complete && category === 'artifact' && body.media?.category !== 'artifact') throw new Error('The server did not save this as an artifact. Restart the server and retry.');
+            if (body.complete) uploaded = body.media ? { ...body.media, duplicate: Boolean(body.duplicate) } : body;
             offset = body.complete ? file.size : Math.max(offset, Number(body.offset) || 0);
             updateJob(jobId, { progress: offset / file.size * 100 }); onProgress(file, offset / file.size); break;
           } catch (error) {
@@ -38,6 +39,7 @@
           }
         }
       }
+      return uploaded;
     }
 
     function uploadDirect(gigId, file, jobId, category, onProgress, options) {
@@ -52,18 +54,22 @@
     }
 
     async function uploadNow(gigId, files, onProgress = () => {}, category = 'show', options = {}) {
-      const queue = [...files]; const mobile = isMobile();
+      const queue = [...files]; const mobile = isMobile(); const uploaded = [];
       const worker = async () => {
         while (queue.length) {
           const file = queue.shift(); const jobId = `${now()}-${random()}`;
           updateJob(jobId, { id: jobId, type: 'Uploading', name: file.name, status: 'running', progress: 0 });
           try {
-            if (mobile) await uploadChunked(gigId, file, jobId, category, onProgress, options); else await uploadDirect(gigId, file, jobId, category, onProgress, options);
+            const result = mobile
+              ? await uploadChunked(gigId, file, jobId, category, onProgress, options)
+              : await uploadDirect(gigId, file, jobId, category, onProgress, options);
+            uploaded.push(result?.media ? { ...result.media, duplicate: Boolean(result.duplicate) } : result);
             updateJob(jobId, { status: 'complete', progress: 100 });
           } catch (error) { updateJob(jobId, { status: 'error', error: error.message }); throw error; }
         }
       };
       await Promise.all(Array.from({ length: mobile ? 1 : 2 }, () => worker()));
+      return uploaded.filter(Boolean);
     }
 
     function upload(gigId, files, onProgress = () => {}, category = 'show', options = {}) {

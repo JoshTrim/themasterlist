@@ -23,6 +23,7 @@ const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
 const mediaUploaderModule = window.MasterListMediaUploader;
+const artifactCreatorModule = window.MasterListArtifactCreator;
 const mediaGalleryModule = window.MasterListMediaGallery;
 const uploadQueue = window.MasterListUploadQueue;
 const mediaJobs = window.MasterListMediaJobs;
@@ -236,8 +237,7 @@ const artistComparison = document.querySelector('#artist-comparison');
 const editForm = document.querySelector('#edit-form');
 const editMessage = document.querySelector('#edit-message');
 const editMediaInput = document.querySelector('#edit-media-input');
-const editArtifactInput = document.querySelector('#edit-artifact-input');
-const editArtifactMessage = document.querySelector('#edit-artifact-message');
+const artifactCreateForm = document.querySelector('#artifact-create-form');
 const addAttendeePicker = document.querySelector('#add-attendee-picker');
 let editAttendeePicker = document.querySelector('#edit-attendee-picker');
 const pendingMedia = new WeakMap();
@@ -252,10 +252,8 @@ const mobileUploadController = mobileUploadControllerModule.createController({
 mobileUploadController.bind();
 mobileUploadController.setup(mediaInput);
 mobileUploadController.setup(editMediaInput);
-mobileUploadController.setup(editArtifactInput, 'artifact');
 mobileUploadController.addClearButton(mediaInput);
 mobileUploadController.addClearButton(editMediaInput);
-mobileUploadController.addClearButton(editArtifactInput);
 function mobileUploadStateFor(input, gigId = '', category = 'show') { return mobileUploadController.stateFor(input, gigId, category); }
 function startMobileUploadQueue(input, gigId, onUploaded, onDrained, category = 'show') { return mobileUploadController.start(input, gigId, onUploaded, onDrained, category); }
 
@@ -611,14 +609,23 @@ const editMediaUploadController = editMediaUploadModule.createController({
   pollRecognition: pollMediaRecognition, renderWorkspace: renderEditMediaWorkspace,
   uploadFiles: uploadGigMedia, fetchJson
 });
-const editArtifactUploadController = editMediaUploadModule.createController({
-  isMobile: () => isMobileUpload, input: editArtifactInput, message: editArtifactMessage, pendingFiles: pendingMedia,
-  mobileState: mobileUploadStateFor, startMobileQueue: startMobileUploadQueue,
-  renderWorkspace: renderEditMediaWorkspace, uploadFiles: uploadGigMedia, fetchJson, category: 'artifact'
+const artifactCreatorController = artifactCreatorModule.createController({
+  document, uploadFiles: uploadGigMedia, fetchJson, mediaJobs, updateJob,
+  refreshWorkspace: async (gig) => {
+    const media = await fetchJson(`/api/gigs/${gig.id}/media`); gig.media = media; renderEditMediaWorkspace(gig, media); renderGigs(); return media;
+  },
+  elements: {
+    form: artifactCreateForm, title: document.querySelector('#artifact-create-title'), type: document.querySelector('#artifact-create-type'),
+    notes: document.querySelector('#artifact-create-notes'), front: document.querySelector('#artifact-create-front'), back: document.querySelector('#artifact-create-back'),
+    addDetail: document.querySelector('#artifact-create-add-detail'), details: document.querySelector('#artifact-create-details'),
+    preview: document.querySelector('#artifact-create-preview'), removeBackground: document.querySelector('#artifact-create-remove-background'),
+    submit: document.querySelector('#artifact-create-submit'), message: document.querySelector('#artifact-create-message')
+  }
 });
+artifactCreatorController.bind();
 function setupEditUploads(gig) {
   editMediaUploadController.setup(gig);
-  editArtifactUploadController.setup(gig);
+  artifactCreatorController.setup(gig);
 }
 const editShowPageController = editShowPageModule.createController({
   page, gigId: editGigId, FormDataClass: FormData, fetchJson, editor: showEditor, workflow: showFormController, trackEditor: editTrackListController,
