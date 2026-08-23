@@ -99,6 +99,21 @@ test('artifact background removal publishes the cutout only after processing com
   app.database.close();
 });
 
+test('artifact metadata and framing updates are validated and persisted', async () => {
+  const app = fixture();
+  app.database.prepare("INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, category, size, created_at) VALUES ('artifact', 'gig', 'shirt.jpg', 'image/jpeg', 'Shirt', 'artifact', 5, 'now')").run();
+  const updated = response();
+  await app.handle({ method: 'PATCH', headers: {}, body: { artifactType: 'merch', artifactNotes: 'Tour shirt', artifactCropX: 125, artifactCropY: -5, artifactZoom: 2.25 } }, updated, new URL('http://localhost/api/media/artifact'));
+  assert.equal(updated.status, 200);
+  assert.deepEqual(app.database.prepare('SELECT artifact_type, artifact_notes, artifact_crop_x, artifact_crop_y, artifact_zoom FROM gig_media WHERE id = ?').get('artifact'), {
+    artifact_type: 'merch', artifact_notes: 'Tour shirt', artifact_crop_x: 100, artifact_crop_y: 0, artifact_zoom: 2.25
+  });
+  const invalid = response();
+  await app.handle({ method: 'PATCH', headers: {}, body: { artifactType: 'bootleg' } }, invalid, new URL('http://localhost/api/media/artifact'));
+  assert.equal(invalid.status, 400);
+  app.database.close();
+});
+
 test('deleting media removes every associated file and database record', async () => {
   const app = fixture();
   app.database.prepare("UPDATE gig_media SET background_filename = 'cutout.png' WHERE id = 'video'").run();

@@ -23,3 +23,15 @@ test('private storage removes group and world access from existing archive files
   assert.equal(fs.statSync(path.join(backups, 'snapshot.sqlite')).mode & 0o777, 0o600);
   rmSync(root, { recursive: true, force: true });
 });
+
+test('private storage secures media and backups mounted outside the data directory', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'master-list-data-'));
+  const media = mkdtempSync(path.join(tmpdir(), 'master-list-media-'));
+  const backups = mkdtempSync(path.join(tmpdir(), 'master-list-backups-'));
+  fs.writeFileSync(path.join(media, 'artifact.png'), 'private', { mode: 0o644 });
+  fs.writeFileSync(path.join(backups, 'scheduled.sqlite'), 'private', { mode: 0o644 });
+  secureStorage({ fs, path, dataDir: root, mediaDir: media, backupDir: backups });
+  assert.equal(fs.statSync(path.join(media, 'artifact.png')).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(path.join(backups, 'scheduled.sqlite')).mode & 0o777, 0o600);
+  for (const directory of [root, media, backups]) rmSync(directory, { recursive: true, force: true });
+});

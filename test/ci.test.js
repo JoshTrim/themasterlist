@@ -23,6 +23,8 @@ test('CI owns full regressions, dependency auditing and a two-instance Docker sm
   const smoke = read('scripts/docker-smoke.sh');
   assert.match(smoke, /api\/healthz/);
   assert.match(smoke, /--read-only/);
+  assert.match(smoke, /target=\/media/);
+  assert.match(smoke, /target=\/backups/);
   assert.match(smoke, /pymatting\.util\.kdtree/);
   assert.match(smoke, /numba\.config\.CACHE_DIR/);
   assert.match(smoke, /api\/auth\/setup/);
@@ -57,4 +59,6 @@ test('local commits stay listener-free and Compose knows the published image', (
   assert.match(hook, /npm run test:unit/);
   assert.doesNotMatch(hook, /^npm test$/m);
   assert.match(compose, /image: ghcr\.io\/joshtrim\/themasterlist:\$\{MASTER_LIST_VERSION:-latest\}/);
+  assert.match(compose, /MASTER_LIST_MEDIA_PATH:-\.\/data\/media/);
+  assert.match(compose, /MASTER_LIST_BACKUP_PATH:-\.\/data\/backups/);
 });

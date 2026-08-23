@@ -12,6 +12,7 @@
       artists: actions.renderDirectories,
       venues: actions.renderDirectories,
       timeline: actions.renderTimeline,
+      artifacts: actions.renderArtifacts,
       search: actions.renderSearch,
       health: actions.renderHealth,
       'api-limits': actions.renderApiLimits,

@@ -18,12 +18,16 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       MASTER_LIST_DATA_DIR: /data
+      MASTER_LIST_MEDIA_DIR: /media
+      MASTER_LIST_BACKUP_DIR: /backups
       APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:3000}
       OWNER_SETUP_TOKEN: ${OWNER_SETUP_TOKEN:-}
       CONNECTIONS_ENCRYPTION_KEY: ${CONNECTIONS_ENCRYPTION_KEY:-}
       CONNECTIONS_ENCRYPTION_KEY_PREVIOUS: ${CONNECTIONS_ENCRYPTION_KEY_PREVIOUS:-}
     volumes:
       - ./data:/data
+      - ${MASTER_LIST_MEDIA_PATH:-./data/media}:/media
+      - ${MASTER_LIST_BACKUP_PATH:-./data/backups}:/backups
     tmpfs:
       - /tmp:size=2G,mode=1777
     healthcheck:

@@ -4,6 +4,8 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
     MASTER_LIST_DATA_DIR=/data \
+    MASTER_LIST_MEDIA_DIR=/media \
+    MASTER_LIST_BACKUP_DIR=/backups \
     REMBG_COMMAND=/opt/rembg/bin/rembg \
     U2NET_HOME=/data/.u2net \
     NUMBA_CACHE_DIR=/tmp/numba-cache \
@@ -38,11 +40,11 @@ COPY server.js ./
 COPY lib ./lib
 COPY public ./public
 
-RUN mkdir -p /data/media /data/backups && chown -R node:node /app /data /opt/rembg
+RUN mkdir -p /data /media /backups && chown -R node:node /app /data /media /backups /opt/rembg
 
 USER node
 EXPOSE 3000
-VOLUME ["/data"]
+VOLUME ["/data", "/media", "/backups"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3000/api/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"

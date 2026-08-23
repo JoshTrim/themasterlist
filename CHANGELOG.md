@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.3.0 — 2026-08-23
+
+### Added
+
+- Artifacts now carry a type, title, notes and persisted crop/focus settings, with original-versus-cutout previews and background-removal controls on existing shows.
+- A searchable Artifacts page collects merch, tickets, physical setlists, posters and memorabilia across the archive.
+- Docker deployments can mount database/config state, large media and SQLite snapshots at separate host paths, including a mounted NFS or SMB backup destination.
+
+### Changed
+
+- Interrupted playback encodes, AudD recognition and artifact cutout jobs automatically resume after a restart when their original files are still available.
+- Maintenance reports the resolved media and backup locations and warns when the snapshot destination is not writable.
+- Full-instance imports safely cross filesystem boundaries when media and backup mounts live on different devices.
+- Peer sync includes artifact metadata, framing and transparent cutouts in shared-show manifests and local copies.
+
 ## 0.2.8 — 2026-08-23
 
 ### Fixed

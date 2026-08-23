@@ -27,7 +27,7 @@ const { createMediaUploadRoutes } = require('./lib/routes/media-uploads');
 const { createMediaMutationRoutes } = require('./lib/routes/media-mutations');
 const { createMediaEncoding } = require('./lib/media-encoding');
 const { createMediaRecognition } = require('./lib/media-recognition');
-const { recoverMediaWork } = require('./lib/media-recovery');
+const { recoverMediaWork, resumeInterruptedMediaWork } = require('./lib/media-recovery');
 const { createPeerIdentity } = require('./lib/peer-identity');
 const { createPeerTransport } = require('./lib/peer-transport');
 const { createPeerSync } = require('./lib/peer-sync');
@@ -72,8 +72,8 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = process.env.MASTER_LIST_DATA_DIR ? path.resolve(process.env.MASTER_LIST_DATA_DIR) : path.join(ROOT, 'data');
 const GIGS_FILE = path.join(DATA_DIR, 'gigs.json');
 const DB_FILE = path.join(DATA_DIR, 'master-list.sqlite');
-const MEDIA_DIR = path.join(DATA_DIR, 'media');
-const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+const MEDIA_DIR = process.env.MASTER_LIST_MEDIA_DIR ? path.resolve(process.env.MASTER_LIST_MEDIA_DIR) : path.join(DATA_DIR, 'media');
+const BACKUP_DIR = process.env.MASTER_LIST_BACKUP_DIR ? path.resolve(process.env.MASTER_LIST_BACKUP_DIR) : path.join(DATA_DIR, 'backups');
 const PENDING_RESTORE_FILE = path.join(DATA_DIR, 'restore-pending.sqlite');
 const CONNECTIONS_FILE = path.join(DATA_DIR, 'connections.json');
 const GEOCODES_FILE = path.join(DATA_DIR, 'geocodes.json');
@@ -299,6 +299,13 @@ const handlePeerRoute = createPeerRoutes({
 
 const mediaRecoveryPromise = recoverMediaWork({ database, fs, path, mediaDir: MEDIA_DIR }).then((result) => {
   if (Object.values(result).some(Boolean)) console.log('[media] recovered interrupted work:', result);
+  const resumed = resumeInterruptedMediaWork({
+    database, existsSync: legacyFs.existsSync, path, mediaDir: MEDIA_DIR, encoding: mediaEncoding,
+    recognition: mediaRecognition, startBackgroundRemoval: handleMediaMutation.startBackgroundRemoval,
+    recognitionConfigured: Boolean(process.env.AUDD_API_TOKEN)
+  });
+  const resumedTotal = resumed.encodes + resumed.backgrounds + resumed.recognition;
+  if (resumedTotal) console.log(`[media] resumed ${resumedTotal} interrupted job${resumedTotal === 1 ? '' : 's'}.`);
 }).catch((error) => console.error('[media] recovery failed:', error.message));
 
 function migrateLegacyGigs() {
@@ -377,6 +384,7 @@ async function mediaManifest() {
 async function maintenanceStatus() {
   const databaseSize = await fs.stat(DB_FILE).then((stat) => stat.size).catch(() => 0);
   const mediaWritable = await fs.access(MEDIA_DIR, legacyFs.constants.W_OK).then(() => true).catch(() => false);
+  const backupWritable = await fs.access(BACKUP_DIR, legacyFs.constants.W_OK).then(() => true).catch(() => false);
   let backups = [];
   try {
     backups = (await fs.readdir(BACKUP_DIR, { withFileTypes: true })).filter((entry) => entry.isFile() && entry.name.endsWith('.sqlite')).map((entry) => entry.name).sort().reverse();
@@ -389,7 +397,7 @@ async function maintenanceStatus() {
   const warningPercent = Math.max(50, Math.min(99, Number(appSetting('media_storage_warning_percent', 85)) || 85));
   const usedBytes = Number(integrity.summary?.diskBytes || 0);
   const usedPercent = MAX_MEDIA_STORAGE_SIZE > 0 ? (usedBytes / MAX_MEDIA_STORAGE_SIZE) * 100 : 0;
-  const storage = { ...integrity.storage, usedBytes, quotaBytes: MAX_MEDIA_STORAGE_SIZE, usedPercent, warningPercent, warning: usedPercent >= warningPercent, databaseFile: DB_FILE, mediaDirectory: MEDIA_DIR };
+  const storage = { ...integrity.storage, usedBytes, quotaBytes: MAX_MEDIA_STORAGE_SIZE, usedPercent, warningPercent, warning: usedPercent >= warningPercent, databaseFile: DB_FILE, mediaDirectory: MEDIA_DIR, backupDirectory: BACKUP_DIR, backupWritable };
   return { appVersion: APP_VERSION, appOrigin: trustedOrigin, secureCookies, originCookieMismatch: trustedOrigin.startsWith('http') && originUsesHttps !== secureCookies, schemaMigration, databaseSize, mediaWritable, backupCount: backups.length, latestBackup: backups[0] || null, restorePending: legacyFs.existsSync(PENDING_RESTORE_FILE), instanceImportPending: transfer.pending, lastInstanceImport: transfer.lastImport, backupSchedule: backupSettings(), storage, integrity };
 }
 

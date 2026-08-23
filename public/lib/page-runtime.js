@@ -19,6 +19,7 @@
     artists: ['gigs', 'sharedShows'],
     venues: ['gigs', 'sharedShows'],
     timeline: ['gigs', 'sharedShows'],
+    artifacts: ['gigs', 'sharedShows'],
     search: ['gigs', 'sharedShows'],
     health: ['gigs', 'sharedShows'],
     add: ['gigs', 'sharedShows', 'peers'],

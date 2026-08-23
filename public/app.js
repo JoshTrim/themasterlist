@@ -32,6 +32,7 @@ const showFormController = window.MasterListShowFormController;
 const directoryUi = window.MasterListDirectoryUi;
 const archiveSearchModule = window.MasterListArchiveSearch;
 const timelinePageModule = window.MasterListTimelinePage;
+const artifactsPageModule = window.MasterListArtifactsPage;
 const overviewPageModule = window.MasterListOverviewPage;
 const entityProfilePageModule = window.MasterListEntityProfilePage;
 const metadataEditorModule = window.MasterListMetadataEditor;
@@ -101,6 +102,11 @@ const timelineSelectedYear = document.querySelector('#timeline-selected-year');
 const timelineYearChange = document.querySelector('#timeline-year-change');
 const timelineMonths = document.querySelector('#timeline-months');
 const timelineYearShows = document.querySelector('#timeline-year-shows');
+const artifactsFilter = document.querySelector('#artifacts-filter');
+const artifactsTypeFilter = document.querySelector('#artifacts-type-filter');
+const artifactsSummary = document.querySelector('#artifacts-summary');
+const artifactsGrid = document.querySelector('#artifacts-grid');
+const artifactsEmpty = document.querySelector('#artifacts-empty');
 const apiLimitsGrid = document.querySelector('#api-limits-grid');
 const apiLimitsNote = document.querySelector('#api-limits-note');
 const apiUsageDetail = document.querySelector('#api-usage-detail');
@@ -755,6 +761,12 @@ function setupArchiveArtistVisual(card, artist) { return archivePageController.s
 
 function renderGigs() { return archivePageController.render(); }
 
+const artifactsPageController = artifactsPageModule.createController({
+  page, getShows: () => [...gigs, ...remoteSharedArchiveShows()], escapeHtml, formatGigDate,
+  elements: { query: artifactsFilter, type: artifactsTypeFilter, summary: artifactsSummary, grid: artifactsGrid, empty: artifactsEmpty }
+});
+function renderArtifacts() { return artifactsPageController.render(); }
+
 const cityPageController = locationsPageModule.createCityController({
   page, window, getGigs: () => gigs, escapeHtml,
   elements: { heading: document.querySelector('#city-heading'), subtitle: document.querySelector('#city-subtitle'), venues: document.querySelector('#city-venues') }
@@ -782,7 +794,7 @@ function setupExportButtons(exports, gig) { return playlistExporter.setupButtons
 const pageControllers = pageControllersModule.createRegistry({
   window, providerName, setMessage,
   actions: {
-    renderDashboard: renderDashboardStats, renderDirectories: renderEntityDirectories, renderTimeline, renderSearch: renderGlobalSearch,
+    renderDashboard: renderDashboardStats, renderDirectories: renderEntityDirectories, renderTimeline, renderArtifacts, renderSearch: renderGlobalSearch,
     renderHealth: renderArchiveHealth, renderApiLimits, renderMaintenance, renderActivity, renderConflicts,
     renderAddAttendees: () => renderAttendeePicker(addAttendeePicker, []), populateAutofill: populateShowAutofill,
     populateYears: populateYearFilter, renderGigs, renderArtist: renderArtistPage, renderArtistEdit: renderArtistEditPage,

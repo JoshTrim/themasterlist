@@ -10,14 +10,14 @@ describe('SQLite schema migrations', () => {
 
   test('creates every current subsystem table and can run repeatedly', () => {
     assert.doesNotThrow(() => migrateSchema(database));
-    assert.equal(database.pragma('user_version', { simple: true }), 3);
+    assert.equal(database.pragma('user_version', { simple: true }), 4);
     const tables = new Set(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").pluck().all());
     for (const table of ['gigs', 'gig_media', 'media_playback_clips', 'profiles', 'sessions', 'instance_identity', 'peer_instances', 'peer_nonces', 'peer_invites', 'peer_sync_baselines', 'peer_sync_conflicts', 'app_settings', 'background_jobs', 'playlist_exports']) assert.ok(tables.has(table), table);
   });
 
   test('contains columns introduced by incremental media and metadata migrations', () => {
     const mediaColumns = new Set(database.prepare('PRAGMA table_info(gig_media)').all().map((column) => column.name));
-    for (const column of ['playback_filename', 'checksum', 'recognition_status', 'background_filename', 'playback_preferred', 'source_duration']) assert.ok(mediaColumns.has(column), column);
+    for (const column of ['playback_filename', 'checksum', 'recognition_status', 'background_filename', 'playback_preferred', 'source_duration', 'artifact_type', 'artifact_notes', 'artifact_crop_x', 'artifact_crop_y', 'artifact_zoom']) assert.ok(mediaColumns.has(column), column);
     const venueColumns = new Set(database.prepare('PRAGMA table_info(venue_info)').all().map((column) => column.name));
     assert.ok(venueColumns.has('image_position'));
     assert.ok(venueColumns.has('is_closed'));

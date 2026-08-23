@@ -19,7 +19,7 @@
       body[data-page] main > section { display: none; }
       body[data-page="home"] #home-page, body[data-page="overview"] #overview-page,
       body[data-page="artists"] #artists-page, body[data-page="venues"] #venues-page,
-      body[data-page="timeline"] #timeline-page,
+      body[data-page="timeline"] #timeline-page, body[data-page="artifacts"] #artifacts-page,
       body[data-page="search"] #search-page, body[data-page="health"] #health-page,
       body[data-page="maintenance"] #maintenance-page, body[data-page="activity"] #activity-page, body[data-page="conflicts"] #conflicts-page,
       body[data-page="api-limits"] #api-limits-page, body[data-page="add"] #add-page,
@@ -31,11 +31,11 @@
       body[data-page="venue-edit"] #venue-edit-page, body[data-page="edit"] #edit-page,
       body[data-page="map"] #map-page, body[data-page="account"] #account-page { display: block; }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=css-split-14" />
+    <link rel="stylesheet" href="/styles.css?v=css-split-15" />
   </head>
   <body>
     <script>
-      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/artists': 'artists', '/venues': 'venues', '/timeline': 'timeline', '/search': 'search', '/health': 'health', '/maintenance': 'maintenance', '/activity': 'activity', '/conflicts': 'conflicts', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/artist/edit': 'artist-edit', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
+      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/artists': 'artists', '/venues': 'venues', '/timeline': 'timeline', '/artifacts': 'artifacts', '/search': 'search', '/health': 'health', '/maintenance': 'maintenance', '/activity': 'activity', '/conflicts': 'conflicts', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/artist/edit': 'artist-edit', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
     </script>
     <div class="crt-overlay" aria-hidden="true">
       <span class="crt-noise"></span>
@@ -45,7 +45,7 @@
       <button class="mobile-menu-toggle" id="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open navigation">☰</button>
       <nav class="site-nav" id="site-nav" aria-label="Main navigation">
         <div class="site-nav-group"><span>Archive</span><div><a href="/shows">Shows</a><a href="/add">Add show</a><a href="/search">Search</a></div></div>
-        <div class="site-nav-group"><span>Explore</span><div><a href="/overview">Overview</a><a href="/artists">Artists</a><a href="/venues">Venues</a><a href="/timeline">Timeline</a><a href="/map">Map</a></div></div>
+        <div class="site-nav-group"><span>Explore</span><div><a href="/overview">Overview</a><a href="/artists">Artists</a><a href="/venues">Venues</a><a href="/artifacts">Artifacts</a><a href="/timeline">Timeline</a><a href="/map">Map</a></div></div>
         <div class="site-nav-group"><span>System</span><div><a href="/activity">Activity <b class="nav-count" id="nav-activity-count" hidden></b></a><a href="/conflicts">Conflicts <b class="nav-count" id="nav-conflict-count" hidden></b></a><a href="/health">Metadata</a><a href="/maintenance">Maintenance</a><a href="/api-limits">API limits</a><a href="/account">Account</a><a id="nav-sign-in" href="/login" hidden>Sign in</a></div></div>
       </nav>
       <div class="site-header-actions">
@@ -119,6 +119,14 @@
         <div class="archive-stats" id="archive-stats" aria-label="Archive statistics"></div>
         <div id="empty-state" class="empty-state">Your first gig is waiting to be logged.</div>
         <div class="gig-list" id="gig-list"></div>
+      </section>
+
+      <section class="artifacts-page" id="artifacts-page" aria-labelledby="artifacts-heading">
+        <div class="section-heading"><p class="eyebrow">Archive / What came home</p><h1 id="artifacts-heading">Artifacts</h1><p class="lede">Merch, tickets, physical setlists, posters and keepsakes from the shows in your archive.</p></div>
+        <div class="artifact-archive-controls"><label>Search artifacts<input id="artifacts-filter" type="search" placeholder="Title, artist, venue or notes" autocomplete="off" /></label><label>Type<select id="artifacts-type-filter"><option value="all">All artifacts</option><option value="merch">Merch</option><option value="ticket">Tickets</option><option value="setlist">Physical setlists</option><option value="poster">Posters</option><option value="memorabilia">Memorabilia</option></select></label></div>
+        <p class="artifact-archive-summary" id="artifacts-summary"></p>
+        <div class="artifact-archive-grid" id="artifacts-grid"></div>
+        <p class="empty-state" id="artifacts-empty" hidden>No artifacts match this view.</p>
       </section>
 
       <section class="overview-page" id="overview-page" aria-labelledby="overview-heading"><div class="section-heading"><p class="eyebrow">05 / Archive intelligence</p><h1 id="overview-heading">Overview</h1><p class="lede">A snapshot of your live-music life—and a way back into it.</p></div><section class="overview-discovery" id="overview-discovery" aria-label="Archive discovery"></section><div class="dashboard-stats" id="dashboard-stats"></div><section class="genre-stats" id="genre-stats" aria-labelledby="genre-stats-heading"><div class="genre-stats-heading"><div><p class="eyebrow">Archive sound</p><h2 id="genre-stats-heading">Shows by genre</h2></div><p id="genre-stats-note">Loading artist genres…</p></div><div id="genre-stats-chart"></div></section></section>
@@ -377,7 +385,7 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/theatre-controller.js?v=frontend-modules-8"></script>
     <script src="/lib/media-ui.js?v=frontend-modules-4"></script>
     <script src="/lib/media-uploader.js?v=frontend-modules-7"></script>
-    <script src="/lib/media-gallery.js?v=frontend-modules-9"></script>
+    <script src="/lib/media-gallery.js?v=frontend-modules-68"></script>
     <script src="/lib/upload-queue.js?v=frontend-modules-4"></script>
     <script src="/lib/media-jobs.js?v=frontend-modules-4"></script>
     <script src="/lib/show-editor.js?v=frontend-modules-5"></script>
@@ -386,6 +394,7 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/directory-ui.js?v=frontend-modules-7"></script>
     <script src="/lib/archive-search.js?v=frontend-modules-8"></script>
     <script src="/lib/timeline-page.js?v=frontend-modules-9"></script>
+    <script src="/lib/artifacts-page.js?v=frontend-modules-68"></script>
     <script src="/lib/overview-page.js?v=frontend-modules-56"></script>
     <script src="/lib/entity-profile-page.js?v=frontend-modules-55"></script>
     <script src="/lib/metadata-editor.js?v=frontend-modules-59"></script>
@@ -410,6 +419,6 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/mobile-upload-controller.js?v=frontend-modules-32"></script>
     <script src="/lib/media-workspace-controller.js?v=frontend-modules-32"></script>
     <script src="/lib/pwa.js?v=frontend-modules-2"></script>
-    <script src="/app.js?v=frontend-modules-67"></script>
+    <script src="/app.js?v=frontend-modules-68"></script>
   </body>
 </html>
