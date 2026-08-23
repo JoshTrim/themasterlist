@@ -33,6 +33,7 @@ describe('scheduled backup service', () => {
     snapshot.close();
     assert.equal(service.settings().lastStatus, 'success');
     assert.equal(service.settings().lastBackupAt, '2026-07-18T00:00:00.000Z');
+    assert.equal(service.settings().directory, directory);
   });
 
   test('skips disabled and not-yet-due schedules unless forced', async () => {

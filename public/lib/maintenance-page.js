@@ -38,7 +38,7 @@
     const files = storage.largestFiles?.length ? storage.largestFiles.slice(0, 5).map((item) => row(item)).join('') : '<li class="empty-state">No media files yet.</li>';
     const shows = storage.largestShows?.length ? storage.largestShows.slice(0, 5).map((item) => row(item, true)).join('') : '<li class="empty-state">No show storage yet.</li>';
     const quota = storage.quotaBytes ? `${formatBytes(storage.usedBytes)} of ${formatBytes(storage.quotaBytes)}` : formatBytes(storage.usedBytes);
-    return `<div class="storage-meter ${storage.warning ? 'has-warning' : ''}"><div><strong>${quota}</strong><span>${usedPercent.toFixed(1)}% used · warning at ${Number(storage.warningPercent || 85)}%</span></div><div class="storage-meter-track" role="progressbar" aria-label="Media storage used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(barPercent)}"><i style="width:${barPercent}%"></i></div></div><div class="storage-breakdown">${bucketCards}</div><div class="storage-rankings"><section><h3>Largest files</h3><ol>${files}</ol></section><section><h3>Largest shows</h3><ol>${shows}</ol></section></div><dl class="storage-paths"><div><dt>Database</dt><dd>${escapeHtml(storage.databaseFile || '—')}</dd></div><div><dt>Media</dt><dd>${escapeHtml(storage.mediaDirectory || '—')}</dd></div></dl>`;
+    return `<div class="storage-meter ${storage.warning ? 'has-warning' : ''}"><div><strong>${quota}</strong><span>${usedPercent.toFixed(1)}% used · warning at ${Number(storage.warningPercent || 85)}%</span></div><div class="storage-meter-track" role="progressbar" aria-label="Media storage used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(barPercent)}"><i style="width:${barPercent}%"></i></div></div><div class="storage-breakdown">${bucketCards}</div><div class="storage-rankings"><section><h3>Largest files</h3><ol>${files}</ol></section><section><h3>Largest shows</h3><ol>${shows}</ol></section></div><dl class="storage-paths"><div><dt>Database</dt><dd>${escapeHtml(storage.databaseFile || '—')}</dd></div><div><dt>Media</dt><dd>${escapeHtml(storage.mediaDirectory || '—')}</dd></div><div class="${storage.backupWritable === false ? 'has-warning' : ''}"><dt>Backups</dt><dd>${escapeHtml(storage.backupDirectory || '—')}${storage.backupWritable === false ? ' · not writable' : ''}</dd></div></dl>`;
   }
 
   function backupSchedulePayload(form) {
@@ -87,7 +87,7 @@
         scheduleForm.elements.intervalHours.value = data.backupSchedule.intervalHours;
         scheduleForm.elements.retentionCount.value = data.backupSchedule.retentionCount;
         const last = data.backupSchedule.lastBackupAt ? new Date(data.backupSchedule.lastBackupAt).toLocaleString() : 'Never';
-        scheduleStatus.textContent = data.backupSchedule.lastStatus === 'error' ? `Last backup failed: ${data.backupSchedule.lastError || 'Unknown error'}` : `Last scheduled backup: ${last}`;
+        scheduleStatus.textContent = data.backupSchedule.lastStatus === 'error' ? `Last backup failed: ${data.backupSchedule.lastError || 'Unknown error'}` : `Last scheduled backup: ${last} · ${data.backupSchedule.directory || data.storage?.backupDirectory || 'default backup directory'}`;
         scheduleStatus.classList.toggle('error', data.backupSchedule.lastStatus === 'error');
       }
       renderIntegrity(data.integrity);

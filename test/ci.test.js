@@ -57,4 +57,6 @@ test('local commits stay listener-free and Compose knows the published image', (
   assert.match(hook, /npm run test:unit/);
   assert.doesNotMatch(hook, /^npm test$/m);
   assert.match(compose, /image: ghcr\.io\/joshtrim\/themasterlist:\$\{MASTER_LIST_VERSION:-latest\}/);
+  assert.match(compose, /MASTER_LIST_MEDIA_PATH:-\.\/data\/media/);
+  assert.match(compose, /MASTER_LIST_BACKUP_PATH:-\.\/data\/backups/);
 });

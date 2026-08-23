@@ -69,6 +69,8 @@ See [Integrations](INTEGRATIONS.md) for provider setup and callback URLs.
 | `REMBG_COMMAND` | automatic | Override the background-removal executable. |
 | `REMBG_MODEL` | `u2net` | Model used for artifact background removal. |
 | `MASTER_LIST_DATA_DIR` | `./data` | Advanced override for all mutable application state. Docker sets `/data`. |
+| `MASTER_LIST_MEDIA_DIR` | `<data>/media` | Native-install override for large media files. Docker fixes this to `/media`; use `MASTER_LIST_MEDIA_PATH` for its host mount. |
+| `MASTER_LIST_MEDIA_PATH` | `./data/media` | Docker host path for originals, playback copies, cutouts and profile images. May point to another disk. |
 
 Original video uploads are retained. Playback encoding can therefore require substantially more disk space than the input files alone.
 
@@ -79,6 +81,8 @@ Original video uploads are retained. Playback encoding can therefore require sub
 | `BACKUP_ENABLED` | `true` | Enables periodic SQLite snapshots. |
 | `BACKUP_INTERVAL_HOURS` | `24` | Minimum time between scheduled snapshots. |
 | `BACKUP_RETENTION_COUNT` | `14` | Number of scheduled snapshots retained. |
+| `MASTER_LIST_BACKUP_DIR` | `<data>/backups` | Native-install destination for SQLite snapshots. Docker fixes this to `/backups`. |
+| `MASTER_LIST_BACKUP_PATH` | `./data/backups` | Docker host path for snapshots. May point to a mounted NFS or SMB share. |
 
 Settings saved from the Maintenance page take precedence after initial setup.
 

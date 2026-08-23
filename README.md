@@ -103,7 +103,7 @@ Docker is the recommended way to run the complete stack. It includes Node.js, FF
 
 5. Open [http://127.0.0.1:3000](http://127.0.0.1:3000), create the owner account, and enter `OWNER_SETUP_TOKEN` when prompted. Keep that token somewhere private to enable emergency password recovery, or remove it from `.env` after setup to disable browser-based recovery. Keep the encryption key permanently.
 
-Application state lives in `./data`. Do not commit or publicly share `.env`, `data`, backups, pairing invitations or the encryption key.
+Application state lives in `./data` by default. Docker can place media and SQLite snapshots on separate host mounts with `MASTER_LIST_MEDIA_PATH` and `MASTER_LIST_BACKUP_PATH`. Do not commit or publicly share `.env`, data, media, backups, pairing invitations or the encryption key.
 
 For a native Node installation, LAN access, upgrades and the first-show walkthrough, see [Getting started](docs/GETTING_STARTED.md).
 

@@ -67,8 +67,11 @@ body[data-page="add"] .media-upload input[type="file"]:focus-visible { outline: 
 .youtube-result button { display: block; margin-top: 8px; padding: 5px 8px; border: 1px solid #ff2d9b; background: transparent; color: #ff82c8; font: 11px "VT323", monospace; cursor: pointer; }
 @media (max-width: 640px) { .youtube-result { grid-template-columns: 1fr; }.youtube-result img { width: 100%; } }
 .media-item img, .media-item video, .media-lightbox img, .media-lightbox video { transform-origin: center; }
-.media-open { display: block; width: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.media-open { display: block; width: 100%; padding: 0; overflow: hidden; border: 0; background: transparent; cursor: pointer; }
 .media-item figcaption { padding: 6px 8px; color: #efd7f6; font-size: 13px; line-height: 1.2; }
+.artifact-card-meta { display: grid; gap: 5px; padding: 0 8px 8px; }
+.artifact-card-meta span, .artifact-type-badge { width: fit-content; padding: 4px 6px; border: 1px solid #ff2d9b; background: rgba(255, 45, 155, .1); color: #ff9bd3; font: 7px/1.35 "Press Start 2P", monospace; text-transform: uppercase; }
+.artifact-card-meta p { margin: 0; color: #caa5d8; font-size: 14px; line-height: 1.25; }
 .media-item.is-remote { border-color: #3d8f91; box-shadow: 0 0 12px rgba(83, 239, 214, .18); }
 .peer-media-source { display: block; padding: 0 8px 7px; color: #77f9d4; font-size: 12px; line-height: 1.2; }
 .peer-media-source.is-offline { color: #c89abf; }
@@ -87,7 +90,11 @@ body[data-page="add"] .media-upload input[type="file"]:focus-visible { outline: 
 .media-action-menu[hidden] { display: none; }
 .media-action-menu button { width: 100%; text-align: left; }
 .media-song-label { display: grid; gap: 6px; margin-bottom: 4px; color: #ff9bd3; font: 8px/1.5 "Press Start 2P", monospace; text-transform: uppercase; }
-.media-song-select { appearance: none; width: 100%; min-width: 0; height: 40px; padding: 6px 36px 6px 9px; border: 1px solid #7422a0; border-radius: 0; outline: 0; background-color: #100719; background-image: linear-gradient(45deg, transparent 50%, #ff82c8 50%), linear-gradient(135deg, #ff82c8 50%, transparent 50%), linear-gradient(90deg, transparent, rgba(255, 45, 155, .16)); background-position: calc(100% - 16px) 17px, calc(100% - 10px) 17px, 100% 0; background-size: 6px 6px, 6px 6px, 34px 100%; background-repeat: no-repeat; color: #fff0fa; cursor: pointer; font: 17px "VT323", monospace; box-shadow: inset 2px 2px 0 rgba(4, 0, 12, .55); }
-.media-song-select:hover { border-color: #a83bd8; background-color: #160a24; }
-.media-song-select:focus { border-color: #ff2d9b; box-shadow: inset 2px 2px 0 rgba(4, 0, 12, .55), 0 0 0 2px rgba(255, 45, 155, .16), 0 0 12px rgba(255, 45, 155, .38); }
-.media-song-select option { background: #160a24; color: #fff0fa; }
+.media-song-select, .artifact-type-select { appearance: none; width: 100%; min-width: 0; height: 40px; padding: 6px 36px 6px 9px; border: 1px solid #7422a0; border-radius: 0; outline: 0; background-color: #100719; background-image: linear-gradient(45deg, transparent 50%, #ff82c8 50%), linear-gradient(135deg, #ff82c8 50%, transparent 50%), linear-gradient(90deg, transparent, rgba(255, 45, 155, .16)); background-position: calc(100% - 16px) 17px, calc(100% - 10px) 17px, 100% 0; background-size: 6px 6px, 6px 6px, 34px 100%; background-repeat: no-repeat; color: #fff0fa; cursor: pointer; font: 17px "VT323", monospace; box-shadow: inset 2px 2px 0 rgba(4, 0, 12, .55); }
+.media-song-select:hover, .artifact-type-select:hover { border-color: #a83bd8; background-color: #160a24; }
+.media-song-select:focus, .artifact-type-select:focus { border-color: #ff2d9b; box-shadow: inset 2px 2px 0 rgba(4, 0, 12, .55), 0 0 0 2px rgba(255, 45, 155, .16), 0 0 12px rgba(255, 45, 155, .38); }
+.media-song-select option, .artifact-type-select option { background: #160a24; color: #fff0fa; }
+.artifact-crop-controls { display: grid; gap: 7px; margin: 4px 0; padding: 8px; border: 1px solid #54216e; }
+.artifact-crop-controls legend { padding: 0 4px; color: #ff9bd3; font: 7px/1.4 "Press Start 2P", monospace; text-transform: uppercase; }
+.artifact-crop-controls label { display: grid; grid-template-columns: 1fr 90px; gap: 8px; align-items: center; color: #caa5d8; font-size: 13px; }
+.artifact-crop-controls input[type="range"] { width: 90px; accent-color: #ff2d9b; }

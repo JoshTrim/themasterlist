@@ -27,8 +27,8 @@ function elementsFixture() {
 }
 
 const integrity = { healthy: false, summary: { records: 2, diskFiles: 3, diskBytes: 100 }, counts: { orphan: 1 }, issues: [{ type: 'orphan', title: '<Orphan>', detail: 'Unused', href: '/maintenance' }] };
-const storage = { usedBytes: 100, quotaBytes: 1000, usedPercent: 10, warningPercent: 85, originals: 60, artifacts: 10, playbackCopies: 20, cutouts: 0, profileImages: 4, orphaned: 6, databaseFile: '/data/master-list.sqlite', mediaDirectory: '/media', largestFiles: [{ filename: 'clip.mp4', title: 'Artist · Venue', bytes: 60, href: '/edit?id=gig' }], largestShows: [{ gigId: 'gig', artist: 'Artist', venue: 'Venue', date: '2026-01-01', bytes: 90, href: '/edit?id=gig' }] };
-const status = { appVersion: '0.2.0', appOrigin: 'https://archive.example', secureCookies: true, originCookieMismatch: false, schemaMigration: { previousVersion: 0, version: 1, migrated: true }, databaseSize: 200, backupCount: 2, latestBackup: 'the-master-list-2026-07-19.sqlite', restorePending: false, backupSchedule: { enabled: true, intervalHours: 24, retentionCount: 7, lastBackupAt: null, lastStatus: 'ok' }, storage, integrity };
+const storage = { usedBytes: 100, quotaBytes: 1000, usedPercent: 10, warningPercent: 85, originals: 60, artifacts: 10, playbackCopies: 20, cutouts: 0, profileImages: 4, orphaned: 6, databaseFile: '/data/master-list.sqlite', mediaDirectory: '/media', backupDirectory: '/backups', backupWritable: true, largestFiles: [{ filename: 'clip.mp4', title: 'Artist · Venue', bytes: 60, href: '/edit?id=gig' }], largestShows: [{ gigId: 'gig', artist: 'Artist', venue: 'Venue', date: '2026-01-01', bytes: 90, href: '/edit?id=gig' }] };
+const status = { appVersion: '0.2.0', appOrigin: 'https://archive.example', secureCookies: true, originCookieMismatch: false, schemaMigration: { previousVersion: 0, version: 1, migrated: true }, databaseSize: 200, backupCount: 2, latestBackup: 'the-master-list-2026-07-19.sqlite', restorePending: false, backupSchedule: { enabled: true, intervalHours: 24, retentionCount: 7, lastBackupAt: null, lastStatus: 'ok', directory: '/backups' }, storage, integrity };
 const update = { installedVersion: '0.2.0', latestVersion: '0.3.0', updateAvailable: true, checkedAt: '2026-08-01T00:00:00Z' };
 
 describe('maintenance page', () => {
@@ -49,6 +49,7 @@ describe('maintenance page', () => {
     assert.match(storageHtml, /Largest files/);
     assert.match(storageHtml, /Artist/);
     assert.match(storageHtml, /\/data\/master-list\.sqlite/);
+    assert.match(storageHtml, /\/backups/);
   });
 
   test('renders update, migration and backup readiness without trusting release URLs', () => {

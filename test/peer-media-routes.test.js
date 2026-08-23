@@ -120,3 +120,28 @@ test('peer media copy runs as a job, verifies the checksum and creates local med
   await fs.rm(directory, { recursive: true, force: true });
   alpha.database.close(); beta.database.close();
 });
+
+test('peer artifact copies preserve metadata and download the transparent cutout', async () => {
+  const { alpha, beta } = pair();
+  const original = Buffer.from('artifact-original'); const cutout = Buffer.from('artifact-cutout');
+  const checksum = crypto.createHash('sha256').update(original).digest('hex');
+  addRemoteManifest(alpha, beta, [{ id: 'remote-artifact', filename: 'shirt.jpg', mimeType: 'image/jpeg', caption: 'Tour shirt', category: 'artifact', checksum, size: original.length, artifactType: 'merch', artifactNotes: 'Bought after the encore', artifactCropX: 35, artifactCropY: 62, artifactZoom: 1.4, useBackgroundRemoved: true }]);
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'master-list-peer-artifact-'));
+  const jobs = createBackgroundJobs({ database: alpha.database, now: () => '2026-08-01T00:00:00.000Z' });
+  let queued;
+  const handle = route(alpha, {
+    transport: { fetchMedia: async (_peer, payload) => { const bytes = payload.variant === 'cutout' ? cutout : original; return { response: new Response(bytes, { headers: { 'Content-Type': payload.variant === 'cutout' ? 'image/png' : 'image/jpeg', 'Content-Length': String(bytes.length) } }), metadata: { mimeType: payload.variant === 'cutout' ? 'image/png' : 'image/jpeg', size: bytes.length }, abort() {} }; } },
+    streamFile: async () => {}, fs, path, mediaDir: directory, jobs, createHash: crypto.createHash,
+    mediaExtension: () => 'jpg', validMediaSignature: () => true, mediaRows: () => [], maxStorageSize: 1024,
+    randomUUID: (() => { let id = 0; return () => `artifact-generated-${++id}`; })(), schedule: (callback) => { queued = callback; }, onImported: () => {}
+  });
+  const accepted = response();
+  await handle({ method: 'POST', headers: {} }, accepted, new URL(`http://alpha.test/api/peer-media/${beta.identity.row().instanceId}/shared/remote-artifact/copy`));
+  const job = JSON.parse(accepted.body); await queued();
+  assert.equal(jobs.get(job.id).status, 'complete');
+  const stored = alpha.database.prepare("SELECT artifact_type AS artifactType, artifact_notes AS artifactNotes, artifact_crop_x AS cropX, artifact_crop_y AS cropY, artifact_zoom AS zoom, background_filename AS backgroundFilename, use_background_removed AS useCutout FROM gig_media WHERE category = 'artifact'").get();
+  assert.deepEqual({ ...stored, useCutout: Boolean(stored.useCutout) }, { artifactType: 'merch', artifactNotes: 'Bought after the encore', cropX: 35, cropY: 62, zoom: 1.4, backgroundFilename: stored.backgroundFilename, useCutout: true });
+  assert.equal(Buffer.compare(await fs.readFile(path.join(directory, stored.backgroundFilename)), cutout), 0);
+  await fs.rm(directory, { recursive: true, force: true });
+  alpha.database.close(); beta.database.close();
+});
