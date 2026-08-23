@@ -24,7 +24,8 @@ function fixture(overrides = {}) {
     pollRecognition: async (...args) => { calls.push(['recognition', ...args]); if (overrides.recognized) args[1](overrides.recognized); },
     renderWorkspace: (...args) => calls.push(['workspace', ...args]),
     uploadFiles: overrides.uploadFiles || (async (...args) => { calls.push(['upload', ...args]); }),
-    fetchJson: overrides.fetchJson || (async (url) => { calls.push(['fetch', url]); return overrides.refreshed || []; })
+    fetchJson: overrides.fetchJson || (async (url) => { calls.push(['fetch', url]); return overrides.refreshed || []; }),
+    category: overrides.category
   });
   return { controller, input, message, pendingFiles, calls, mobileQueueState };
 }
@@ -77,5 +78,30 @@ describe('edit media upload controller', () => {
     await view.controller.uploadForSave({ id: 'g1' }, [file]);
     assert.equal(view.message.textContent, 'Upload complete · preparing mobile playback for clip.mp4…');
     assert.equal(view.controller.progressMessage(file, .25), 'Uploading clip.mp4 · 25%');
+  });
+
+  test('uploads artifacts separately without running audio recognition', async () => {
+    const file = { name: 'shirt.jpg' };
+    const refreshed = [{ id: 'artifact', category: 'artifact' }];
+    const view = fixture({ category: 'artifact', pending: [file], refreshed });
+    const gig = { id: 'g1' };
+    view.controller.setup(gig);
+    await view.input.handler();
+    const upload = view.calls.find(([name]) => name === 'upload');
+    assert.equal(upload[1], 'g1');
+    assert.deepEqual(upload[2], [file]);
+    assert.equal(upload[4], 'artifact');
+    assert.equal(view.calls.some(([name]) => name === 'recognition'), false);
+    assert.equal(view.message.textContent, 'Artifact uploaded.');
+    assert.deepEqual(view.calls.find(([name]) => name === 'workspace').slice(1), [gig, refreshed]);
+  });
+
+  test('binds mobile artifact uploads to the artifact queue', () => {
+    const view = fixture({ mobile: true, category: 'artifact' });
+    view.controller.setup({ id: 'g1' });
+    const state = view.calls.find(([name]) => name === 'mobileState');
+    const start = view.calls.find(([name]) => name === 'startMobile');
+    assert.deepEqual(state.slice(2), ['g1', 'artifact']);
+    assert.equal(start.at(-1), 'artifact');
   });
 });

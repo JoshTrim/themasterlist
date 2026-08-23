@@ -253,6 +253,7 @@ docker compose ps</code></pre></div></details>
             <div class="edit-form-panel-heading"><div><p class="eyebrow">Add media</p><h2 id="edit-media-sources-heading">Attach to this show</h2></div><span>02</span></div>
             <div class="edit-upload-grid">
               <label class="media-upload"><span class="edit-field-label">Photos and videos</span><input id="edit-media-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>Choose one or more files. Uploads queue one at a time on mobile.</small><div class="media-upload-status" aria-live="polite" hidden></div></label>
+              <label class="media-upload"><span class="edit-field-label">Artifacts</span><input id="edit-artifact-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple /><small>Photos of merch, tickets, physical setlists and other keepsakes. These stay separate from playback media.</small><div class="media-upload-status" aria-live="polite" hidden></div><span class="artifact-message" id="edit-artifact-message" role="status"></span></label>
               <label class="media-upload"><span class="edit-field-label">YouTube video</span><input id="edit-youtube-media-input" type="url" placeholder="https://youtube.com/watch?v=…" /><small>Paste a link to add somebody else's footage.</small></label>
             </div>
           </section>
@@ -358,7 +359,7 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/media-lightbox.js?v=frontend-modules-40"></script>
     <script src="/lib/app-bootstrap.js?v=frontend-modules-41"></script>
     <script src="/lib/page-controllers.js?v=frontend-modules-42"></script>
-    <script src="/lib/edit-media-upload.js?v=frontend-modules-43"></script>
+    <script src="/lib/edit-media-upload.js?v=frontend-modules-44"></script>
     <script src="/lib/youtube-player-api.js?v=frontend-modules-44"></script>
     <script src="/lib/add-media-upload.js?v=frontend-modules-45"></script>
     <script src="/lib/shell-router.js?v=frontend-modules-46"></script>
@@ -409,6 +410,6 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/mobile-upload-controller.js?v=frontend-modules-31"></script>
     <script src="/lib/media-workspace-controller.js?v=frontend-modules-32"></script>
     <script src="/lib/pwa.js?v=frontend-modules-2"></script>
-    <script src="/app.js?v=frontend-modules-66"></script>
+    <script src="/app.js?v=frontend-modules-67"></script>
   </body>
 </html>

@@ -230,6 +230,8 @@ const artistComparison = document.querySelector('#artist-comparison');
 const editForm = document.querySelector('#edit-form');
 const editMessage = document.querySelector('#edit-message');
 const editMediaInput = document.querySelector('#edit-media-input');
+const editArtifactInput = document.querySelector('#edit-artifact-input');
+const editArtifactMessage = document.querySelector('#edit-artifact-message');
 const addAttendeePicker = document.querySelector('#add-attendee-picker');
 let editAttendeePicker = document.querySelector('#edit-attendee-picker');
 const pendingMedia = new WeakMap();
@@ -244,8 +246,10 @@ const mobileUploadController = mobileUploadControllerModule.createController({
 mobileUploadController.bind();
 mobileUploadController.setup(mediaInput);
 mobileUploadController.setup(editMediaInput);
+mobileUploadController.setup(editArtifactInput, 'artifact');
 mobileUploadController.addClearButton(mediaInput);
 mobileUploadController.addClearButton(editMediaInput);
+mobileUploadController.addClearButton(editArtifactInput);
 function mobileUploadStateFor(input, gigId = '', category = 'show') { return mobileUploadController.stateFor(input, gigId, category); }
 function startMobileUploadQueue(input, gigId, onUploaded, onDrained, category = 'show') { return mobileUploadController.start(input, gigId, onUploaded, onDrained, category); }
 
@@ -593,10 +597,19 @@ const editMediaUploadController = editMediaUploadModule.createController({
   pollRecognition: pollMediaRecognition, renderWorkspace: renderEditMediaWorkspace,
   uploadFiles: uploadGigMedia, fetchJson
 });
+const editArtifactUploadController = editMediaUploadModule.createController({
+  isMobile: () => isMobileUpload, input: editArtifactInput, message: editArtifactMessage, pendingFiles: pendingMedia,
+  mobileState: mobileUploadStateFor, startMobileQueue: startMobileUploadQueue,
+  renderWorkspace: renderEditMediaWorkspace, uploadFiles: uploadGigMedia, fetchJson, category: 'artifact'
+});
+function setupEditUploads(gig) {
+  editMediaUploadController.setup(gig);
+  editArtifactUploadController.setup(gig);
+}
 const editShowPageController = editShowPageModule.createController({
   page, gigId: editGigId, FormDataClass: FormData, fetchJson, editor: showEditor, workflow: showFormController, trackEditor: editTrackListController,
   getGigs: () => gigs, onGigs: (nextGigs) => { gigs = nextGigs; },
-  setupImmediateUpload: editMediaUploadController.setup,
+  setupImmediateUpload: setupEditUploads,
   showDuplicateWarning, confirmDuplicateSave, ensureAttendeePicker: ensureEditAttendeePicker,
   renderAttendees: renderAttendeePicker, readAttendees,
   renderMediaWorkspace: renderEditMediaWorkspace,
