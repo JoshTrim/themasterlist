@@ -41,3 +41,16 @@ test('remote media is labelled, playable and cannot expose local edit controls',
   assert.match(container.innerHTML, /Save local copy/);
   assert.doesNotMatch(container.innerHTML, /media-delete-corner|Options/);
 });
+
+test('artifact groups keep their side controls alongside ordinary show media', () => {
+  const container = { innerHTML: '', replaceChildren() { this.innerHTML = ''; }, querySelectorAll() { return []; }, querySelector() { return null; } };
+  gallery().render(container, [
+    { id: 'video', mimeType: 'video/mp4', url: '/video.mp4', caption: 'Show clip' },
+    { id: 'shirt-front', artifactGroupId: 'shirt', artifactView: 'front', category: 'artifact', mimeType: 'image/jpeg', url: '/front.jpg', caption: 'Tour shirt', artifactType: 'merch' }
+  ], { editable: true, gigId: 'gig' });
+  assert.match(container.innerHTML, /Show clip/);
+  assert.match(container.innerHTML, /artifact-group-card/);
+  assert.match(container.innerHTML, /Tour shirt/);
+  assert.match(container.innerHTML, /Add back/);
+  assert.match(container.innerHTML, /Add detail/);
+});

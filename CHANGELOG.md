@@ -13,6 +13,10 @@
 
 - Artifact groups, view labels, cover sides and transparent cutouts are preserved in peer-sync manifests and local peer copies.
 
+### Fixed
+
+- Existing artifacts retain their front, back and detail controls in Media Processing even when a show also contains ordinary photos or videos.
+
 ## 0.3.0 — 2026-08-23
 
 ### Added

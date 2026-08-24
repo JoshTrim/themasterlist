@@ -64,15 +64,24 @@
             const artifactMeta = item.category === 'artifact' ? `<div class="artifact-card-meta"><span>${escapeHtml(artifactLabels[item.artifactType] || artifactLabels.memorabilia)}</span>${item.artifactNotes ? `<p>${escapeHtml(item.artifactNotes)}</p>` : ''}</div>` : '';
             return `<figure class="media-item${item.remote ? ' is-remote' : ''}${item.isCover ? ' is-cover' : ''}${item.useBackgroundRemoved && !originalPreviews.has(item.id) ? ' is-cutout' : ''}${mediaSelection.has(item.id) ? ' is-selected' : ''}" data-media-id="${item.id}">${canEdit ? `<button type="button" class="media-delete-corner" aria-label="${mediaSelection.has(item.id) ? 'Deselect media' : 'Select media for removal'}" title="${mediaSelection.has(item.id) ? 'Deselect media' : 'Select media for removal'}" aria-pressed="${mediaSelection.has(item.id)}">×</button>` : ''}${source}<figcaption>${escapeHtml(item.caption || item.filename || '')}</figcaption>${artifactMeta}${remoteState}${background}${detection}${menu}</figure>`;
           };
-          const groupedArtifacts = media.length && media.every((item) => item.category === 'artifact');
-          const content = groupedArtifacts ? artifactGroups(media).map((group) => {
+          const groups = artifactGroups(media.filter((item) => item.category === 'artifact'));
+          const groupMarkup = (group) => {
             const hasFront = group.views.some((item) => (item.artifactView || 'front') === 'front');
             const hasBack = group.views.some((item) => item.artifactView === 'back');
             const viewLabel = (item, index) => item.artifactView === 'detail' ? (item.artifactViewLabel || `Detail ${index + 1}`) : (item.artifactView === 'back' ? 'Back' : 'Front');
             const viewCards = editable ? group.views.map((item, index) => `<div class="artifact-group-view"><span>${escapeHtml(viewLabel(item, index))}</span>${itemMarkup(item)}</div>`).join('') : itemMarkup(group.cover);
             const add = editable && gigId ? `<div class="artifact-add-views">${!hasFront ? `<label>Add front<input class="artifact-view-upload" type="file" accept="image/jpeg,image/png,image/gif,image/webp" data-artifact-group="${escapeHtml(group.id)}" data-artifact-view="front" /></label>` : ''}${!hasBack ? `<label>Add back<input class="artifact-view-upload" type="file" accept="image/jpeg,image/png,image/gif,image/webp" data-artifact-group="${escapeHtml(group.id)}" data-artifact-view="back" /></label>` : ''}<label>Add detail<input class="artifact-view-upload" type="file" accept="image/jpeg,image/png,image/gif,image/webp" data-artifact-group="${escapeHtml(group.id)}" data-artifact-view="detail" /></label></div>` : '';
             return `<section class="artifact-group-card" data-artifact-group="${escapeHtml(group.id)}"><header><div><span>${escapeHtml(artifactLabels[group.cover.artifactType] || artifactLabels.memorabilia)}</span><h3>${escapeHtml(group.cover.caption || group.cover.filename || 'Artifact')}</h3></div><button class="artifact-open-group" type="button">${group.views.length > 1 ? `View ${group.views.length} sides` : 'View artifact'}</button></header><div class="artifact-group-views">${viewCards}</div>${add}</section>`;
-          }).join('') : media.map(itemMarkup).join('');
+          };
+          const renderedGroups = new Set();
+          const content = media.map((item) => {
+            if (item.category !== 'artifact') return itemMarkup(item);
+            const groupId = item.artifactGroupId || item.id;
+            if (renderedGroups.has(groupId)) return '';
+            renderedGroups.add(groupId);
+            const group = groups.find((entry) => entry.id === groupId);
+            return group ? groupMarkup(group) : itemMarkup(item);
+          }).join('');
           container.innerHTML = `${editable && selectedCount ? `<div class="media-bulk-actions"><span>${selectedCount} selected</span><button type="button" class="media-bulk-delete">Remove selected</button><button type="button" class="media-bulk-clear">Clear</button></div>` : ''}${content}`;
       container.querySelectorAll('.media-open').forEach((button) => button.addEventListener('click', () => {
         const item = media.find((entry) => entry.id === button.closest('.media-item').dataset.mediaId);
