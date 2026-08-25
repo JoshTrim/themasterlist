@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.3.2 — 2026-08-25
+
+### Added
+
+- Paired front and back artifact photos can be viewed as a continuously rotating 3D presentation, with pause, drag and keyboard controls.
+
+### Fixed
+
+- Transparent artifact cutouts remain centred and fully contained within the browser viewport.
+- Releasing a manually rotated artifact resumes automatic movement from the current angle instead of snapping back to its starting position.
+
 ## 0.3.1 — 2026-08-25
 
 ### Added
