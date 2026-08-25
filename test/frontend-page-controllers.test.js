@@ -4,7 +4,7 @@ const pageControllers = require('../public/lib/page-controllers');
 
 const actionNames = [
   'renderDashboard', 'renderDirectories', 'renderTimeline', 'renderSearch', 'renderHealth', 'renderApiLimits',
-  'renderMaintenance', 'renderActivity', 'renderConflicts', 'renderArtifacts', 'renderAddAttendees', 'populateAutofill',
+  'renderMaintenance', 'renderActivity', 'renderConflicts', 'renderArtifacts', 'renderArtifact', 'renderAddAttendees', 'populateAutofill',
   'populateYears', 'renderGigs', 'renderArtist', 'renderArtistEdit', 'renderShow', 'renderCity',
   'renderVenue', 'renderVenueEdit', 'renderEdit', 'renderMap', 'renderProfiles', 'renderSharedShows', 'renderInstanceSettings'
 ];
@@ -29,9 +29,10 @@ describe('page controller registry', () => {
     await view.registry.artists();
     await view.registry.venues();
     await view.registry.artifacts();
+    await view.registry.artifact();
     await view.registry.show();
     await view.registry.playback();
-    assert.deepEqual(view.calls, ['renderDashboard', 'renderDirectories', 'renderDirectories', 'renderArtifacts', 'renderShow', 'renderShow']);
+    assert.deepEqual(view.calls, ['renderDashboard', 'renderDirectories', 'renderDirectories', 'renderArtifacts', 'renderArtifact', 'renderShow', 'renderShow']);
   });
 
   test('initializes add, edit and account pages in dependency order', async () => {

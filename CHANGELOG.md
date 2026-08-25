@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.3.1 — 2026-08-25
+
+### Added
+
+- A single artifact can contain front, back and named detail photos while remaining one listing throughout the archive.
+- Artifact photos can be added, replaced and framed independently, with a full-screen flip viewer, view navigation and original downloads.
+- Existing-show editing includes a guided artifact creator with shared metadata, a live multi-view preview and optional per-photo background removal.
+- Every artifact has a dedicated detail URL with its complete photo viewer, show context, notes, editing access and original downloads.
+- Standalone artifact photos can be combined into another artifact as its front, back or a named detail without re-uploading or reprocessing the file.
+
+### Changed
+
+- Artifact groups, view labels, cover sides and transparent cutouts are preserved in peer-sync manifests and local peer copies.
+
+### Fixed
+
+- Existing artifacts retain their front, back and detail controls in Media Processing even when a show also contains ordinary photos or videos.
+
 ## 0.3.0 — 2026-08-23
 
 ### Added

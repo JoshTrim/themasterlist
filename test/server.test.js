@@ -103,7 +103,7 @@ describe('The Master List API regressions', { concurrency: false }, () => {
   test('core pages serve the shared shell with their dedicated sections', async () => {
     for (const [pathname, sectionId] of [
       ['/shows', 'shows-archive'], ['/add', 'add-page'], ['/overview', 'overview-page'], ['/artists', 'artists-page'],
-      ['/venues', 'venues-page'], ['/map', 'map-page'], ['/search', 'search-page'], ['/account', 'account-page'],
+      ['/venues', 'venues-page'], ['/artifacts', 'artifacts-page'], ['/artifact?id=missing', 'artifact-page'], ['/map', 'map-page'], ['/search', 'search-page'], ['/account', 'account-page'],
       ['/playback?id=missing', 'show-page']
     ]) {
       const page = await api(pathname);

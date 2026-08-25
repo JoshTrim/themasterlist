@@ -19,7 +19,7 @@
       body[data-page] main > section { display: none; }
       body[data-page="home"] #home-page, body[data-page="overview"] #overview-page,
       body[data-page="artists"] #artists-page, body[data-page="venues"] #venues-page,
-      body[data-page="timeline"] #timeline-page, body[data-page="artifacts"] #artifacts-page,
+      body[data-page="timeline"] #timeline-page, body[data-page="artifacts"] #artifacts-page, body[data-page="artifact"] #artifact-page,
       body[data-page="search"] #search-page, body[data-page="health"] #health-page,
       body[data-page="maintenance"] #maintenance-page, body[data-page="activity"] #activity-page, body[data-page="conflicts"] #conflicts-page,
       body[data-page="api-limits"] #api-limits-page, body[data-page="add"] #add-page,
@@ -31,11 +31,11 @@
       body[data-page="venue-edit"] #venue-edit-page, body[data-page="edit"] #edit-page,
       body[data-page="map"] #map-page, body[data-page="account"] #account-page { display: block; }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=css-split-15" />
+    <link rel="stylesheet" href="/styles.css?v=css-split-20" />
   </head>
   <body>
     <script>
-      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/artists': 'artists', '/venues': 'venues', '/timeline': 'timeline', '/artifacts': 'artifacts', '/search': 'search', '/health': 'health', '/maintenance': 'maintenance', '/activity': 'activity', '/conflicts': 'conflicts', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/artist/edit': 'artist-edit', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
+      document.body.dataset.page = ({ '/': 'home', '/overview': 'overview', '/artists': 'artists', '/venues': 'venues', '/timeline': 'timeline', '/artifacts': 'artifacts', '/artifact': 'artifact', '/search': 'search', '/health': 'health', '/maintenance': 'maintenance', '/activity': 'activity', '/conflicts': 'conflicts', '/api-limits': 'api-limits', '/shows': 'shows', '/shared': 'shared', '/login': 'login', '/artist': 'artist', '/artist/edit': 'artist-edit', '/show': 'show', '/playback': 'playback', '/city': 'city', '/edit': 'edit', '/venue': 'venue', '/venue/edit': 'venue-edit', '/add': 'add', '/map': 'map', '/account': 'account' })[location.pathname] || 'home';
     </script>
     <div class="crt-overlay" aria-hidden="true">
       <span class="crt-noise"></span>
@@ -127,6 +127,30 @@
         <p class="artifact-archive-summary" id="artifacts-summary"></p>
         <div class="artifact-archive-grid" id="artifacts-grid"></div>
         <p class="empty-state" id="artifacts-empty" hidden>No artifacts match this view.</p>
+      </section>
+
+      <section class="artifact-page" id="artifact-page" aria-labelledby="artifact-detail-title">
+        <a class="artifact-detail-back" href="/artifacts">← Artifact archive</a>
+        <div class="artifact-detail" id="artifact-detail" hidden>
+          <div class="artifact-detail-viewer">
+            <div class="artifact-detail-stage"><img id="artifact-detail-image" alt="" /></div>
+            <div class="artifact-detail-views" id="artifact-detail-views" aria-label="Artifact photos"></div>
+            <div class="artifact-detail-controls">
+              <button type="button" id="artifact-detail-previous">← Previous</button>
+              <button type="button" id="artifact-detail-flip">↻ Flip</button>
+              <button type="button" id="artifact-detail-next">Next →</button>
+              <button type="button" id="artifact-detail-fullscreen">⛶ Full screen</button>
+            </div>
+          </div>
+          <aside class="artifact-detail-copy">
+            <span class="artifact-type-badge" id="artifact-detail-type"></span>
+            <h1 id="artifact-detail-title"></h1>
+            <p class="artifact-detail-notes" id="artifact-detail-notes"></p>
+            <dl class="artifact-detail-facts"><div><dt>Show</dt><dd><a id="artifact-detail-show" href="#"><strong id="artifact-detail-artist"></strong><span id="artifact-detail-show-meta"></span></a></dd></div><div><dt>Archive</dt><dd id="artifact-detail-view-count"></dd></div></dl>
+            <div class="artifact-detail-actions"><a class="button button-secondary" id="artifact-detail-edit" href="#">Edit show</a><a class="button button-secondary" id="artifact-detail-download" href="#" download>Download original</a></div>
+          </aside>
+        </div>
+        <div class="artifact-detail-missing" id="artifact-detail-missing" hidden><p class="eyebrow">Artifact not found</p><h1>This keepsake is not in the archive.</h1><p>It may have been removed, or the link may belong to another instance.</p><a class="button" href="/artifacts">Return to artifacts</a></div>
       </section>
 
       <section class="overview-page" id="overview-page" aria-labelledby="overview-heading"><div class="section-heading"><p class="eyebrow">05 / Archive intelligence</p><h1 id="overview-heading">Overview</h1><p class="lede">A snapshot of your live-music life—and a way back into it.</p></div><section class="overview-discovery" id="overview-discovery" aria-label="Archive discovery"></section><div class="dashboard-stats" id="dashboard-stats"></div><section class="genre-stats" id="genre-stats" aria-labelledby="genre-stats-heading"><div class="genre-stats-heading"><div><p class="eyebrow">Archive sound</p><h2 id="genre-stats-heading">Shows by genre</h2></div><p id="genre-stats-note">Loading artist genres…</p></div><div id="genre-stats-chart"></div></section></section>
@@ -261,12 +285,22 @@ docker compose ps</code></pre></div></details>
             <div class="edit-form-panel-heading"><div><p class="eyebrow">Add media</p><h2 id="edit-media-sources-heading">Attach to this show</h2></div><span>02</span></div>
             <div class="edit-upload-grid">
               <label class="media-upload"><span class="edit-field-label">Photos and videos</span><input id="edit-media-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime" multiple /><small>Choose one or more files. Uploads queue one at a time on mobile.</small><div class="media-upload-status" aria-live="polite" hidden></div></label>
-              <label class="media-upload"><span class="edit-field-label">Artifacts</span><input id="edit-artifact-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple /><small>Photos of merch, tickets, physical setlists and other keepsakes. These stay separate from playback media.</small><div class="media-upload-status" aria-live="polite" hidden></div><span class="artifact-message" id="edit-artifact-message" role="status"></span></label>
               <label class="media-upload"><span class="edit-field-label">YouTube video</span><input id="edit-youtube-media-input" type="url" placeholder="https://youtube.com/watch?v=…" /><small>Paste a link to add somebody else's footage.</small></label>
             </div>
           </section>
           <div class="duplicate-warning" id="edit-duplicate-warning" hidden></div><section class="supporting-acts-editor edit-supporting-acts" id="edit-supporting-acts"><div class="supporting-acts-heading"><div><p class="eyebrow">Line-up</p><h2>Opening acts &amp; co-headliners</h2></div><div><button class="button button-secondary" data-find-acts type="button">Find same-night setlists</button><button class="button button-secondary" data-add-act type="button">+ Add manually</button></div></div><div data-acts-list></div><div class="supporting-acts-results" data-acts-results hidden></div></section><div class="edit-setlist"><p class="eyebrow">Headliner setlist</p><div id="edit-setlist-tracks"></div><button class="button button-secondary" id="add-edit-track" type="button">+ Add track</button></div><div class="form-actions"><button class="button" type="submit">Save changes</button></div><p class="form-message" id="edit-message" role="status"></p>
         </form>
+        <section class="artifact-create" aria-labelledby="artifact-create-heading">
+          <div class="media-workspace-heading"><div><p class="eyebrow">What came home</p><h2 id="artifact-create-heading">New artifact</h2><p>Create one keepsake with front, back and optional detail photos.</p></div></div>
+          <form id="artifact-create-form">
+            <div class="artifact-create-fields"><label>Title<input id="artifact-create-title" required maxlength="160" placeholder="Tour shirt" /></label><label>Type<select id="artifact-create-type"><option value="merch">Merch</option><option value="ticket">Ticket</option><option value="setlist">Physical setlist</option><option value="poster">Poster</option><option value="memorabilia">Memorabilia</option></select></label><label class="artifact-create-notes">Notes<textarea id="artifact-create-notes" rows="3" placeholder="Size, edition, where it came from…"></textarea></label></div>
+            <div class="artifact-create-primary-views"><label class="artifact-create-file"><span>Front photo <strong>Required</strong></span><input id="artifact-create-front" type="file" accept="image/jpeg,image/png,image/gif,image/webp" required /></label><label class="artifact-create-file"><span>Back photo <small>Optional</small></span><input id="artifact-create-back" type="file" accept="image/jpeg,image/png,image/gif,image/webp" /></label></div>
+            <div class="artifact-create-details-heading"><div><strong>Detail photos</strong><small>Add labels such as sleeve print, tag or signature.</small></div><button class="button button-secondary" id="artifact-create-add-detail" type="button">+ Add detail</button></div><div class="artifact-create-details" id="artifact-create-details"></div>
+            <label class="artifact-create-background"><input id="artifact-create-remove-background" type="checkbox" /><span><strong>Remove backgrounds after upload</strong><small>Runs separately for each photo and keeps every original.</small></span></label>
+            <aside class="artifact-create-preview" id="artifact-create-preview" aria-label="Artifact preview"></aside>
+            <div class="artifact-create-actions"><button class="button" id="artifact-create-submit" type="submit">Create artifact</button><p class="artifact-message" id="artifact-create-message" role="status"></p></div>
+          </form>
+        </section>
         <section class="media-workspace" aria-labelledby="media-workspace-heading"><div class="media-workspace-heading"><div><p class="eyebrow">Attached media</p><h2 id="media-workspace-heading">Media processing</h2><p>Track uploads, playback copies and song detection before they enter the show memory.</p></div><button class="button button-secondary" id="media-workspace-refresh" type="button">Refresh status</button></div><div class="media-workspace-stats" id="media-workspace-stats" aria-label="Media processing summary"></div><div class="media-workspace-filters" id="media-workspace-filters" aria-label="Filter attached media"><button type="button" data-media-filter="all" class="active">All</button><button type="button" data-media-filter="processing">Processing</button><button type="button" data-media-filter="failed">Needs attention</button><button type="button" data-media-filter="unassigned">Unassigned</button><button type="button" data-media-filter="ready">Ready</button></div><p class="empty-state media-workspace-empty" id="media-workspace-empty" hidden>No media matches this filter.</p><div class="media-gallery edit-gallery" id="edit-gallery"></div></section>
         <section class="playback-editor" aria-labelledby="playback-editor-heading"><div class="media-workspace-heading"><div><p class="eyebrow">Whole-set player</p><h2 id="playback-editor-heading">Playback plan</h2><p>Choose one source per track and set non-destructive in/out points in seconds. Missing tracks remain visible and will be skipped automatically.</p></div><div class="playback-editor-actions"><button class="button button-secondary" id="auto-build-playback-plan" type="button">✦ Suggest plan</button><button class="button" id="save-playback-plan" type="button">Save playback plan</button></div></div><div class="playback-editor-suggestions" id="playback-editor-suggestions" role="status"></div><div class="playback-editor-health" id="playback-editor-health" role="status"></div><div class="playback-editor-list" id="playback-editor-list"></div><p class="form-message" id="playback-editor-message" role="status"></p></section>
       </section>
@@ -352,25 +386,25 @@ docker compose ps</code></pre></div></details>
       </article>
     </template>
 
-    <div class="media-lightbox" id="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Media viewer"><button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Close media viewer">×</button><img id="media-lightbox-image" alt="" /><video id="media-lightbox-video" controls></video><p id="media-lightbox-caption"></p></div>
+    <div class="media-lightbox" id="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Media viewer"><button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Close media viewer">×</button><div class="media-lightbox-stage" id="media-lightbox-stage"><img id="media-lightbox-image" alt="" /><video id="media-lightbox-video" controls></video></div><div class="artifact-lightbox-copy" id="artifact-lightbox-copy" hidden><span id="artifact-lightbox-type"></span><h2 id="media-lightbox-caption"></h2><p id="artifact-lightbox-notes"></p><div class="artifact-lightbox-views" id="artifact-lightbox-views" aria-label="Artifact photos"></div><div class="artifact-lightbox-controls"><button type="button" id="artifact-lightbox-previous">← Previous</button><button type="button" id="artifact-lightbox-flip">↻ Flip</button><button type="button" id="artifact-lightbox-next">Next →</button></div><div class="artifact-lightbox-links"><a id="artifact-lightbox-show" href="#">Open show</a><a id="artifact-lightbox-download" href="#" download>Download original</a></div></div><p class="media-lightbox-basic-caption" id="media-lightbox-basic-caption"></p></div>
 
-    <script src="/lib/api-client.js?v=frontend-modules-6"></script>
-    <script src="/lib/page-runtime.js?v=frontend-modules-9"></script>
+    <script src="/lib/api-client.js?v=frontend-modules-70"></script>
+    <script src="/lib/page-runtime.js?v=frontend-modules-70"></script>
     <script src="/lib/formatters.js?v=frontend-modules-1"></script>
     <script src="/lib/navigation.js?v=frontend-modules-1"></script>
     <script src="/lib/auth-state.js?v=frontend-modules-1"></script>
     <script src="/lib/jobs.js?v=frontend-modules-1"></script>
     <script src="/lib/shows.js?v=frontend-modules-1"></script>
-    <script src="/lib/show-cards.js?v=frontend-modules-3"></script>
+    <script src="/lib/show-cards.js?v=frontend-modules-70"></script>
     <script src="/lib/playback-core.js?v=frontend-modules-3"></script>
     <script src="/lib/playback-media.js?v=frontend-modules-41"></script>
-    <script src="/lib/media-lightbox.js?v=frontend-modules-40"></script>
-    <script src="/lib/app-bootstrap.js?v=frontend-modules-41"></script>
-    <script src="/lib/page-controllers.js?v=frontend-modules-42"></script>
+    <script src="/lib/media-lightbox.js?v=frontend-modules-70"></script>
+    <script src="/lib/app-bootstrap.js?v=frontend-modules-70"></script>
+    <script src="/lib/page-controllers.js?v=frontend-modules-70"></script>
     <script src="/lib/edit-media-upload.js?v=frontend-modules-44"></script>
     <script src="/lib/youtube-player-api.js?v=frontend-modules-44"></script>
     <script src="/lib/add-media-upload.js?v=frontend-modules-45"></script>
-    <script src="/lib/shell-router.js?v=frontend-modules-46"></script>
+    <script src="/lib/shell-router.js?v=frontend-modules-72"></script>
     <script src="/lib/upload-leave-guard.js?v=frontend-modules-47"></script>
     <script src="/lib/external-media-input.js?v=frontend-modules-48"></script>
     <script src="/lib/playback-editor.js?v=frontend-modules-7"></script>
@@ -384,8 +418,9 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/theatre.js?v=frontend-modules-3"></script>
     <script src="/lib/theatre-controller.js?v=frontend-modules-8"></script>
     <script src="/lib/media-ui.js?v=frontend-modules-4"></script>
-    <script src="/lib/media-uploader.js?v=frontend-modules-7"></script>
-    <script src="/lib/media-gallery.js?v=frontend-modules-68"></script>
+    <script src="/lib/media-uploader.js?v=frontend-modules-73"></script>
+    <script src="/lib/artifact-creator.js?v=frontend-modules-73"></script>
+    <script src="/lib/media-gallery.js?v=frontend-modules-76"></script>
     <script src="/lib/upload-queue.js?v=frontend-modules-4"></script>
     <script src="/lib/media-jobs.js?v=frontend-modules-4"></script>
     <script src="/lib/show-editor.js?v=frontend-modules-5"></script>
@@ -394,7 +429,8 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/directory-ui.js?v=frontend-modules-7"></script>
     <script src="/lib/archive-search.js?v=frontend-modules-8"></script>
     <script src="/lib/timeline-page.js?v=frontend-modules-9"></script>
-    <script src="/lib/artifacts-page.js?v=frontend-modules-68"></script>
+    <script src="/lib/artifacts-page.js?v=frontend-modules-74"></script>
+    <script src="/lib/artifact-detail-page.js?v=frontend-modules-74"></script>
     <script src="/lib/overview-page.js?v=frontend-modules-56"></script>
     <script src="/lib/entity-profile-page.js?v=frontend-modules-55"></script>
     <script src="/lib/metadata-editor.js?v=frontend-modules-59"></script>
@@ -410,15 +446,15 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/peer-settings.js?v=frontend-modules-65"></script>
     <script src="/lib/notification-center.js?v=frontend-modules-52"></script>
     <script src="/lib/shared-shows-page.js?v=frontend-modules-24"></script>
-    <script src="/lib/archive-page.js?v=frontend-modules-27"></script>
+    <script src="/lib/archive-page.js?v=frontend-modules-70"></script>
     <script src="/lib/add-show-page.js?v=frontend-modules-26"></script>
     <script src="/lib/track-list-editor.js?v=frontend-modules-27"></script>
     <script src="/lib/edit-show-page.js?v=frontend-modules-28"></script>
     <script src="/lib/setlist-presentation.js?v=frontend-modules-29"></script>
-    <script src="/lib/show-detail-page.js?v=frontend-modules-56"></script>
+    <script src="/lib/show-detail-page.js?v=frontend-modules-70"></script>
     <script src="/lib/mobile-upload-controller.js?v=frontend-modules-32"></script>
-    <script src="/lib/media-workspace-controller.js?v=frontend-modules-32"></script>
+    <script src="/lib/media-workspace-controller.js?v=frontend-modules-70"></script>
     <script src="/lib/pwa.js?v=frontend-modules-2"></script>
-    <script src="/app.js?v=frontend-modules-68"></script>
+    <script src="/app.js?v=frontend-modules-74"></script>
   </body>
 </html>

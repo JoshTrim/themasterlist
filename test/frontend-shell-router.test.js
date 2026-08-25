@@ -26,6 +26,13 @@ describe('application shell router', () => {
     assert.equal(Object.values(document.sections).filter((section) => !section.hidden).length, 1);
   });
 
+  test('keeps the artifact archive on its own controller route', () => {
+    const document = documentFixture('artifacts');
+    assert.equal(shellRouter.apply(document), 'artifacts');
+    assert.equal(document.sections['artifacts-page'].hidden, false);
+    assert.equal(document.sections['home-page'].hidden, true);
+  });
+
   test('falls back unknown routes to the home section', () => {
     const document = documentFixture('unexpected');
     assert.equal(shellRouter.pageFor(document), 'unexpected');

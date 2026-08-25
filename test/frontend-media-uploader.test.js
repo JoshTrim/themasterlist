@@ -13,15 +13,28 @@ test('mobile uploader sends files serially in resumable chunks with artifact ide
     updateJob: (id, update) => jobs.push({ id, ...update }), isMobile: () => true, sleep: async () => {}, now: () => 1, random: () => .5
   });
   const files = ['one.jpg', 'two.jpg'].map((name) => ({ name, type: 'image/jpeg', size: 10, slice: () => ({}) }));
-  await uploader.upload('gig', files, () => {}, 'artifact');
+  const uploaded = await uploader.upload('gig', files, () => {}, 'artifact');
   assert.equal(maximumActive, 1); assert.equal(requests.length, 2);
   assert.ok(requests.every((request) => request.url === '/api/gigs/gig/artifacts/chunk'));
   assert.ok(requests.every((request) => request.headers['X-Media-Category'] === 'artifact'));
   assert.equal(jobs.filter((job) => job.status === 'complete').length, 2);
+  assert.equal(uploaded.length, 2);
 });
 
 test('uploader chooses stable endpoint names', () => {
   const uploader = createUploader({ fetch: async () => {}, XMLHttpRequest: function () {}, AbortController, randomUUID: () => 'id', updateJob: () => {} });
   assert.equal(uploader.endpoint('show-1', 'show'), '/api/gigs/show-1/media');
   assert.equal(uploader.endpoint('show-1', 'artifact'), '/api/gigs/show-1/artifacts');
+});
+
+test('artifact side uploads include group and view headers', async () => {
+  const requests = [];
+  const uploader = createUploader({
+    fetch: async (url, options) => { requests.push({ url, headers: options.headers }); return { ok: true, status: 200, json: async () => ({ complete: true, media: { category: 'artifact' } }) }; },
+    AbortController, randomUUID: () => 'upload', updateJob: () => {}, isMobile: () => true, sleep: async () => {}
+  });
+  const file = { name: 'back.jpg', type: 'image/jpeg', size: 10, slice: () => ({}) };
+  await uploader.upload('gig', [file], () => {}, 'artifact', { artifactGroupId: 'shirt', artifactView: 'back' });
+  assert.equal(requests[0].headers['X-Artifact-Group-Id'], 'shirt');
+  assert.equal(requests[0].headers['X-Artifact-View'], 'back');
 });

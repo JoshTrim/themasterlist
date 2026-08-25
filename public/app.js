@@ -23,6 +23,7 @@ const theatreUi = window.MasterListTheatre;
 const theatreControllerModule = window.MasterListTheatreController;
 const mediaUi = window.MasterListMediaUi;
 const mediaUploaderModule = window.MasterListMediaUploader;
+const artifactCreatorModule = window.MasterListArtifactCreator;
 const mediaGalleryModule = window.MasterListMediaGallery;
 const uploadQueue = window.MasterListUploadQueue;
 const mediaJobs = window.MasterListMediaJobs;
@@ -33,6 +34,7 @@ const directoryUi = window.MasterListDirectoryUi;
 const archiveSearchModule = window.MasterListArchiveSearch;
 const timelinePageModule = window.MasterListTimelinePage;
 const artifactsPageModule = window.MasterListArtifactsPage;
+const artifactDetailPageModule = window.MasterListArtifactDetailPage;
 const overviewPageModule = window.MasterListOverviewPage;
 const entityProfilePageModule = window.MasterListEntityProfilePage;
 const metadataEditorModule = window.MasterListMetadataEditor;
@@ -107,6 +109,7 @@ const artifactsTypeFilter = document.querySelector('#artifacts-type-filter');
 const artifactsSummary = document.querySelector('#artifacts-summary');
 const artifactsGrid = document.querySelector('#artifacts-grid');
 const artifactsEmpty = document.querySelector('#artifacts-empty');
+const artifactDetail = document.querySelector('#artifact-detail');
 const apiLimitsGrid = document.querySelector('#api-limits-grid');
 const apiLimitsNote = document.querySelector('#api-limits-note');
 const apiUsageDetail = document.querySelector('#api-usage-detail');
@@ -236,8 +239,7 @@ const artistComparison = document.querySelector('#artist-comparison');
 const editForm = document.querySelector('#edit-form');
 const editMessage = document.querySelector('#edit-message');
 const editMediaInput = document.querySelector('#edit-media-input');
-const editArtifactInput = document.querySelector('#edit-artifact-input');
-const editArtifactMessage = document.querySelector('#edit-artifact-message');
+const artifactCreateForm = document.querySelector('#artifact-create-form');
 const addAttendeePicker = document.querySelector('#add-attendee-picker');
 let editAttendeePicker = document.querySelector('#edit-attendee-picker');
 const pendingMedia = new WeakMap();
@@ -252,10 +254,8 @@ const mobileUploadController = mobileUploadControllerModule.createController({
 mobileUploadController.bind();
 mobileUploadController.setup(mediaInput);
 mobileUploadController.setup(editMediaInput);
-mobileUploadController.setup(editArtifactInput, 'artifact');
 mobileUploadController.addClearButton(mediaInput);
 mobileUploadController.addClearButton(editMediaInput);
-mobileUploadController.addClearButton(editArtifactInput);
 function mobileUploadStateFor(input, gigId = '', category = 'show') { return mobileUploadController.stateFor(input, gigId, category); }
 function startMobileUploadQueue(input, gigId, onUploaded, onDrained, category = 'show') { return mobileUploadController.start(input, gigId, onUploaded, onDrained, category); }
 
@@ -389,8 +389,8 @@ async function pollMediaRecognition(gigId, onMedia) {
   return mediaJobs.pollRecognition({ fetchMedia: () => fetchJson(`/api/gigs/${gigId}/media`), onUpdate: onMedia });
 }
 
-function uploadGigMedia(gigId, files, onProgress = () => {}, category = 'show') {
-  return gigMediaUploader.upload(gigId, files, onProgress, category);
+function uploadGigMedia(gigId, files, onProgress = () => {}, category = 'show', options = {}) {
+  return gigMediaUploader.upload(gigId, files, onProgress, category, options);
 }
 
 const externalMediaInput = externalMediaInputModule.createController({ fetchJson });
@@ -398,7 +398,15 @@ function addYouTubeMedia(gigId, input) { return externalMediaInput.add(gigId, in
 
 function youtubeEmbedUrl(url, options = {}) { return playbackMedia.youtubeEmbedUrl(url, { ...options, origin: window.location.origin }); }
 const mediaLightboxController = mediaLightboxModule.createController({
-  elements: { lightbox: mediaLightbox, image: mediaLightboxImage, video: mediaLightboxVideo, caption: mediaLightboxCaption, closeButton: mediaLightboxClose }
+  elements: {
+    lightbox: mediaLightbox, stage: document.querySelector('#media-lightbox-stage'), image: mediaLightboxImage, video: mediaLightboxVideo,
+    caption: mediaLightboxCaption, basicCaption: document.querySelector('#media-lightbox-basic-caption'), closeButton: mediaLightboxClose,
+    artifactCopy: document.querySelector('#artifact-lightbox-copy'), artifactType: document.querySelector('#artifact-lightbox-type'),
+    artifactNotes: document.querySelector('#artifact-lightbox-notes'), artifactViews: document.querySelector('#artifact-lightbox-views'),
+    artifactPrevious: document.querySelector('#artifact-lightbox-previous'), artifactFlip: document.querySelector('#artifact-lightbox-flip'),
+    artifactNext: document.querySelector('#artifact-lightbox-next'), artifactShow: document.querySelector('#artifact-lightbox-show'),
+    artifactDownload: document.querySelector('#artifact-lightbox-download')
+  }
 });
 mediaLightboxController.bind();
 function openMediaLightbox(item) { return mediaLightboxController.open(item); }
@@ -603,14 +611,23 @@ const editMediaUploadController = editMediaUploadModule.createController({
   pollRecognition: pollMediaRecognition, renderWorkspace: renderEditMediaWorkspace,
   uploadFiles: uploadGigMedia, fetchJson
 });
-const editArtifactUploadController = editMediaUploadModule.createController({
-  isMobile: () => isMobileUpload, input: editArtifactInput, message: editArtifactMessage, pendingFiles: pendingMedia,
-  mobileState: mobileUploadStateFor, startMobileQueue: startMobileUploadQueue,
-  renderWorkspace: renderEditMediaWorkspace, uploadFiles: uploadGigMedia, fetchJson, category: 'artifact'
+const artifactCreatorController = artifactCreatorModule.createController({
+  document, uploadFiles: uploadGigMedia, fetchJson, mediaJobs, updateJob,
+  refreshWorkspace: async (gig) => {
+    const media = await fetchJson(`/api/gigs/${gig.id}/media`); gig.media = media; renderEditMediaWorkspace(gig, media); renderGigs(); return media;
+  },
+  elements: {
+    form: artifactCreateForm, title: document.querySelector('#artifact-create-title'), type: document.querySelector('#artifact-create-type'),
+    notes: document.querySelector('#artifact-create-notes'), front: document.querySelector('#artifact-create-front'), back: document.querySelector('#artifact-create-back'),
+    addDetail: document.querySelector('#artifact-create-add-detail'), details: document.querySelector('#artifact-create-details'),
+    preview: document.querySelector('#artifact-create-preview'), removeBackground: document.querySelector('#artifact-create-remove-background'),
+    submit: document.querySelector('#artifact-create-submit'), message: document.querySelector('#artifact-create-message')
+  }
 });
+artifactCreatorController.bind();
 function setupEditUploads(gig) {
   editMediaUploadController.setup(gig);
-  editArtifactUploadController.setup(gig);
+  artifactCreatorController.setup(gig);
 }
 const editShowPageController = editShowPageModule.createController({
   page, gigId: editGigId, FormDataClass: FormData, fetchJson, editor: showEditor, workflow: showFormController, trackEditor: editTrackListController,
@@ -762,10 +779,24 @@ function setupArchiveArtistVisual(card, artist) { return archivePageController.s
 function renderGigs() { return archivePageController.render(); }
 
 const artifactsPageController = artifactsPageModule.createController({
-  page, getShows: () => [...gigs, ...remoteSharedArchiveShows()], escapeHtml, formatGigDate,
+  page, getShows: () => [...gigs, ...remoteSharedArchiveShows()], escapeHtml, formatGigDate, openArtifact: openMediaLightbox,
   elements: { query: artifactsFilter, type: artifactsTypeFilter, summary: artifactsSummary, grid: artifactsGrid, empty: artifactsEmpty }
 });
 function renderArtifacts() { return artifactsPageController.render(); }
+
+const artifactDetailPageController = artifactDetailPageModule.createController({
+  page, getShows: () => [...gigs, ...remoteSharedArchiveShows()], artifactId: () => new URLSearchParams(window.location.search).get('id'),
+  escapeHtml, formatGigDate, openArtifact: openMediaLightbox,
+  elements: {
+    content: artifactDetail, missing: document.querySelector('#artifact-detail-missing'), image: document.querySelector('#artifact-detail-image'),
+    viewTabs: document.querySelector('#artifact-detail-views'), previous: document.querySelector('#artifact-detail-previous'),
+    flip: document.querySelector('#artifact-detail-flip'), next: document.querySelector('#artifact-detail-next'), fullscreen: document.querySelector('#artifact-detail-fullscreen'),
+    type: document.querySelector('#artifact-detail-type'), title: document.querySelector('#artifact-detail-title'), notes: document.querySelector('#artifact-detail-notes'),
+    artist: document.querySelector('#artifact-detail-artist'), show: document.querySelector('#artifact-detail-show'), showMeta: document.querySelector('#artifact-detail-show-meta'),
+    viewCount: document.querySelector('#artifact-detail-view-count'), edit: document.querySelector('#artifact-detail-edit'), download: document.querySelector('#artifact-detail-download')
+  }
+});
+function renderArtifact() { return artifactDetailPageController.render(); }
 
 const cityPageController = locationsPageModule.createCityController({
   page, window, getGigs: () => gigs, escapeHtml,
@@ -794,7 +825,7 @@ function setupExportButtons(exports, gig) { return playlistExporter.setupButtons
 const pageControllers = pageControllersModule.createRegistry({
   window, providerName, setMessage,
   actions: {
-    renderDashboard: renderDashboardStats, renderDirectories: renderEntityDirectories, renderTimeline, renderArtifacts, renderSearch: renderGlobalSearch,
+    renderDashboard: renderDashboardStats, renderDirectories: renderEntityDirectories, renderTimeline, renderArtifacts, renderArtifact, renderSearch: renderGlobalSearch,
     renderHealth: renderArchiveHealth, renderApiLimits, renderMaintenance, renderActivity, renderConflicts,
     renderAddAttendees: () => renderAttendeePicker(addAttendeePicker, []), populateAutofill: populateShowAutofill,
     populateYears: populateYearFilter, renderGigs, renderArtist: renderArtistPage, renderArtistEdit: renderArtistEditPage,
@@ -813,4 +844,8 @@ const appBootstrap = appBootstrapModule.createBootstrap({
 });
 function initializeApp() { return appBootstrap.initialize(); }
 
-initializeApp().catch((error) => setMessage(error.message, true));
+initializeApp().catch((error) => {
+  setMessage(error.message, true);
+  if (page === 'artifacts' && artifactsSummary) artifactsSummary.textContent = `Could not load artifacts: ${error.message}`;
+  if (page === 'artifact' && document.querySelector('#artifact-detail-missing')) document.querySelector('#artifact-detail-missing').hidden = false;
+});

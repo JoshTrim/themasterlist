@@ -67,7 +67,8 @@
     if (!section || !gallery) return;
     const artifacts = (gig.media || []).filter((item) => item.category === 'artifact');
     const syncState = () => {
-      const state = mediaSectionState('Artifacts', artifacts);
+      const count = new Set(artifacts.map((item) => item.artifactGroupId || item.id)).size;
+      const state = { hidden: count === 0, label: count ? `Artifacts · ${count}` : 'Artifacts', count };
       section.hidden = state.hidden;
       section.querySelector('summary span').textContent = state.label;
     };
@@ -75,6 +76,7 @@
     renderMediaGallery(gallery, artifacts, {
       editable: true,
       allowCover: false,
+      gigId: gig.id,
       onDelete: (removed) => {
         const removedIds = new Set(removed.map((item) => item.id));
         gig.media = (gig.media || []).filter((item) => !removedIds.has(item.id));

@@ -114,6 +114,55 @@ test('artifact metadata and framing updates are validated and persisted', async 
   app.database.close();
 });
 
+test('artifact identity updates propagate across views while framing stays per photo', async () => {
+  const app = fixture();
+  const insert = app.database.prepare("INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, category, artifact_group_id, artifact_view, artifact_is_cover, size, created_at) VALUES (?, 'gig', ?, 'image/jpeg', 'Tour shirt', 'artifact', 'shirt', ?, ?, 5, 'now')");
+  insert.run('front', 'front.jpg', 'front', 1); insert.run('back', 'back.jpg', 'back', 0);
+  const updated = response();
+  await app.handle({ method: 'PATCH', headers: {}, body: { caption: 'World tour shirt', artifactType: 'merch', artifactNotes: 'Front and back', artifactCropX: 20 } }, updated, new URL('http://localhost/api/media/back'));
+  const rows = app.database.prepare("SELECT id, caption, artifact_type AS type, artifact_notes AS notes, artifact_crop_x AS crop FROM gig_media WHERE artifact_group_id = 'shirt' ORDER BY id").all();
+  assert.deepEqual(rows.map(({ caption, type, notes }) => ({ caption, type, notes })), [
+    { caption: 'World tour shirt', type: 'merch', notes: 'Front and back' },
+    { caption: 'World tour shirt', type: 'merch', notes: 'Front and back' }
+  ]);
+  assert.deepEqual(rows.map((row) => row.crop), [20, 50]);
+  app.database.close();
+});
+
+test('standalone artifact photos combine transactionally as another side', async () => {
+  const app = fixture();
+  const insert = app.database.prepare("INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, category, artifact_type, artifact_notes, artifact_group_id, artifact_view, artifact_is_cover, size, created_at) VALUES (?, 'gig', ?, 'image/jpeg', ?, 'artifact', ?, ?, ?, 'front', 1, 5, 'now')");
+  insert.run('shirt-front', 'front.jpg', 'Tour shirt', 'merch', 'Bought at the show', 'shirt-front');
+  insert.run('shirt-back', 'back.jpg', 'Back photo', 'memorabilia', 'Separate upload', 'shirt-back');
+  const result = response();
+  await app.handle({ method: 'POST', headers: {}, body: { sourceId: 'shirt-back', view: 'back' } }, result, new URL('http://localhost/api/media/shirt-front/combine-artifact'));
+  assert.equal(result.status, 200);
+  assert.deepEqual(app.database.prepare('SELECT artifact_group_id AS groupId, artifact_view AS view, artifact_is_cover AS cover, caption, artifact_type AS type, artifact_notes AS notes FROM gig_media WHERE id = ?').get('shirt-back'), {
+    groupId: 'shirt-front', view: 'back', cover: 0, caption: 'Tour shirt', type: 'merch', notes: 'Bought at the show'
+  });
+  app.database.close();
+});
+
+test('artifact combine rejects occupied sides, cross-show media and multi-view sources', async () => {
+  const app = fixture();
+  app.database.prepare("INSERT INTO gigs (id, artist, venue, city, date, songs, attendees, created_at) VALUES ('other', 'Artist', 'Venue', 'City', '2026', '[]', '[]', 'now')").run();
+  const insert = app.database.prepare("INSERT INTO gig_media (id, gig_id, filename, mime_type, caption, category, artifact_group_id, artifact_view, artifact_is_cover, size, created_at) VALUES (?, ?, ?, 'image/jpeg', ?, 'artifact', ?, ?, ?, 5, 'now')");
+  insert.run('front', 'gig', 'front.jpg', 'Shirt', 'shirt', 'front', 1);
+  insert.run('back', 'gig', 'back.jpg', 'Shirt', 'shirt', 'back', 0);
+  insert.run('single', 'gig', 'single.jpg', 'Other', 'single', 'front', 1);
+  insert.run('other-show', 'other', 'other.jpg', 'Other', 'other-show', 'front', 1);
+  const occupied = response();
+  await app.handle({ method: 'POST', headers: {}, body: { sourceId: 'single', view: 'back' } }, occupied, new URL('http://localhost/api/media/front/combine-artifact'));
+  assert.equal(occupied.status, 409);
+  const crossShow = response();
+  await app.handle({ method: 'POST', headers: {}, body: { sourceId: 'other-show', view: 'detail', viewLabel: 'Tag' } }, crossShow, new URL('http://localhost/api/media/front/combine-artifact'));
+  assert.equal(crossShow.status, 400);
+  const multiView = response();
+  await app.handle({ method: 'POST', headers: {}, body: { sourceId: 'front', view: 'detail', viewLabel: 'Print' } }, multiView, new URL('http://localhost/api/media/single/combine-artifact'));
+  assert.equal(multiView.status, 409);
+  app.database.close();
+});
+
 test('deleting media removes every associated file and database record', async () => {
   const app = fixture();
   app.database.prepare("UPDATE gig_media SET background_filename = 'cutout.png' WHERE id = 'video'").run();

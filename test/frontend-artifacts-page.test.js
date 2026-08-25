@@ -14,6 +14,16 @@ test('artifact archive model keeps artifact media and sorts newest shows first',
   assert.equal(model[0].gig.id, 'new');
 });
 
+test('artifact archive groups front, back and detail photos into one listing', () => {
+  const model = artifactsPage.buildArtifactModel([{ id: 'gig', date: '2026-01-01', media: [
+    { id: 'front', category: 'artifact', artifactGroupId: 'shirt', artifactView: 'front' },
+    { id: 'back', category: 'artifact', artifactGroupId: 'shirt', artifactView: 'back' },
+    { id: 'label', category: 'artifact', artifactGroupId: 'shirt', artifactView: 'detail', artifactViewLabel: 'Label' }
+  ] }]);
+  assert.equal(model.length, 1);
+  assert.deepEqual(model[0].artifactViews.map((item) => item.artifactView), ['front', 'back', 'detail']);
+});
+
 test('artifact archive renders metadata and filters without losing show context', () => {
   const query = control(); const type = control('all');
   const elements = { query, type, summary: { textContent: '' }, grid: { innerHTML: '' }, empty: { hidden: true } };
@@ -27,6 +37,7 @@ test('artifact archive renders metadata and filters without losing show context'
   assert.match(elements.grid.innerHTML, /Bought after the encore/);
   assert.match(elements.grid.innerHTML, /&lt;Artist&gt;/);
   assert.match(elements.grid.innerHTML, /is-cutout/);
+  assert.match(elements.grid.innerHTML, /\/artifact\?id=shirt/);
   type.value = 'ticket'; type.listeners.change();
   assert.doesNotMatch(elements.grid.innerHTML, /Tour shirt/);
   assert.match(elements.grid.innerHTML, /Ticket/);

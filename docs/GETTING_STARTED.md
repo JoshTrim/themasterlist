@@ -89,7 +89,7 @@ The first cutout job downloads its model and takes longer than later jobs.
 2. Enter an artist and city. Date is optional; adding it usually improves setlist matching.
 3. If setlist.fm is configured, search and select the correct event. Otherwise enter the show manually.
 4. Save the show before adding large media. Uploads and encoding continue through the background-jobs panel.
-5. Open the saved show to edit tracks, assign media, add artifacts or build whole-set playback.
+5. Open the saved show to edit tracks, assign media, add artifacts or build whole-set playback. **New artifact** lets you enter shared details, choose front and back photos together, add named detail photos and preview the complete keepsake before upload. Optional background removal runs separately for each view and keeps every original.
 
 ## Phone and LAN access
 
