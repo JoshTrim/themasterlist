@@ -40,3 +40,11 @@ test('narrow layouts contain playback metadata and long maintenance commands', (
   assert.match(playback, /\.set-player-heading \{ display: grid; grid-template-columns: minmax\(0, 1fr\);/);
   assert.match(playback, /\.set-player-source \{ width: 100%; min-width: 0; justify-items: start;/);
 });
+
+test('artifact lightbox contains and centres wide transparent cutouts', () => {
+  const playback = fs.readFileSync(path.join(publicRoot, 'styles', 'playback.css'), 'utf8');
+  assert.match(playback, /\.media-lightbox \{[^}]*height: 100dvh;[^}]*box-sizing: border-box;[^}]*overflow: hidden;/);
+  assert.match(playback, /\.media-lightbox\.is-artifact \.media-lightbox-stage \{[^}]*height: min\(calc\(100dvh - clamp\(/);
+  assert.match(playback, /\.media-lightbox\.is-artifact img \{[^}]*width: auto;[^}]*height: auto;[^}]*max-width: 100%;[^}]*max-height: min\(calc\(100dvh - clamp\(/);
+  assert.match(playback, /\.media-lightbox\.is-artifact img \{ max-width: calc\(100vw - 24px\); max-height: min\(52dvh, 520px\); \}/);
+});
