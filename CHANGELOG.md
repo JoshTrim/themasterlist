@@ -2,12 +2,15 @@
 
 ## Unreleased
 
+## 0.3.1 — 2026-08-25
+
 ### Added
 
 - A single artifact can contain front, back and named detail photos while remaining one listing throughout the archive.
 - Artifact photos can be added, replaced and framed independently, with a full-screen flip viewer, view navigation and original downloads.
 - Existing-show editing includes a guided artifact creator with shared metadata, a live multi-view preview and optional per-photo background removal.
 - Every artifact has a dedicated detail URL with its complete photo viewer, show context, notes, editing access and original downloads.
+- Standalone artifact photos can be combined into another artifact as its front, back or a named detail without re-uploading or reprocessing the file.
 
 ### Changed
 

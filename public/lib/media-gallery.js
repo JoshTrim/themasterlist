@@ -68,10 +68,12 @@
           const groupMarkup = (group) => {
             const hasFront = group.views.some((item) => (item.artifactView || 'front') === 'front');
             const hasBack = group.views.some((item) => item.artifactView === 'back');
+            const combineCandidates = groups.filter((candidate) => candidate.id !== group.id && candidate.views.length === 1 && !candidate.cover.remote);
             const viewLabel = (item, index) => item.artifactView === 'detail' ? (item.artifactViewLabel || `Detail ${index + 1}`) : (item.artifactView === 'back' ? 'Back' : 'Front');
             const viewCards = editable ? group.views.map((item, index) => `<div class="artifact-group-view"><span>${escapeHtml(viewLabel(item, index))}</span>${itemMarkup(item)}</div>`).join('') : itemMarkup(group.cover);
             const add = editable && gigId ? `<div class="artifact-add-views">${!hasFront ? `<label>Add front<input class="artifact-view-upload" type="file" accept="image/jpeg,image/png,image/gif,image/webp" data-artifact-group="${escapeHtml(group.id)}" data-artifact-view="front" /></label>` : ''}${!hasBack ? `<label>Add back<input class="artifact-view-upload" type="file" accept="image/jpeg,image/png,image/gif,image/webp" data-artifact-group="${escapeHtml(group.id)}" data-artifact-view="back" /></label>` : ''}<label>Add detail<input class="artifact-view-upload" type="file" accept="image/jpeg,image/png,image/gif,image/webp" data-artifact-group="${escapeHtml(group.id)}" data-artifact-view="detail" /></label></div>` : '';
-            return `<section class="artifact-group-card" data-artifact-group="${escapeHtml(group.id)}"><header><div><span>${escapeHtml(artifactLabels[group.cover.artifactType] || artifactLabels.memorabilia)}</span><h3>${escapeHtml(group.cover.caption || group.cover.filename || 'Artifact')}</h3></div><button class="artifact-open-group" type="button">${group.views.length > 1 ? `View ${group.views.length} sides` : 'View artifact'}</button></header><div class="artifact-group-views">${viewCards}</div>${add}</section>`;
+            const combine = editable && gigId && combineCandidates.length ? `<details class="artifact-combine"><summary>Combine existing artifact</summary><div class="artifact-combine-fields"><label>Standalone artifact<select class="artifact-combine-source">${combineCandidates.map((candidate) => `<option value="${escapeHtml(candidate.cover.id)}">${escapeHtml(candidate.cover.caption || candidate.cover.filename || 'Untitled artifact')}</option>`).join('')}</select></label><label>Use photo as<select class="artifact-combine-view">${!hasFront ? '<option value="front">Front</option>' : ''}${!hasBack ? '<option value="back">Back</option>' : ''}<option value="detail">Named detail</option></select></label><label class="artifact-combine-label" hidden>Detail label<input maxlength="80" placeholder="Sleeve, tag, signature…" /></label><button class="button button-secondary artifact-combine-submit" type="button">Combine</button><small>Moves the selected photo into this artifact. The original file and cutout are preserved.</small><p class="artifact-combine-status" role="status"></p></div></details>` : '';
+            return `<section class="artifact-group-card" data-artifact-group="${escapeHtml(group.id)}"><header><div><span>${escapeHtml(artifactLabels[group.cover.artifactType] || artifactLabels.memorabilia)}</span><h3>${escapeHtml(group.cover.caption || group.cover.filename || 'Artifact')}</h3></div><button class="artifact-open-group" type="button">${group.views.length > 1 ? `View ${group.views.length} sides` : 'View artifact'}</button></header><div class="artifact-group-views">${viewCards}</div>${add}${combine}</section>`;
           };
           const renderedGroups = new Set();
           const content = media.map((item) => {
@@ -110,6 +112,27 @@
           if (host.firstChild) host.firstChild.textContent = error.message;
           setTimeout(() => { if (host.firstChild) host.firstChild.textContent = original; }, 3000);
         }
+      }));
+      container.querySelectorAll('.artifact-combine-view').forEach((select) => {
+        const update = () => { select.closest('.artifact-combine-fields').querySelector('.artifact-combine-label').hidden = select.value !== 'detail'; };
+        select.addEventListener('change', update); update();
+      });
+      container.querySelectorAll('.artifact-combine-submit').forEach((button) => button.addEventListener('click', async () => {
+        const card = button.closest('.artifact-group-card');
+        const group = artifactGroups(media.filter((item) => item.category === 'artifact')).find((entry) => entry.id === card?.dataset.artifactGroup);
+        const fields = button.closest('.artifact-combine-fields');
+        const sourceId = fields.querySelector('.artifact-combine-source').value;
+        const view = fields.querySelector('.artifact-combine-view').value;
+        const viewLabel = fields.querySelector('.artifact-combine-label input').value.trim();
+        const source = media.find((item) => item.id === sourceId);
+        const status = fields.querySelector('.artifact-combine-status');
+        if (view === 'detail' && !viewLabel) { status.textContent = 'Enter a label for the detail photo.'; return; }
+        if (!group || !source || !confirm(`Combine “${source.caption || source.filename || 'this photo'}” with “${group.cover.caption || group.cover.filename || 'this artifact'}” as ${view === 'detail' ? viewLabel : view}?`)) return;
+        button.disabled = true; status.textContent = 'Combining…';
+        try {
+          const updated = await fetchJson(`/api/media/${group.cover.id}/combine-artifact`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceId, view, viewLabel }) });
+          Object.assign(source, updated); redraw();
+        } catch (error) { button.disabled = false; status.textContent = error.message; }
       }));
       container.querySelectorAll('.artifact-replace-photo input').forEach((input) => input.addEventListener('change', async () => {
         const file = input.files?.[0];

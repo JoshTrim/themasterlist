@@ -46,11 +46,14 @@ test('artifact groups keep their side controls alongside ordinary show media', (
   const container = { innerHTML: '', replaceChildren() { this.innerHTML = ''; }, querySelectorAll() { return []; }, querySelector() { return null; } };
   gallery().render(container, [
     { id: 'video', mimeType: 'video/mp4', url: '/video.mp4', caption: 'Show clip' },
-    { id: 'shirt-front', artifactGroupId: 'shirt', artifactView: 'front', category: 'artifact', mimeType: 'image/jpeg', url: '/front.jpg', caption: 'Tour shirt', artifactType: 'merch' }
+    { id: 'shirt-front', artifactGroupId: 'shirt', artifactView: 'front', category: 'artifact', mimeType: 'image/jpeg', url: '/front.jpg', caption: 'Tour shirt', artifactType: 'merch' },
+    { id: 'shirt-back-separate', artifactGroupId: 'shirt-back-separate', artifactView: 'front', category: 'artifact', mimeType: 'image/jpeg', url: '/back.jpg', caption: 'Shirt back', artifactType: 'merch' }
   ], { editable: true, gigId: 'gig' });
   assert.match(container.innerHTML, /Show clip/);
   assert.match(container.innerHTML, /artifact-group-card/);
   assert.match(container.innerHTML, /Tour shirt/);
   assert.match(container.innerHTML, /Add back/);
   assert.match(container.innerHTML, /Add detail/);
+  assert.match(container.innerHTML, /Combine existing artifact/);
+  assert.match(container.innerHTML, /shirt-back-separate/);
 });
