@@ -405,7 +405,10 @@ const mediaLightboxController = mediaLightboxModule.createController({
     artifactNotes: document.querySelector('#artifact-lightbox-notes'), artifactViews: document.querySelector('#artifact-lightbox-views'),
     artifactPrevious: document.querySelector('#artifact-lightbox-previous'), artifactFlip: document.querySelector('#artifact-lightbox-flip'),
     artifactNext: document.querySelector('#artifact-lightbox-next'), artifactShow: document.querySelector('#artifact-lightbox-show'),
-    artifactDownload: document.querySelector('#artifact-lightbox-download')
+    artifactDownload: document.querySelector('#artifact-lightbox-download'), artifactModel: document.querySelector('#artifact-model'),
+    artifactModelSpinner: document.querySelector('#artifact-model-spinner'), artifactModelFront: document.querySelector('#artifact-model-front'),
+    artifactModelBack: document.querySelector('#artifact-model-back'), artifactModelToggle: document.querySelector('#artifact-lightbox-model-toggle'),
+    artifactModelMotion: document.querySelector('#artifact-model-motion')
   }
 });
 mediaLightboxController.bind();

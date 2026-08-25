@@ -31,7 +31,7 @@
       body[data-page="venue-edit"] #venue-edit-page, body[data-page="edit"] #edit-page,
       body[data-page="map"] #map-page, body[data-page="account"] #account-page { display: block; }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=css-split-22" />
+    <link rel="stylesheet" href="/styles.css?v=css-split-26" />
   </head>
   <body>
     <script>
@@ -386,7 +386,7 @@ docker compose ps</code></pre></div></details>
       </article>
     </template>
 
-    <div class="media-lightbox" id="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Media viewer"><button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Close media viewer">×</button><div class="media-lightbox-stage" id="media-lightbox-stage"><img id="media-lightbox-image" alt="" /><video id="media-lightbox-video" controls></video></div><div class="artifact-lightbox-copy" id="artifact-lightbox-copy" hidden><span id="artifact-lightbox-type"></span><h2 id="media-lightbox-caption"></h2><p id="artifact-lightbox-notes"></p><div class="artifact-lightbox-views" id="artifact-lightbox-views" aria-label="Artifact photos"></div><div class="artifact-lightbox-controls"><button type="button" id="artifact-lightbox-previous">← Previous</button><button type="button" id="artifact-lightbox-flip">↻ Flip</button><button type="button" id="artifact-lightbox-next">Next →</button></div><div class="artifact-lightbox-links"><a id="artifact-lightbox-show" href="#">Open show</a><a id="artifact-lightbox-download" href="#" download>Download original</a></div></div><p class="media-lightbox-basic-caption" id="media-lightbox-basic-caption"></p></div>
+    <div class="media-lightbox" id="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Media viewer"><button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Close media viewer">×</button><div class="media-lightbox-stage" id="media-lightbox-stage"><img id="media-lightbox-image" alt="" /><div class="artifact-model" id="artifact-model" hidden tabindex="0" aria-label="Rotating three-dimensional artifact preview. Drag or use the left and right arrow keys to rotate."><div class="artifact-model-spinner" id="artifact-model-spinner"><div class="artifact-model-face artifact-model-front"><img id="artifact-model-front" alt="" /></div><div class="artifact-model-face artifact-model-back"><img id="artifact-model-back" alt="" /></div></div><div class="artifact-model-toolbar"><button type="button" id="artifact-model-motion" aria-pressed="false">Pause</button><span>Drag or use ← →</span></div></div><video id="media-lightbox-video" controls></video></div><div class="artifact-lightbox-copy" id="artifact-lightbox-copy" hidden><span id="artifact-lightbox-type"></span><h2 id="media-lightbox-caption"></h2><p id="artifact-lightbox-notes"></p><div class="artifact-lightbox-views" id="artifact-lightbox-views" aria-label="Artifact photos"></div><button class="artifact-lightbox-model-toggle" type="button" id="artifact-lightbox-model-toggle" aria-pressed="false" hidden>3D view</button><div class="artifact-lightbox-controls"><button type="button" id="artifact-lightbox-previous">← Previous</button><button type="button" id="artifact-lightbox-flip">↻ Flip</button><button type="button" id="artifact-lightbox-next">Next →</button></div><div class="artifact-lightbox-links"><a id="artifact-lightbox-show" href="#">Open show</a><a id="artifact-lightbox-download" href="#" download>Download original</a></div></div><p class="media-lightbox-basic-caption" id="media-lightbox-basic-caption"></p></div>
 
     <script src="/lib/api-client.js?v=frontend-modules-70"></script>
     <script src="/lib/page-runtime.js?v=frontend-modules-70"></script>
@@ -398,7 +398,7 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/show-cards.js?v=frontend-modules-70"></script>
     <script src="/lib/playback-core.js?v=frontend-modules-3"></script>
     <script src="/lib/playback-media.js?v=frontend-modules-41"></script>
-    <script src="/lib/media-lightbox.js?v=frontend-modules-70"></script>
+    <script src="/lib/media-lightbox.js?v=frontend-modules-78"></script>
     <script src="/lib/app-bootstrap.js?v=frontend-modules-70"></script>
     <script src="/lib/page-controllers.js?v=frontend-modules-70"></script>
     <script src="/lib/edit-media-upload.js?v=frontend-modules-44"></script>
@@ -455,6 +455,6 @@ docker compose ps</code></pre></div></details>
     <script src="/lib/mobile-upload-controller.js?v=frontend-modules-32"></script>
     <script src="/lib/media-workspace-controller.js?v=frontend-modules-70"></script>
     <script src="/lib/pwa.js?v=frontend-modules-2"></script>
-    <script src="/app.js?v=frontend-modules-74"></script>
+    <script src="/app.js?v=frontend-modules-75"></script>
   </body>
 </html>

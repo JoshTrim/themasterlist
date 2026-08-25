@@ -46,5 +46,16 @@ test('artifact lightbox contains and centres wide transparent cutouts', () => {
   assert.match(playback, /\.media-lightbox \{[^}]*height: 100dvh;[^}]*box-sizing: border-box;[^}]*overflow: hidden;/);
   assert.match(playback, /\.media-lightbox\.is-artifact \.media-lightbox-stage \{[^}]*height: min\(calc\(100dvh - clamp\(/);
   assert.match(playback, /\.media-lightbox\.is-artifact img \{[^}]*width: auto;[^}]*height: auto;[^}]*max-width: 100%;[^}]*max-height: min\(calc\(100dvh - clamp\(/);
+  assert.match(playback, /\.media-lightbox\.is-artifact img\[hidden\] \{ display: none; \}/);
   assert.match(playback, /\.media-lightbox\.is-artifact img \{ max-width: calc\(100vw - 24px\); max-height: min\(52dvh, 520px\); \}/);
+});
+
+test('artifact 3D mode keeps media clean, touchable and motion-safe', () => {
+  const playback = fs.readFileSync(path.join(publicRoot, 'styles', 'playback.css'), 'utf8');
+  assert.match(playback, /\.artifact-model \{[^}]*perspective: 1400px;[^}]*touch-action: none;/);
+  assert.match(playback, /\.artifact-model-spinner \{[^}]*transform: rotateX\(-3deg\) rotateY\(-18deg\);[^}]*transform-style: preserve-3d;[^}]*will-change: transform;/);
+  assert.doesNotMatch(playback, /@keyframes artifact-model-spin|animation: artifact-model-spin/);
+  assert.match(playback, /\.artifact-model-front \{ transform: translateZ\(7px\); \}/);
+  assert.match(playback, /\.artifact-model-back \{ transform: rotateY\(180deg\) translateZ\(7px\); \}/);
+  assert.doesNotMatch(playback, /\.artifact-model-face img[^}]*image-rendering: pixelated/);
 });
