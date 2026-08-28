@@ -24,7 +24,16 @@
     if (failures) health.push(`${failures} failed attempt${failures === 1 ? '' : 's'}`);
     if (nextRetry) health.push(`retry ${nextRetry}`);
     const error = peer.lastError ? `<span class="peer-error" title="${escapeHtml(peer.lastError)}">${escapeHtml(peer.lastError)}</span>` : '';
-    return `<article class="peer-card" data-peer-id="${escapeHtml(peer.id)}"><div class="peer-card-copy"><strong>${escapeHtml(peer.name)}</strong><small>${escapeHtml(peer.baseUrl || 'Direct relay/VPN connection not configured')}</small><span class="peer-status peer-status-${escapeHtml(status)}">${escapeHtml(status)}</span><span class="peer-sync-health">${escapeHtml(health.join(' · '))}</span>${error}</div><div class="peer-actions"><button type="button" class="peer-test" ${peer.baseUrl ? '' : 'disabled'}>Test</button><button type="button" class="peer-sync" ${peer.baseUrl ? '' : 'disabled'}>Sync now</button><button type="button" class="peer-remove">Remove</button></div></article>`;
+    return `<article class="peer-card" data-peer-id="${escapeHtml(peer.id)}"><div class="peer-card-copy"><strong class="peer-name">${escapeHtml(peer.name)}</strong><form class="peer-name-form" hidden><label>Instance name<input class="peer-name-input" name="name" required maxlength="100" value="${escapeHtml(peer.name)}" /></label><div><button type="submit" class="peer-name-save">Save</button><button type="button" class="peer-name-cancel">Cancel</button></div></form><small>${escapeHtml(peer.baseUrl || 'Direct relay/VPN connection not configured')}</small><span class="peer-status peer-status-${escapeHtml(status)}">${escapeHtml(status)}</span><span class="peer-sync-health">${escapeHtml(health.join(' · '))}</span>${error}</div><div class="peer-actions"><button type="button" class="peer-rename">Edit name</button><button type="button" class="peer-test" ${peer.baseUrl ? '' : 'disabled'}>Test</button><button type="button" class="peer-sync" ${peer.baseUrl ? '' : 'disabled'}>Sync now</button><button type="button" class="peer-remove">Remove</button></div></article>`;
+  }
+
+  async function savePeerName(fetchJson, peerId, value) {
+    const name = String(value || '').trim();
+    if (!name) throw new Error('Peer name is required.');
+    if (name.length > 100) throw new Error('Peer name must be 100 characters or fewer.');
+    return fetchJson(`/api/peers/${encodeURIComponent(peerId)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name })
+    });
   }
 
   function createPostSyncRefresh({ fetchJson, onGigs, populateYears, renderArchive, refreshCollaboration, loadNotifications }) {
@@ -53,6 +62,42 @@
     }
 
     function bindPeerActions() {
+      list.querySelectorAll('.peer-rename').forEach((button) => button.addEventListener('click', () => {
+        const card = button.closest('.peer-card');
+        const name = card.querySelector('.peer-name');
+        const form = card.querySelector('.peer-name-form');
+        const input = card.querySelector('.peer-name-input');
+        name.hidden = true;
+        form.hidden = false;
+        input.focus?.();
+        input.select?.();
+      }));
+      list.querySelectorAll('.peer-name-cancel').forEach((button) => button.addEventListener('click', () => {
+        const card = button.closest('.peer-card');
+        const name = card.querySelector('.peer-name');
+        const form = card.querySelector('.peer-name-form');
+        const input = card.querySelector('.peer-name-input');
+        input.value = name.textContent;
+        form.hidden = true;
+        name.hidden = false;
+      }));
+      list.querySelectorAll('.peer-name-form').forEach((form) => form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const card = form.closest('.peer-card');
+        const input = card.querySelector('.peer-name-input');
+        const saveButton = card.querySelector('.peer-name-save');
+        const name = input.value.trim();
+        if (!name) { setMessage(message, 'Peer name is required.', true); return; }
+        saveButton.disabled = true;
+        try {
+          const peer = await savePeerName(fetchJson, card.dataset.peerId, name);
+          setMessage(message, `Renamed paired instance to ${peer.name}.`);
+          await render();
+        } catch (error) {
+          setMessage(message, error.message, true);
+          saveButton.disabled = false;
+        }
+      }));
       list.querySelectorAll('.peer-test, .peer-sync').forEach((button) => button.addEventListener('click', async () => {
         const card = button.closest('.peer-card');
         const action = button.classList.contains('peer-sync') ? 'sync' : 'test';
@@ -74,7 +119,7 @@
       }));
       list.querySelectorAll('.peer-remove').forEach((button) => button.addEventListener('click', async () => {
         const card = button.closest('.peer-card');
-        const name = card.querySelector('strong').textContent;
+        const name = card.querySelector('.peer-name').textContent;
         if (!confirmAction(`Remove ${name} as a paired instance?`)) return;
         await fetchJson(`/api/peers/${encodeURIComponent(card.dataset.peerId)}`, { method: 'DELETE' });
         await render();
@@ -147,5 +192,5 @@
     return { render, addManual, createInvite, importInvite, bind };
   }
 
-  return { extractInviteToken, peerCardMarkup, createPostSyncRefresh, createController };
+  return { extractInviteToken, peerCardMarkup, savePeerName, createPostSyncRefresh, createController };
 }));

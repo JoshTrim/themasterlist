@@ -48,9 +48,12 @@ describe('peer instance settings', () => {
   });
 
   test('renders escaped peer identity, status and connection controls', () => {
-    const markup = peers.peerCardMarkup({ id: 'peer&1', name: '<Friend>', baseUrl: '', status: 'unreachable', consecutiveFailures: 2, lastError: '<Offline>', nextRetryAt: '2026-07-18T01:00:00Z' }, escapeHtml);
+    const markup = peers.peerCardMarkup({ id: 'peer&1', name: '<Friend "archive">', baseUrl: '', status: 'unreachable', consecutiveFailures: 2, lastError: '<Offline>', nextRetryAt: '2026-07-18T01:00:00Z' }, escapeHtml);
     assert.match(markup, /data-peer-id="peer&amp;1"/);
-    assert.match(markup, /&lt;Friend>/);
+    assert.match(markup, /&lt;Friend &quot;archive&quot;>/);
+    assert.match(markup, /class="peer-rename">Edit name<\/button>/);
+    assert.match(markup, /class="peer-name-form" hidden/);
+    assert.match(markup, /maxlength="100" value="&lt;Friend &quot;archive&quot;>"/);
     assert.match(markup, /peer-status-unreachable/);
     assert.match(markup, /2 failed attempts/);
     assert.match(markup, /&lt;Offline>/);
@@ -73,6 +76,20 @@ describe('peer instance settings', () => {
     assert.equal(view.elements.inviteToken.value, 'url-token');
     assert.equal(loadedPeers[0].id, 'p1');
     assert.match(view.elements.list.innerHTML, /Friend/);
+  });
+
+  test('renames a peer through the authenticated instance endpoint', async () => {
+    const requests = [];
+    const result = await peers.savePeerName(async (url, options) => {
+      requests.push([url, options]);
+      return { id: 'peer/one', name: 'Friend archive' };
+    }, 'peer/one', '  Friend archive  ');
+    assert.equal(result.name, 'Friend archive');
+    assert.equal(requests[0][0], '/api/peers/peer%2Fone');
+    assert.equal(requests[0][1].method, 'PATCH');
+    assert.deepEqual(JSON.parse(requests[0][1].body), { name: 'Friend archive' });
+    await assert.rejects(() => peers.savePeerName(async () => {}, 'peer', '   '), /required/);
+    await assert.rejects(() => peers.savePeerName(async () => {}, 'peer', 'x'.repeat(101)), /100 characters/);
   });
 
   test('adds a manually configured peer and refreshes settings', async () => {

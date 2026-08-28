@@ -104,6 +104,19 @@ test('account peer lifecycle exposes health, notifications, bulk sync and deleti
   const peer = JSON.parse(created.body);
   app.database.prepare("UPDATE peer_instances SET status = 'connected' WHERE id = ?").run(peer.id);
 
+  const renamed = response();
+  await route({ method: 'PATCH', headers: {}, body: { name: '  Friend archive  ' } }, renamed, new URL(`http://local.test/api/peers/${peer.id}`));
+  assert.equal(renamed.status, 200);
+  assert.equal(JSON.parse(renamed.body).name, 'Friend archive');
+  assert.equal(app.database.prepare('SELECT name FROM peer_instances WHERE id = ?').get(peer.id).name, 'Friend archive');
+  const invalidName = response();
+  await route({ method: 'PATCH', headers: {}, body: { name: '   ' } }, invalidName, new URL(`http://local.test/api/peers/${peer.id}`));
+  assert.equal(invalidName.status, 400);
+  assert.equal(app.database.prepare('SELECT name FROM peer_instances WHERE id = ?').get(peer.id).name, 'Friend archive');
+  const missingPeer = response();
+  await route({ method: 'PATCH', headers: {}, body: { name: 'Missing' } }, missingPeer, new URL('http://local.test/api/peers/not-found'));
+  assert.equal(missingPeer.status, 404);
+
   app.database.prepare("INSERT INTO notifications (id, type, title, body, created_at) VALUES ('abc123', 'peer-show-shared', 'Shared', 'Show', 'now')").run();
   const notifications = response();
   await route({ method: 'GET', headers: {} }, notifications, new URL('http://local.test/api/notifications'));

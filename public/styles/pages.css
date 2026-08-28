@@ -318,9 +318,16 @@ body[data-page="login"] .shared-section > .shared-list { display: none; }
 .peer-list { display: grid; gap: 8px; margin-top: 24px; }
 .peer-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border: 1px solid #5e2a78; background: #12071f; }
 .peer-card strong { display: block; color: #fff0fb; }
+.peer-card .peer-name[hidden] { display: none; }
 .peer-card small { color: #caa5d8; }
 .peer-card button { flex: 0 0 auto; padding: 5px 8px; border: 1px solid #ff5ab6; background: transparent; color: #ff82c8; font: 12px "VT323", monospace; cursor: pointer; }
 .peer-card-copy { min-width: 0; }
+.peer-name-form { display: flex; flex-wrap: wrap; align-items: end; gap: 7px; margin-bottom: 7px; }
+.peer-name-form[hidden] { display: none; }
+.peer-name-form label { display: grid; flex: 1 1 220px; gap: 5px; color: #ff82c8; font: 8px/1.5 "Press Start 2P", monospace; text-transform: uppercase; }
+.peer-name-form input { width: 100%; height: 40px; box-sizing: border-box; padding: 0 10px; border: 1px solid #7422a0; border-radius: 0; outline: 0; background: #100719; color: #fff0fa; font: 18px "VT323", monospace; text-transform: none; box-shadow: inset 3px 3px 0 rgba(4, 0, 12, .55); }
+.peer-name-form input:focus { border-color: #ff2d9b; box-shadow: inset 3px 3px 0 rgba(4, 0, 12, .55), 0 0 10px rgba(255, 45, 155, .3); }
+.peer-name-form > div { display: flex; gap: 6px; }
 .peer-status { display: block; margin-top: 5px; color: #caa5d8; font-size: 13px; text-transform: uppercase; }
 .peer-status-connected { color: #7fffb2; }
 .peer-status-unreachable { color: #ff8fbf; }
@@ -348,7 +355,7 @@ body[data-page="account"] :is(#account-form, #password-form) > .button { min-hei
 body[data-page="account"] :is(#account-form, #password-form) > .form-message { margin: 0; }
 body[data-page="account"] .peer-form { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: none; padding: 16px; border: 1px solid #5e2a78; background: rgba(18, 7, 31, .7); }
 body[data-page="account"] .peer-form label:has(textarea), body[data-page="account"] .peer-form > :is(.button, .form-message) { grid-column: 1 / -1; }
-@media (max-width: 640px) { .instance-details div { grid-template-columns: 1fr; gap: 3px; }.peer-card { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 640px) { .instance-details div { grid-template-columns: 1fr; gap: 3px; }.peer-card { align-items: flex-start; flex-direction: column; }.peer-name-form { align-items: stretch; flex-direction: column; }.peer-name-form > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }.peer-name-form button { min-height: 44px; } }
 @media (max-width: 760px) {
   body[data-page="account"] .account-settings-grid, body[data-page="account"] .account-security-card, body[data-page="account"] .peer-form { grid-template-columns: 1fr; }
   body[data-page="account"] :is(#account-form, #password-form), body[data-page="account"] .account-security-card, body[data-page="account"] .peer-form { padding: 16px; }
