@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.3.3 — 2026-08-28
+
+### Added
+
+- Paired instances can be given a local display name without changing their pairing identity, URL or sync credentials.
+
 ## 0.3.2 — 2026-08-25
 
 ### Added
