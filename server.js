@@ -509,6 +509,16 @@ async function handleApi(request, response, url) {
     return sendJson(response, 201, sharedShows.create(body.sourceGigId, account.id));
   }
 
+  const sharedShowMatch = url.pathname.match(/^\/api\/shared\/shows\/([\w-]+)$/);
+  if (request.method === 'DELETE' && sharedShowMatch) {
+    requireAccount(request);
+    try { return sendJson(response, 200, sharedShows.dismiss(sharedShowMatch[1])); }
+    catch (error) {
+      if (/not found/i.test(error.message)) return sendError(response, 404, error.message);
+      return sendError(response, 409, error.message);
+    }
+  }
+
   const attendeeMatch = url.pathname.match(/^\/api\/shared\/shows\/([\w-]+)\/attendees$/);
   if (request.method === 'POST' && attendeeMatch) {
     requireAccount(request);

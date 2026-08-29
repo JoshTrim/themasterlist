@@ -769,7 +769,8 @@ addShowPageController.bind();
 const archivePageController = archivePageModule.createController({
   window, document, OptionClass: Option, fetchJson, escapeHtml, formatDate: formatGigDate,
   showsModule: window.MasterListShows, cardsModule: window.MasterListShowCards,
-  getState: () => ({ gigs, sharedShows, artistImages }), onGigs: (nextGigs) => { gigs = nextGigs; }, setMessage,
+  getState: () => ({ gigs, sharedShows, artistImages }), onGigs: (nextGigs) => { gigs = nextGigs; },
+  onSharedShows: (nextSharedShows) => { sharedShows = nextSharedShows; }, setMessage,
   renderAttendeeSummary, setupSetlist: setupArchiveSetlist, setupExports: setupExportButtons, renderMediaGallery,
   elements: { count, stats: archiveStats, list: gigList, empty: emptyState, queryInput: showFilter, yearInput: yearFilter, sortInput: sortFilter, favouriteInput: favouriteFilter, template: document.querySelector('#gig-template') }
 });

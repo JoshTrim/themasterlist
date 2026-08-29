@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Peer-only shared shows can be removed from the local archive without deleting the source show or allowing it to return during later syncs.
+
 ## 0.3.3 — 2026-08-28
 
 ### Added

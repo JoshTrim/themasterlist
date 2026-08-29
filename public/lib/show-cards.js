@@ -149,7 +149,7 @@
   }
 
   function createRemoteCard(options) {
-    const { template, show, formatGigDate, escapeHtml, setupArtistVisual, setupSetlist, renderMediaGallery } = options;
+    const { template, show, formatGigDate, escapeHtml, setupArtistVisual, setupSetlist, renderMediaGallery, dismissSharedShow, onDismiss, onError, confirm } = options;
     const card = template.content.cloneNode(true);
     const model = remoteCardModel(show);
     const article = card.querySelector('.gig-card');
@@ -170,7 +170,14 @@
     heart.textContent = model.favorite ? '♥' : '♡';
     heart.disabled = true;
     heart.title = 'Favourite status belongs to the contributing peer';
-    card.querySelectorAll('.show-detail-link, .play-gig, .share-gig, .edit-gig, .delete-gig').forEach((control) => control.remove());
+    card.querySelectorAll('.show-detail-link, .play-gig, .share-gig, .edit-gig').forEach((control) => control.remove());
+    const remove = card.querySelector('.delete-gig');
+    remove.setAttribute('aria-label', 'Remove shared show');
+    remove.title = 'Remove shared show';
+    remove.addEventListener('click', async () => {
+      if (!confirm(`Remove ${show.artist} at ${show.venue} from this archive? It will remain on the peer instance.`)) return;
+      try { await dismissSharedShow(show.id); onDismiss(show); } catch (error) { onError(error); }
+    });
     if (model.hasSetlist) setupSetlist(card.querySelector('.setlist'), show, { fetchAlbums: false });
     const section = card.querySelector('.show-media-section');
     section.hidden = model.mediaTotal === 0;

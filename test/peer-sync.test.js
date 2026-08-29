@@ -46,6 +46,22 @@ test('two instances exchange a shared-show snapshot once and create a notificati
   alpha.database.close(); beta.database.close();
 });
 
+test('dismissed peer shows do not return during later syncs', () => {
+  const alpha = instance('Alpha'); const beta = instance('Beta');
+  addPeer(alpha, beta); const alphaOnBeta = addPeer(beta, alpha);
+  const betaId = beta.identity.row().instanceId;
+  alpha.database.prepare(`INSERT INTO gigs
+    (id, shared_id, artist, venue, city, date, notes, songs, attendees, created_at)
+    VALUES ('gig', 'shared', 'Artist', 'Venue', 'City', '2026-07-18', '', '[]', ?, 'now')`).run(JSON.stringify([{ id: betaId, type: 'peer', name: 'Beta' }]));
+  const outbound = syncService(alpha).localSnapshots(betaId)[0];
+  beta.database.prepare("INSERT INTO dismissed_shared_shows (shared_gig_id, dismissed_at) VALUES ('shared', 'now')").run();
+  const receiver = syncService(beta);
+  assert.equal(receiver.applySnapshot(outbound, alphaOnBeta), false);
+  assert.equal(beta.database.prepare("SELECT COUNT(*) FROM shared_shows WHERE id = 'shared'").pluck().get(), 0);
+  assert.equal(beta.database.prepare("SELECT COUNT(*) FROM notifications WHERE shared_gig_id = 'shared'").pluck().get(), 0);
+  alpha.database.close(); beta.database.close();
+});
+
 test('snapshot application rejects a contribution that contradicts the signer', () => {
   const alpha = instance('Alpha'); const beta = instance('Beta');
   const alphaOnBeta = addPeer(beta, alpha);

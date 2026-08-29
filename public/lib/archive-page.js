@@ -19,7 +19,7 @@
 
   function createController({
     window, document, OptionClass = Option, fetchJson, escapeHtml, formatDate,
-    showsModule, cardsModule, getState, onGigs, setMessage, renderAttendeeSummary,
+    showsModule, cardsModule, getState, onGigs, onSharedShows, setMessage, renderAttendeeSummary,
     setupSetlist, setupExports, renderMediaGallery, elements
   }) {
     const { count, stats: statsElement, list, empty, queryInput, yearInput, sortInput, favouriteInput, template } = elements;
@@ -90,7 +90,12 @@
     }
 
     function createRemoteCard(show) {
-      return cardsModule.createRemoteCard({ template, show, formatGigDate: formatDate, escapeHtml, setupArtistVisual, setupSetlist, renderMediaGallery });
+      return cardsModule.createRemoteCard({
+        template, show, formatGigDate: formatDate, escapeHtml, setupArtistVisual, setupSetlist, renderMediaGallery,
+        dismissSharedShow: (id) => fetchJson(`/api/shared/shows/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+        onDismiss: (removed) => { onSharedShows(getState().sharedShows.filter((entry) => entry.id !== removed.id)); render(); },
+        onError: (error) => setMessage(error.message, true), confirm: window.confirm.bind(window)
+      });
     }
 
     function render() {

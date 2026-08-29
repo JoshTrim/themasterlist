@@ -120,6 +120,22 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     }
   });
 
+  test('peer-only shared shows can be removed from this archive', async () => {
+    const timestamp = new Date().toISOString();
+    database.prepare(`INSERT INTO shared_shows (id, artist, venue, city, date, songs, created_at)
+      VALUES ('old-test-share', 'Test Peer Artist', 'Test Peer Venue', 'Brisbane', '2025-01-01', '[]', ?)`).run(timestamp);
+    database.prepare(`INSERT INTO shared_gig_contributions
+      (shared_gig_id, instance_id, participant_name, media_manifest, updated_at)
+      VALUES ('old-test-share', 'old-test-peer', 'Old Test Peer', '[]', ?)`).run(timestamp);
+    const removed = await api('/api/shared/shows/old-test-share', { method: 'DELETE' });
+    assert.equal(removed.response.status, 200);
+    assert.equal(removed.body.id, 'old-test-share');
+    assert.equal((await api('/api/shared/shows')).body.some((show) => show.id === 'old-test-share'), false);
+    assert.equal(database.prepare("SELECT COUNT(*) FROM dismissed_shared_shows WHERE shared_gig_id = 'old-test-share'").pluck().get(), 1);
+    const missing = await api('/api/shared/shows/old-test-share', { method: 'DELETE' });
+    assert.equal(missing.response.status, 404);
+  });
+
   test('timeline route serves the archive timeline shell', async () => {
     const timeline = await api('/timeline');
     assert.equal(timeline.response.status, 200);

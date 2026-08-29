@@ -47,6 +47,7 @@ describe('show archive page controller', () => {
       window: { location: { hash: '' }, confirm: () => true, requestAnimationFrame() {} }, document: {},
       OptionClass: class {}, fetchJson: async () => ({}), escapeHtml: String, formatDate: String,
       showsModule, cardsModule: {}, getState: () => state, onGigs() {}, setMessage() {}, renderAttendeeSummary() {},
+      onSharedShows() {},
       setupSetlist() {}, setupExports() {}, renderMediaGallery() {}, elements
     });
     const result = controller.render();
@@ -57,6 +58,39 @@ describe('show archive page controller', () => {
     assert.equal(selectionInput.sort, 'newest');
   });
 
+  test('removes a peer-only show through its remote card without touching local gigs', async () => {
+    const remote = { id: 'shared-one', artist: 'Peer Artist', venue: 'Peer Venue', city: 'City', date: '2026-01-01', contributions: [{}] };
+    const state = { gigs: [], sharedShows: [remote], artistImages: [] };
+    const requests = [];
+    const list = {
+      children: [], replaceChildren() { this.children = []; }, append(...items) { this.children.push(...items); },
+      querySelectorAll: () => []
+    };
+    const elements = {
+      count: { textContent: '' }, stats: { innerHTML: '' }, list, empty: { hidden: true },
+      queryInput: { value: '', addEventListener() {} }, yearInput: { value: '', addEventListener() {}, replaceChildren() {}, add() {} },
+      sortInput: { value: 'newest', addEventListener() {} }, favouriteInput: { checked: false, addEventListener() {} }, template: {}
+    };
+    let remoteOptions;
+    const controller = archive.createController({
+      window: { location: { hash: '' }, confirm: () => true, requestAnimationFrame() {} }, document: {}, OptionClass: class {},
+      fetchJson: async (url, options) => { requests.push({ url, options }); return { ok: true }; }, escapeHtml: String, formatDate: String,
+      showsModule: {
+        archiveStats: () => ({ shows: 1, artists: 1, venues: 1, favourites: 0, songs: 0 }),
+        selectArchiveShows: ({ remoteShows }) => ({ local: [], remote: remoteShows }), compareDates: () => 0
+      },
+      cardsModule: { createRemoteCard(options) { remoteOptions = options; return { dataset: { showDate: options.show.date } }; } },
+      getState: () => state, onGigs() {}, onSharedShows(next) { state.sharedShows = next; }, setMessage() {},
+      renderAttendeeSummary() {}, setupSetlist() {}, setupExports() {}, renderMediaGallery() {}, elements
+    });
+    controller.render();
+    await remoteOptions.dismissSharedShow(remote.id);
+    remoteOptions.onDismiss(remote);
+    assert.deepEqual(requests, [{ url: '/api/shared/shows/shared-one', options: { method: 'DELETE' } }]);
+    assert.deepEqual(state.sharedShows, []);
+    assert.deepEqual(state.gigs, []);
+  });
+
   test('populates distinct archive years while preserving the selected filter', () => {
     class OptionStub { constructor(label, value) { this.label = label; this.value = value; } }
     const options = [];
@@ -64,7 +98,7 @@ describe('show archive page controller', () => {
     const controller = archive.createController({
       window: {}, document: {}, OptionClass: OptionStub, fetchJson: async () => ({}), escapeHtml: String, formatDate: String,
       showsModule: {}, cardsModule: {}, getState: () => ({ gigs: [{ date: '2025-01-01' }, { date: '2024-02-02' }], sharedShows: [{ date: '2026-03-03', contributions: [{}] }] }),
-      onGigs() {}, setMessage() {}, renderAttendeeSummary() {}, setupSetlist() {}, setupExports() {}, renderMediaGallery() {},
+      onGigs() {}, onSharedShows() {}, setMessage() {}, renderAttendeeSummary() {}, setupSetlist() {}, setupExports() {}, renderMediaGallery() {},
       elements: { yearInput, count: {}, stats: {}, list: {}, empty: {}, queryInput: null, sortInput: null, favouriteInput: null, template: {} }
     });
     controller.populateYears();

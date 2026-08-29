@@ -78,6 +78,28 @@ describe('shared-show orchestration', () => {
     view.database.close();
   });
 
+  test('dismisses a peer-only show locally and rejects attached local records', () => {
+    const view = fixture();
+    view.database.prepare(`INSERT INTO shared_shows (id, artist, venue, city, date, songs, created_at)
+      VALUES ('peer-only', 'Peer Artist', 'Peer Venue', 'Brisbane', '2026-07-20', '[]', ?)`).run(view.timestamp);
+    view.database.prepare(`INSERT INTO shared_gig_contributions
+      (shared_gig_id, instance_id, participant_name, media_manifest, updated_at)
+      VALUES ('peer-only', 'peer-1', 'Alex', '[]', ?)`).run(view.timestamp);
+    view.database.prepare(`INSERT INTO notifications (id, type, shared_gig_id, title, created_at)
+      VALUES ('notice-peer', 'peer-show-shared', 'peer-only', 'Shared', ?)`).run(view.timestamp);
+
+    const result = view.service.dismiss('peer-only');
+    assert.equal(result.id, 'peer-only');
+    assert.equal(view.database.prepare("SELECT COUNT(*) FROM shared_shows WHERE id = 'peer-only'").pluck().get(), 0);
+    assert.equal(view.database.prepare("SELECT COUNT(*) FROM dismissed_shared_shows WHERE shared_gig_id = 'peer-only'").pluck().get(), 1);
+    assert.equal(view.database.prepare("SELECT COUNT(*) FROM notifications WHERE shared_gig_id = 'peer-only'").pluck().get(), 0);
+    assert.throws(() => view.service.dismiss('missing'), /not found/);
+
+    view.service.create('gig-1', 'owner');
+    assert.throws(() => view.service.dismiss('shared-1'), /attached to a local show/);
+    view.database.close();
+  });
+
   test('resolves simultaneous edits and applies matching remote media assignments transactionally', () => {
     const view = fixture();
     view.service.create('gig-1', 'owner');
