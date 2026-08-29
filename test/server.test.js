@@ -136,6 +136,31 @@ describe('The Master List API regressions', { concurrency: false }, () => {
     assert.equal(missing.response.status, 404);
   });
 
+  test('peer-only shared shows can be adopted and edited as local shows', async () => {
+    const timestamp = new Date().toISOString();
+    database.prepare(`INSERT INTO peer_instances (id, peer_id, name, base_url, public_key, status, created_at)
+      VALUES ('adopt-peer-row', 'adopt-peer', 'Adopt Peer', '', 'test-key', 'paired', ?)`).run(timestamp);
+    database.prepare(`INSERT INTO shared_shows (id, artist, venue, city, date, songs, acts, created_at)
+      VALUES ('adopt-share', 'Shared Artist', 'Shared Venue', 'Brisbane', '2025-02-01', '[{"title":"Shared Song"}]', '[]', ?)`).run(timestamp);
+    database.prepare(`INSERT INTO shared_gig_contributions
+      (shared_gig_id, instance_id, participant_name, media_manifest, updated_at)
+      VALUES ('adopt-share', 'adopt-peer', 'Adopt Peer', '[]', ?)`).run(timestamp);
+
+    const adopted = await api('/api/shared/shows/adopt-share/adopt', { method: 'POST' });
+    assert.equal(adopted.response.status, 201);
+    assert.equal(adopted.body.sharedId, 'adopt-share');
+    assert.equal(adopted.body.performanceRating, null);
+    assert.deepEqual(adopted.body.attendees.map(({ type, name }) => ({ type, name })), [
+      { type: 'owner', name: 'Test Owner' }, { type: 'peer', name: 'Adopt Peer' }
+    ]);
+    const edited = await jsonApi(`/api/gigs/${adopted.body.id}`, 'PATCH', { performanceRating: 5, performanceNotes: 'My shared memory' });
+    assert.equal(edited.response.status, 200);
+    assert.equal(edited.body.performanceRating, 5);
+    assert.equal(edited.body.performanceNotes, 'My shared memory');
+    assert.equal((await api(`/api/gigs/${adopted.body.id}`, { method: 'DELETE' })).response.status, 200);
+    assert.equal((await api('/api/shared/shows/adopt-share', { method: 'DELETE' })).response.status, 200);
+  });
+
   test('timeline route serves the archive timeline shell', async () => {
     const timeline = await api('/timeline');
     assert.equal(timeline.response.status, 200);

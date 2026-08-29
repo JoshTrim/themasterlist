@@ -149,7 +149,7 @@
   }
 
   function createRemoteCard(options) {
-    const { template, show, formatGigDate, escapeHtml, setupArtistVisual, setupSetlist, renderMediaGallery, dismissSharedShow, onDismiss, onError, confirm } = options;
+    const { template, show, formatGigDate, escapeHtml, setupArtistVisual, setupSetlist, renderMediaGallery, adoptSharedShow, onAdopt, dismissSharedShow, onDismiss, onError, confirm } = options;
     const card = template.content.cloneNode(true);
     const model = remoteCardModel(show);
     const article = card.querySelector('.gig-card');
@@ -170,7 +170,14 @@
     heart.textContent = model.favorite ? '♥' : '♡';
     heart.disabled = true;
     heart.title = 'Favourite status belongs to the contributing peer';
-    card.querySelectorAll('.show-detail-link, .play-gig, .share-gig, .edit-gig').forEach((control) => control.remove());
+    card.querySelectorAll('.show-detail-link, .play-gig, .share-gig').forEach((control) => control.remove());
+    const edit = card.querySelector('.edit-gig');
+    edit.href = '#';
+    edit.title = 'Add this shared show to your archive and edit it';
+    edit.addEventListener('click', async (event) => {
+      event.preventDefault();
+      try { onAdopt(await adoptSharedShow(show.id)); } catch (error) { onError(error); }
+    });
     const remove = card.querySelector('.delete-gig');
     remove.setAttribute('aria-label', 'Remove shared show');
     remove.title = 'Remove shared show';

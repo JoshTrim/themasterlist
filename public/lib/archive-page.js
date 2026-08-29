@@ -92,6 +92,8 @@
     function createRemoteCard(show) {
       return cardsModule.createRemoteCard({
         template, show, formatGigDate: formatDate, escapeHtml, setupArtistVisual, setupSetlist, renderMediaGallery,
+        adoptSharedShow: (id) => fetchJson(`/api/shared/shows/${encodeURIComponent(id)}/adopt`, { method: 'POST' }),
+        onAdopt: (gig) => window.location.assign(`/edit?id=${encodeURIComponent(gig.id)}`),
         dismissSharedShow: (id) => fetchJson(`/api/shared/shows/${encodeURIComponent(id)}`, { method: 'DELETE' }),
         onDismiss: (removed) => { onSharedShows(getState().sharedShows.filter((entry) => entry.id !== removed.id)); render(); },
         onError: (error) => setMessage(error.message, true), confirm: window.confirm.bind(window)

@@ -275,7 +275,7 @@ conflictStore = createConflictStore({ database, payloadFromGig: conflictPayloadF
 const { detect: detectSyncConflict, list: peerConflictRows } = conflictStore;
 const sharedShows = createSharedShows({
   database, peerRows, instanceRow, findGig: findGigSync, contributionRows: sharedContributionRows,
-  upsertLocalContribution, conflictPayloadFromGig, normaliseRating
+  upsertLocalContribution, conflictPayloadFromGig, normaliseRating, randomUUID
 });
 const handleShowRoute = createShowRoutes({ database, readGigs, readBody, sendJson, sendError, validateGig, normaliseRating, normaliseAttendees: sharedShows.normaliseAttendees, randomUUID });
 const handleArchiveTransfer = createArchiveTransferRoutes({ database, requireAccount, readBody, readGigs, sendJson, sendError, validateGig, normaliseAttendees: sharedShows.normaliseAttendees, randomUUID });
@@ -517,6 +517,13 @@ async function handleApi(request, response, url) {
       if (/not found/i.test(error.message)) return sendError(response, 404, error.message);
       return sendError(response, 409, error.message);
     }
+  }
+
+  const adoptSharedShowMatch = url.pathname.match(/^\/api\/shared\/shows\/([\w-]+)\/adopt$/);
+  if (request.method === 'POST' && adoptSharedShowMatch) {
+    const account = requireAccount(request);
+    try { return sendJson(response, 201, sharedShows.adopt(adoptSharedShowMatch[1], account)); }
+    catch (error) { return sendError(response, /not found/i.test(error.message) ? 404 : 400, error.message); }
   }
 
   const attendeeMatch = url.pathname.match(/^\/api\/shared\/shows\/([\w-]+)\/attendees$/);

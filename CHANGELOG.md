@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Incoming peer-shared shows can be adopted into the recipient's archive and then edited with the normal ratings, notes, setlist, attendee, media, artifact and playback tools.
+
 ## 0.3.4 — 2026-08-29
 
 ### Added

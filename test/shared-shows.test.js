@@ -29,7 +29,7 @@ function fixture() {
       id: row.id, sharedId: row.shared_id, artist: row.artist, venue: row.venue, city: row.city, date: row.date,
       setlistFmId: row.setlist_fm_id, setlistFmUrl: row.setlist_fm_url, songs: JSON.parse(row.songs), notes: row.notes,
       performanceNotes: row.performance_notes, venueNotes: row.venue_notes, performanceRating: row.performance_rating,
-      venueRating: row.venue_rating, favorite: Boolean(row.favorite), media
+      venueRating: row.venue_rating, favorite: Boolean(row.favorite), attendees: JSON.parse(row.attendees || '[]'), media
     };
   };
   const contributionRows = (sharedGigId) => database.prepare(`SELECT shared_gig_id AS sharedGigId, instance_id AS instanceId,
@@ -45,7 +45,7 @@ function fixture() {
   const service = createSharedShows({
     database, peerRows: () => [{ peerId: 'peer-1', name: 'Alex' }], instanceRow: () => ({ instanceId: 'instance-1' }),
     findGig, contributionRows, upsertLocalContribution: (gig) => contributionUpdates.push(gig.id),
-    conflictPayloadFromGig, normaliseRating, now: () => timestamp
+    conflictPayloadFromGig, normaliseRating, randomUUID: () => 'adopted-gig', now: () => timestamp
   });
   return { database, service, findGig, contributionUpdates, timestamp };
 }
@@ -97,6 +97,30 @@ describe('shared-show orchestration', () => {
 
     view.service.create('gig-1', 'owner');
     assert.throws(() => view.service.dismiss('shared-1'), /attached to a local show/);
+    view.database.close();
+  });
+
+  test('adopts a peer-only show as a fully editable local show', () => {
+    const view = fixture();
+    view.database.prepare(`INSERT INTO shared_shows
+      (id, artist, venue, city, date, setlist_fm_id, songs, acts, created_at)
+      VALUES ('peer-only', 'Peer Artist', 'Peer Venue', 'Brisbane', '2026-07-20', 'setlist-1', '[{"title":"Song"}]', '[]', ?)`).run(view.timestamp);
+    view.database.prepare(`INSERT INTO shared_gig_contributions
+      (shared_gig_id, instance_id, participant_name, media_manifest, updated_at)
+      VALUES ('peer-only', 'peer-1', 'Alex', '[]', ?)`).run(view.timestamp);
+
+    const adopted = view.service.adopt('peer-only', { id: 'owner' });
+    assert.equal(adopted.id, 'adopted-gig');
+    assert.equal(adopted.sharedId, 'peer-only');
+    assert.equal(adopted.artist, 'Peer Artist');
+    assert.equal(adopted.performanceRating, null);
+    assert.deepEqual(adopted.attendees, [
+      { id: 'owner', type: 'owner', name: 'Archive Owner' },
+      { id: 'peer-1', type: 'peer', name: 'Alex' }
+    ]);
+    assert.equal(view.database.prepare("SELECT source_gig_id FROM shared_shows WHERE id = 'peer-only'").pluck().get(), 'adopted-gig');
+    assert.equal(view.service.adopt('peer-only', { id: 'owner' }).id, 'adopted-gig');
+    assert.deepEqual(view.contributionUpdates, ['adopted-gig']);
     view.database.close();
   });
 

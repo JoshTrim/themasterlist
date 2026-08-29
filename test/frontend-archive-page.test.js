@@ -58,7 +58,7 @@ describe('show archive page controller', () => {
     assert.equal(selectionInput.sort, 'newest');
   });
 
-  test('removes a peer-only show through its remote card without touching local gigs', async () => {
+  test('adopts or removes a peer-only show through its remote card', async () => {
     const remote = { id: 'shared-one', artist: 'Peer Artist', venue: 'Peer Venue', city: 'City', date: '2026-01-01', contributions: [{}] };
     const state = { gigs: [], sharedShows: [remote], artistImages: [] };
     const requests = [];
@@ -71,10 +71,10 @@ describe('show archive page controller', () => {
       queryInput: { value: '', addEventListener() {} }, yearInput: { value: '', addEventListener() {}, replaceChildren() {}, add() {} },
       sortInput: { value: 'newest', addEventListener() {} }, favouriteInput: { checked: false, addEventListener() {} }, template: {}
     };
-    let remoteOptions;
+    let remoteOptions; let navigation = '';
     const controller = archive.createController({
-      window: { location: { hash: '' }, confirm: () => true, requestAnimationFrame() {} }, document: {}, OptionClass: class {},
-      fetchJson: async (url, options) => { requests.push({ url, options }); return { ok: true }; }, escapeHtml: String, formatDate: String,
+      window: { location: { hash: '', assign(href) { navigation = href; } }, confirm: () => true, requestAnimationFrame() {} }, document: {}, OptionClass: class {},
+      fetchJson: async (url, options) => { requests.push({ url, options }); return url.endsWith('/adopt') ? { id: 'local-copy' } : { ok: true }; }, escapeHtml: String, formatDate: String,
       showsModule: {
         archiveStats: () => ({ shows: 1, artists: 1, venues: 1, favourites: 0, songs: 0 }),
         selectArchiveShows: ({ remoteShows }) => ({ local: [], remote: remoteShows }), compareDates: () => 0
@@ -84,9 +84,14 @@ describe('show archive page controller', () => {
       renderAttendeeSummary() {}, setupSetlist() {}, setupExports() {}, renderMediaGallery() {}, elements
     });
     controller.render();
+    remoteOptions.onAdopt(await remoteOptions.adoptSharedShow(remote.id));
+    assert.equal(navigation, '/edit?id=local-copy');
     await remoteOptions.dismissSharedShow(remote.id);
     remoteOptions.onDismiss(remote);
-    assert.deepEqual(requests, [{ url: '/api/shared/shows/shared-one', options: { method: 'DELETE' } }]);
+    assert.deepEqual(requests, [
+      { url: '/api/shared/shows/shared-one/adopt', options: { method: 'POST' } },
+      { url: '/api/shared/shows/shared-one', options: { method: 'DELETE' } }
+    ]);
     assert.deepEqual(state.sharedShows, []);
     assert.deepEqual(state.gigs, []);
   });

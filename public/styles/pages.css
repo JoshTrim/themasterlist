@@ -850,6 +850,7 @@ body[data-page="shows"] :is(.setlist, .show-media-section, .artifact-section, .e
   body[data-page="shows"] :is(.gig-notes, .venue-notes) { overflow-wrap: anywhere; }
   body[data-page="shows"] .gig-meta, body[data-page="shows"] .gig-ratings, body[data-page="shows"] :is(.setlist, .show-media-section, .artifact-section, .exports) { grid-column: 1 / -1; grid-row: auto; }
   body[data-page="shows"] .gig-meta { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px; gap: 6px; align-items: stretch; }
+  body[data-page="shows"] .remote-shared-gig .gig-meta { grid-template-columns: minmax(0, 1fr) 36px; }
   body[data-page="shows"] .gig-meta :is(.show-detail-link, .edit-gig) { width: 100%; height: 36px; box-sizing: border-box; }
   body[data-page="shows"] .delete-gig { width: 36px; height: 36px; align-self: stretch; box-sizing: border-box; line-height: 1; }
   body[data-page="shows"] .heart-toggle, body[data-page="shows"] .play-gig { top: 12px; width: 36px !important; min-width: 36px; max-width: 36px; height: 36px !important; min-height: 36px; max-height: 36px; }
