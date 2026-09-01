@@ -28,6 +28,6 @@
     "better-sqlite3": "^13.0.1"
   },
   "devDependencies": {
-    "node-gyp": "13.0.1"
+    "node-gyp": "13.0.2"
   }
 }
